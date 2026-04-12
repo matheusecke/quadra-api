@@ -1,0 +1,18 @@
+enum OrgRole {
+  ORG_ADMIN
+  TEAM_ADMIN
+  ATHLETE
+  COACHING_STAFF
+}
+
+enum TournamentStatus {
+  DRAFT
+  ACTIVE
+  FINISHED
+}
+
+enum MatchStatus {
+  SCHEDULED
+  IN_PROGRESS
+  FINISHED
+}

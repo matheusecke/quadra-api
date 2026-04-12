@@ -1,0 +1,20 @@
+model Match {
+  id           String      @id @default(cuid())
+  tournamentId String
+  homeTeamId   String
+  awayTeamId   String
+  homeScore    Int?
+  awayScore    Int?
+  status       MatchStatus @default(SCHEDULED)
+  scheduledAt  DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  tournament Tournament       @relation(fields: [tournamentId], references: [id])
+  homeTeam   Team             @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam   Team             @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  statistics MatchStatistic[]
+
+  @@index([tournamentId])
+}

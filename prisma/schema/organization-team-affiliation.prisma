@@ -1,0 +1,11 @@
+model OrganizationTeamAffiliation {
+  id             String   @id @default(cuid())
+  organizationId String
+  teamId         String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  team         Team         @relation(fields: [teamId], references: [id])
+
+  @@unique([organizationId, teamId])
+}
