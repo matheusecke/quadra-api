@@ -6,7 +6,7 @@ services:
       dockerfile: Dockerfile.local
     volumes:
       - .:/home/node/app
-      - /home/node/app/node_modules
+      - api_node_modules:/home/node/app/node_modules
     env_file:
       - .env
     environment:
@@ -21,3 +21,6 @@ networks:
   tcc-network:
     external: true
     name: tcc-network
+
+volumes:
+  api_node_modules:
