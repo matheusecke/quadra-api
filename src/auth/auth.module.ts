@@ -6,7 +6,6 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OrgRoleGuard } from './guards/org-role.guard';
-import { AdminSecretGuard } from './guards/admin-secret.guard';
 
 @Module({
   imports: [
@@ -22,7 +21,7 @@ import { AdminSecretGuard } from './guards/admin-secret.guard';
       }),
     }),
   ],
-  providers: [JwtStrategy, JwtAuthGuard, OrgRoleGuard, AdminSecretGuard],
-  exports: [JwtModule, JwtAuthGuard, OrgRoleGuard, AdminSecretGuard],
+  providers: [JwtStrategy, JwtAuthGuard, OrgRoleGuard],
+  exports: [JwtModule, JwtAuthGuard, OrgRoleGuard],
 })
 export class AuthModule {}

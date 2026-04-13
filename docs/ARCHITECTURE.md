@@ -47,7 +47,6 @@ src/
 │   │   ├── current-user.decorator.ts
 │   │   └── require-org-role.decorator.ts
 │   ├── guards/
-│   │   ├── admin-secret.guard.ts
 │   │   ├── jwt-auth.guard.ts
 │   │   └── org-role.guard.ts
 │   ├── interfaces/
@@ -145,7 +144,6 @@ O módulo de autenticação já contém a base estrutural:
 - `JwtStrategy`
 - `JwtAuthGuard`
 - `OrgRoleGuard`
-- `AdminSecretGuard`
 - decorators `@CurrentUser()` e `@RequireOrgRole()`
 
 O payload JWT atual está tipado em [src/auth/interfaces/jwt-payload.interface.ts](/home/matheusecke/tcc/tcc-api/src/auth/interfaces/jwt-payload.interface.ts:1):
