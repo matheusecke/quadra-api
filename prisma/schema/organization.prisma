@@ -1,11 +1,24 @@
 model Organization {
-  id        String   @id @default(cuid())
+  id        Int          @id @default(autoincrement())
   name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  slug      String
+  status    EntityStatus @default(ACTIVE)
+  isDeleted Boolean      @default(false) @map("is_deleted")
+  createdAt DateTime     @default(now()) @db.Timestamptz(3) @map("created_at")
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
 
-  members      OrganizationMember[]
-  affiliations OrganizationTeamAffiliation[]
-  tournaments  Tournament[]
+  userAffiliations OrganizationUserAffiliation[]
+  teamAffiliations OrganizationTeamAffiliation[]
+
+  // DB-only rule:
+  // CHECK (slug = lower(slug)).
+  // Must be added manually in migration SQL.
+  // First added in migration: init_core_schema
+  //
+  // DB-only rule:
+  // Partial unique index on organizations(slug)
+  // WHERE is_deleted = false AND status <> 'INACTIVE'.
+  // Must be added manually in migration SQL.
+  // First added in migration: init_core_schema
+  @@map("organizations")
 }

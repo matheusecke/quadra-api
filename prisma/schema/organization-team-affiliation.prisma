@@ -1,11 +1,31 @@
 model OrganizationTeamAffiliation {
-  id             String   @id @default(cuid())
-  organizationId String
-  teamId         String
-  createdAt      DateTime @default(now())
+  id             Int               @id @default(autoincrement())
+  organizationId Int               @map("organization_id")
+  teamId         Int               @map("team_id")
+  status         AffiliationStatus @default(PENDING)
+  isDeleted      Boolean           @default(false) @map("is_deleted")
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3) @map("created_at")
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(3) @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  team         Team         @relation(fields: [teamId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team         Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
-  @@unique([organizationId, teamId])
+  // DB-only rule:
+  // Partial unique index on organization_team_affiliations(organization_id, team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: init_core_schema
+  //
+  // DB-only rule:
+  // Partial index on organization_team_affiliations(organization_id, status)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: init_core_schema
+  //
+  // DB-only rule:
+  // Partial index on organization_team_affiliations(team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: init_core_schema
+  @@map("organization_team_affiliations")
 }

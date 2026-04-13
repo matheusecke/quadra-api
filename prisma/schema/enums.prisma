@@ -3,16 +3,21 @@ enum OrgRole {
   TEAM_ADMIN
   ATHLETE
   COACHING_STAFF
+
+  @@map("org_role")
 }
 
-enum TournamentStatus {
-  DRAFT
+enum EntityStatus {
   ACTIVE
-  FINISHED
+  INACTIVE
+
+  @@map("entity_status")
 }
 
-enum MatchStatus {
-  SCHEDULED
-  IN_PROGRESS
-  FINISHED
+enum AffiliationStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+
+  @@map("affiliation_status")
 }

@@ -1,9 +1,9 @@
 import type { OrgRole } from '@prisma/client';
 
 export interface JwtPayload {
-  sub: string;
+  sub: number;
   email: string;
-  organizationId: string | null;
+  organizationId: number | null;
   role: OrgRole | null;
 }
 
