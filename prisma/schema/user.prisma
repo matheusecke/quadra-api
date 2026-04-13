@@ -13,12 +13,12 @@ model User {
   // DB-only rule:
   // CHECK (email = lower(email)).
   // Must be added manually in migration SQL.
-  // First added in migration: init_core_schema
+  // First added in migration: initial_db_structure
   //
   // DB-only rule:
   // Partial unique index on users(email)
   // WHERE is_deleted = false AND status <> 'INACTIVE'.
   // Must be added manually in migration SQL.
-  // First added in migration: init_core_schema
+  // First added in migration: initial_db_structure
   @@map("users")
 }

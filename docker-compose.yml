@@ -1,12 +1,13 @@
 services:
   api:
     container_name: tcc-api
+    image: tcc-api
     build:
       context: .
       dockerfile: Dockerfile.local
     volumes:
       - .:/home/node/app
-      - api_node_modules:/home/node/app/node_modules
+      - node_modules:/home/node/app/node_modules
     env_file:
       - .env
     environment:
@@ -23,4 +24,4 @@ networks:
     name: tcc-network
 
 volumes:
-  api_node_modules:
+  node_modules:

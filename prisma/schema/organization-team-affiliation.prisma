@@ -14,18 +14,18 @@ model OrganizationTeamAffiliation {
   // Partial unique index on organization_team_affiliations(organization_id, team_id)
   // WHERE is_deleted = false.
   // Must be added manually in migration SQL.
-  // First added in migration: init_core_schema
+  // First added in migration: initial_db_structure
   //
   // DB-only rule:
   // Partial index on organization_team_affiliations(organization_id, status)
   // WHERE is_deleted = false.
   // Must be added manually in migration SQL.
-  // First added in migration: init_core_schema
+  // First added in migration: initial_db_structure
   //
   // DB-only rule:
   // Partial index on organization_team_affiliations(team_id)
   // WHERE is_deleted = false.
   // Must be added manually in migration SQL.
-  // First added in migration: init_core_schema
+  // First added in migration: initial_db_structure
   @@map("organization_team_affiliations")
 }
