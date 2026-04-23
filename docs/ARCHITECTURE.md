@@ -45,10 +45,12 @@ src/
 │   ├── auth.module.ts
 │   ├── decorators/
 │   │   ├── current-user.decorator.ts
-│   │   └── require-org-role.decorator.ts
+│   │   ├── org-roles.decorator.ts
+│   │   └── system-admin.decorator.ts
 │   ├── guards/
 │   │   ├── jwt-auth.guard.ts
-│   │   └── org-role.guard.ts
+│   │   ├── org-role.guard.ts
+│   │   └── system-admin.guard.ts
 │   ├── interfaces/
 │   │   └── jwt-payload.interface.ts
 │   └── strategies/
@@ -142,9 +144,10 @@ Esse serviço é exportado por [src/prisma/prisma.module.ts](/home/matheusecke/t
 O módulo de autenticação já contém a base estrutural:
 
 - `JwtStrategy`
-- `JwtAuthGuard`
-- `OrgRoleGuard`
-- decorators `@CurrentUser()` e `@RequireOrgRole()`
+- `JwtAuthGuard` — valida JWT
+- `OrgRoleGuard` — verifica papel dentro de uma organização
+- `SystemAdminGuard` — verifica se usuário é admin de plataforma
+- decorators `@CurrentUser()`, `@OrgRoles()` e `@SystemAdmin()`
 
 O payload JWT atual está tipado em [src/auth/interfaces/jwt-payload.interface.ts](/home/matheusecke/tcc/tcc-api/src/auth/interfaces/jwt-payload.interface.ts:1):
 
@@ -152,15 +155,53 @@ O payload JWT atual está tipado em [src/auth/interfaces/jwt-payload.interface.t
 {
   sub: number;
   email: string;
+  isSystemAdmin: boolean;
   organizationId: number | null;
   role: OrgRole | null;
 }
 ```
 
+### Camadas de autorização
+
+**OrgRoleGuard**: protege operações dentro de uma organização específica — lê `role` do JWT e valida contra `@OrgRoles()`.
+
+```typescript
+@UseGuards(JwtAuthGuard, OrgRoleGuard)
+@OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
+@Post('championships')
+createChampionship() { ... }
+```
+
+**SystemAdminGuard**: protege operações de plataforma (criar/deletar orgs, gerenciar users globais, etc.) — lê `isSystemAdmin` do JWT. 
+
+```typescript
+@UseGuards(JwtAuthGuard, SystemAdminGuard)
+@Post('organizations')
+createOrganization() { ... }
+```
+
+**Separação de concerns:**
+- Sistema admin NÃO bypassa `OrgRoleGuard`
+- As duas camadas são completamente independentes
+- Um system admin que precise operar dentro de uma org usa endpoints admin dedicados (`/admin/*`), não os endpoints org-user normais
+- Campo `is_system_admin` vem da tabela `users` e é baked no JWT no login — sem lookup per-request
+
+## Testes
+
+**Escopo atual:** Testes unitários cobrem apenas **services** (`*.service.spec.ts`).
+
+- Jest configurado em [jest.config.ts](/home/matheusecke/tcc/tcc-api/jest.config.ts:1)
+- Pattern: `testMatch: ['<rootDir>/**/*.service.spec.ts']`
+- Coverage: apenas `*.service.ts`
+- Guards, decorators e strategies testam-se implicitamente via controllers (quando estes forem implementados)
+
+Rodar: `npm test`
+
 ## O que ainda não existe
 
 Apesar de a estrutura base de NestJS estar pronta, o projeto ainda não possui nesta fase:
 
+- endpoint de login (que emitirá JWT com `isSystemAdmin` incluído)
 - módulos de CRUD implementados para `users`, `organizations`, `teams` e affiliations
 - services com regras de negócio do domínio
 - controllers de operação além da base do módulo auth
@@ -181,7 +222,25 @@ Esse fluxo está documentado em [docs/database.md](/home/matheusecke/tcc/tcc-api
 
 ## Próximos blocos naturais
 
-1. Subir o Postgres local e aplicar a migration inicial.
-2. Implementar os CRUDs básicos de `users`, `organizations` e `teams`.
-3. Implementar as regras de negócio das affiliations.
-4. Só depois reintroduzir módulos esportivos como tournaments, matches e statistics.
+1. **Implementar endpoint de login**
+   - Gerar JWT com `isSystemAdmin: boolean` incluído no payload
+   - Ler campo `is_system_admin` da tabela `users`
+   - Retornar token com organização default (se houver) ou null
+
+2. **Implementar endpoints de admin de plataforma** (`/admin/*`)
+   - `POST /admin/organizations` — criar org (protegido por `SystemAdminGuard`)
+   - `DELETE /admin/organizations/:id` — deletar org
+   - `PATCH /admin/users/:id/set-system-admin` — promover/remover system admin
+   - `GET /admin/users` — listar todos os usuários
+
+3. **Implementar CRUDs básicos org-scoped**
+   - `POST /organizations/:orgId/teams`
+   - `GET /organizations/:orgId/teams`
+   - `POST /organizations/:orgId/championships` — criar campeonato
+   - Protegidos por `OrgRoleGuard`
+
+4. **Implementar affiliations**
+   - Endpoints para adicionar/remover users e teams de orgs
+   - Validar role/team consistency com DB constraints
+
+5. **Só depois reintroduzir módulos esportivos** (tournaments, matches, statistics)
