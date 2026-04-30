@@ -1,0 +1,24 @@
+model Organization {
+  id        Int          @id @default(autoincrement())
+  name      String
+  slug      String
+  status    EntityStatus @default(ACTIVE)
+  isDeleted Boolean      @default(false) @map("is_deleted")
+  createdAt DateTime     @default(now()) @db.Timestamptz(3) @map("created_at")
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
+
+  userAffiliations OrganizationUserAffiliation[]
+  teamAffiliations OrganizationTeamAffiliation[]
+
+  // DB-only rule:
+  // CHECK (slug = lower(slug)).
+  // Must be added manually in migration SQL.
+  // First added in migration: initial_db_structure
+  //
+  // DB-only rule:
+  // Partial unique index on organizations(slug)
+  // WHERE is_deleted = false AND status <> 'INACTIVE'.
+  // Must be added manually in migration SQL.
+  // First added in migration: initial_db_structure
+  @@map("organizations")
+}
