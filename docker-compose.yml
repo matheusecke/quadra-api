@@ -1,0 +1,27 @@
+services:
+  api:
+    container_name: tcc-api
+    image: tcc-api
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    volumes:
+      - .:/home/node/app
+      - node_modules:/home/node/app/node_modules
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@tcc-postgres:5432/tcc?schema=public
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    networks:
+      - tcc-network
+
+networks:
+  tcc-network:
+    external: true
+    name: tcc-network
+
+volumes:
+  node_modules:

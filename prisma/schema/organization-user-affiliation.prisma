@@ -1,0 +1,45 @@
+model OrganizationUserAffiliation {
+  id             Int     @id @default(autoincrement())
+  userId         Int     @map("user_id")
+  organizationId Int     @map("organization_id")
+  role           OrgRole
+  teamId         Int?    @map("team_id")
+  jerseyNumber   Int?    @map("jersey_number")
+  isDeleted      Boolean @default(false) @map("is_deleted")
+  createdAt      DateTime @default(now()) @db.Timestamptz(3) @map("created_at")
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3) @map("updated_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team         Team?        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  // DB-only rule:
+  // Partial unique index on organization_user_affiliations(user_id, organization_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: initial_db_structure
+  //
+  // DB-only rule:
+  // Partial index on organization_user_affiliations(organization_id, team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: initial_db_structure
+  //
+  // DB-only rule:
+  // Partial index on organization_user_affiliations(organization_id, role)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: initial_db_structure
+  //
+  // DB-only rule:
+  // CHECK (role = 'ORG_ADMIN' AND team_id IS NULL)
+  //    OR (role IN ('TEAM_ADMIN', 'ATHLETE', 'COACHING_STAFF') AND team_id IS NOT NULL)
+  // Must be added manually in migration SQL.
+  // First added in migration: initial_db_structure
+  //
+  // DB-only rule:
+  // CHECK (jersey_number IS NULL OR (jersey_number >= 0 AND jersey_number < 100)).
+  // Must be added manually in migration SQL.
+  // First added in migration: initial_db_structure
+  @@map("organization_user_affiliations")
+}

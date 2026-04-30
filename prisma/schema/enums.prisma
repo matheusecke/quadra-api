@@ -1,0 +1,23 @@
+enum OrgRole {
+  ORG_ADMIN
+  TEAM_ADMIN
+  ATHLETE
+  COACHING_STAFF
+
+  @@map("org_role")
+}
+
+enum EntityStatus {
+  ACTIVE
+  INACTIVE
+
+  @@map("entity_status")
+}
+
+enum AffiliationStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+
+  @@map("affiliation_status")
+}
