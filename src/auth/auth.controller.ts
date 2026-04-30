@@ -16,6 +16,7 @@ import * as express from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 import { LoginResponseDto } from './dto/login-response.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { MeResponseDto } from './dto/me-response.dto';
@@ -32,6 +33,20 @@ import type { JwtPayload } from './interfaces/jwt-payload.interface';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @Post('register')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Register user and receive tokens' })
+  async register(
+    @Body() dto: RegisterDto,
+    @Res({ passthrough: true }) res: express.Response,
+  ): Promise<LoginResponseDto> {
+    const { rawRefreshToken, ...response } =
+      await this.authService.register(dto);
+    this.setRefreshCookie(res, rawRefreshToken);
+    return response;
+  }
+
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -40,7 +55,10 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: express.Response,
   ): Promise<LoginResponseDto> {
-    const { rawRefreshToken, ...response } = await this.authService.login(dto.email, dto.password);
+    const { rawRefreshToken, ...response } = await this.authService.login(
+      dto.email,
+      dto.password,
+    );
     this.setRefreshCookie(res, rawRefreshToken);
     return response;
   }
@@ -52,11 +70,13 @@ export class AuthController {
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ): Promise<TokenResponseDto> {
-    const rawToken: string | undefined = (req.cookies as Record<string, string>)?.refreshToken;
+    const rawToken: string | undefined = (req.cookies as Record<string, string>)
+      ?.refreshToken;
     if (!rawToken) {
       throw ApiException.unauthorized('Refresh token not provided.');
     }
-    const { accessToken, newRawRefreshToken } = await this.authService.refreshAccessToken(rawToken);
+    const { accessToken, newRawRefreshToken } =
+      await this.authService.refreshAccessToken(rawToken);
     this.setRefreshCookie(res, newRawRefreshToken);
     return { accessToken };
   }
@@ -71,9 +91,14 @@ export class AuthController {
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ): Promise<void> {
-    const rawToken: string | undefined = (req.cookies as Record<string, string>)?.refreshToken;
+    const rawToken: string | undefined = (req.cookies as Record<string, string>)
+      ?.refreshToken;
     await this.authService.logout(user.sub, rawToken);
-    res.clearCookie('refreshToken', { httpOnly: true, sameSite: 'strict', path: '/' });
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      sameSite: 'strict',
+      path: '/',
+    });
   }
 
   @Get('me')
@@ -87,7 +112,9 @@ export class AuthController {
   @Get('org')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'List organizations where the current user has affiliation' })
+  @ApiOperation({
+    summary: 'List organizations where the current user has affiliation',
+  })
   async getOrgs(@CurrentUser() user: JwtPayload): Promise<OrgAffiliationDto[]> {
     return this.authService.getUserOrgs(user.sub);
   }
@@ -96,7 +123,9 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Choose an organization and receive an org-scoped access token' })
+  @ApiOperation({
+    summary: 'Choose an organization and receive an org-scoped access token',
+  })
   async chooseOrg(
     @CurrentUser() user: JwtPayload,
     @Body() dto: ChooseOrgDto,
@@ -108,12 +137,18 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Change current user password (requires current password)' })
+  @ApiOperation({
+    summary: 'Change current user password (requires current password)',
+  })
   async changePassword(
     @CurrentUser() user: JwtPayload,
     @Body() dto: ChangePasswordDto,
   ): Promise<void> {
-    await this.authService.changePassword(user.sub, dto.currentPassword, dto.newPassword);
+    await this.authService.changePassword(
+      user.sub,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 
   private setRefreshCookie(res: express.Response, token: string): void {

@@ -57,6 +57,7 @@ src/
 │   │   ├── login.dto.ts
 │   │   ├── me-response.dto.ts
 │   │   ├── org-affiliation.dto.ts
+│   │   ├── register.dto.ts
 │   │   └── token-response.dto.ts
 │   ├── guards/
 │   │   ├── jwt-auth.guard.ts
@@ -73,6 +74,10 @@ src/
 │   ├── users.service.ts
 │   └── dto/
 │       ├── create-user.dto.ts
+│       ├── list-users-query.dto.ts
+│       ├── set-system-admin.dto.ts
+│       ├── update-user-status.dto.ts
+│       ├── update-user.dto.ts
 │       └── user-response.dto.ts
 ```
 
@@ -157,8 +162,8 @@ Esse serviço é exportado por [src/prisma/prisma.module.ts](/home/matheusecke/t
 ### Responses
 
 - Respostas comuns passam pelo `ResponseTransformInterceptor`, registrado globalmente em [src/app.module.ts](/home/matheusecke/tcc/tcc-api/src/app.module.ts:19).
-- `PaginationInterceptor` já existe na base, mas ainda não está aplicado em endpoints atuais.
-- A convenção `{ count, data }` fica reservada para listas paginadas quando esse interceptor for adotado.
+- `PaginationInterceptor` is applied by paginated endpoints such as `GET /users`.
+- Paginated services return `{ count, data }`; the interceptor exposes `{ data, meta, links, statusCode }`.
 
 ## Auth atual
 
@@ -174,6 +179,7 @@ O módulo de autenticação já possui controller, service e fluxo funcional de 
 
 ### Endpoints atuais
 
+- `POST /auth/register` — creates an `ACTIVE`, non-system-admin user, returns `accessToken`, and stores `refreshToken` in an `httpOnly` cookie
 - `POST /auth/login` — autentica usuário, retorna `accessToken` e grava `refreshToken` em cookie `httpOnly`
 - `POST /auth/refresh` — rotaciona refresh token e emite novo `accessToken`
 - `POST /auth/logout` — revoga o refresh token atual e limpa o cookie
@@ -200,12 +206,13 @@ O payload JWT atual está tipado em [src/auth/interfaces/jwt-payload.interface.t
 - `refreshToken` é opaco, armazenado no client em cookie `httpOnly` e persistido no banco apenas como hash em `refresh_tokens`.
 - O refresh token atual é rotacionado a cada uso do endpoint `POST /auth/refresh`.
 - Logout revoga o token atual; troca de senha revoga todos os refresh tokens ativos do usuário.
+- Login and refresh require the user to be `ACTIVE` and not soft-deleted.
+- Refresh tokens are revoked after password change, email change, user deactivation, platform-admin flag changes, and user soft delete.
 
 **TODO — hardening do fluxo de auth/session:**
 
 - alinhar expiração do cookie de refresh token com a configuração real de expiração
 - tornar a rotação de refresh token transacional
-- revalidar status/estado do usuário durante o refresh
 - avaliar detecção de reuse de refresh token e revogação de sessão/família de tokens
 - revisar esse fluxo antes de integrar front-end real ou preparar ambiente de produção
 
@@ -236,12 +243,25 @@ createOrganization() { ... }
 
 ## Users atual
 
-O módulo `users` já possui implementação inicial:
+The `users` module provides account identity operations. It is not the primary source for future roster, coaching staff, or stats screens; those should use organization/team/affiliation domain endpoints and include user identity as related data.
 
-- `POST /users` — cria usuário com hash de senha
-- `GET /users/:id` — busca usuário ativo por ID
+### Current endpoints
 
-Hoje esse módulo ainda não possui autenticação/autorização própria nem operações de listagem, atualização ou remoção.
+| Method | Path | Guards | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/users` | `JwtAuthGuard`, `SystemAdminGuard` | Create a global user; accepts optional `isSystemAdmin`; does not log in the created user |
+| `GET` | `/users` | `JwtAuthGuard`, `SystemAdminGuard` | Admin paginated list; supports identity filters and optional affiliation filters |
+| `GET` | `/users/:id` | `JwtAuthGuard`, `SystemAdminGuard` | Admin lookup by ID |
+| `PATCH` | `/users/:id` | `JwtAuthGuard`, `SystemAdminGuard` | Admin profile update for `email` and `name`; revokes refresh tokens when email changes |
+| `PATCH` | `/users/:id/status` | `JwtAuthGuard`, `SystemAdminGuard` | Update user status; revokes refresh tokens when status becomes `INACTIVE` |
+| `PATCH` | `/users/:id/system-admin` | `JwtAuthGuard`, `SystemAdminGuard` | Promote or demote platform admin access; revokes refresh tokens |
+| `DELETE` | `/users/:id` | `JwtAuthGuard`, `SystemAdminGuard` | Soft delete user, set `status=INACTIVE`, and revoke refresh tokens |
+
+### Admin user management rules
+
+- User CRUD endpoints are platform-admin operations.
+- `GET /users` keeps optional `organizationId`, `teamId`, and `role` filters for administrative searches, but user-facing roster/team views should be implemented through affiliation endpoints.
+- Self-delete, self-deactivation, and self-demotion are rejected to prevent account lockout.
 
 ## Testes
 
@@ -258,8 +278,8 @@ Rodar: `npm test`
 
 Apesar de a base da aplicação já estar funcional, ainda não existem nesta fase:
 
-- CRUD completo para `users`, `organizations`, `teams` e affiliations
-- endpoints administrativos de plataforma (`/admin/*`)
+- CRUD completo para `organizations`, `teams` e affiliations
+- endpoints administrativos de plataforma para recursos além de users (`/admin/*`)
 - endpoints org-scoped além dos fluxos atuais de auth
 - migrations aplicadas em banco real
 - módulo de auditoria/logs com functions e triggers
@@ -281,11 +301,8 @@ Esse fluxo está documentado em [DATABASE.md](/home/matheusecke/tcc/tcc-api/docs
 1. **Implementar endpoints de admin de plataforma** (`/admin/*`)
    - `POST /admin/organizations` — criar org
    - `DELETE /admin/organizations/:id` — deletar org
-   - `PATCH /admin/users/:id/set-system-admin` — promover/remover system admin
-   - `GET /admin/users` — listar usuários
 
 2. **Expandir CRUDs básicos**
-   - `users`: listagem, atualização e soft delete
    - `organizations` e `teams`: criação, busca, atualização e desativação
 
 3. **Implementar endpoints org-scoped**
@@ -296,6 +313,7 @@ Esse fluxo está documentado em [DATABASE.md](/home/matheusecke/tcc/tcc-api/docs
 4. **Implementar affiliations**
    - endpoints para adicionar/remover users e teams de orgs
    - validar role/team consistency com DB constraints
+   - endpoints de listagem de elenco, atletas e comissão técnica devem partir de affiliations, não de `/users`
 
 5. **Só depois reintroduzir módulos esportivos**
    - tournaments

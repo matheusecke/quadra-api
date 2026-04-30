@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { EntityStatus } from '@prisma/client';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,9 +11,21 @@ import type { LoginResponseDto } from './dto/login-response.dto';
 import type { OrgAffiliationDto } from './dto/org-affiliation.dto';
 import type { MeResponseDto } from './dto/me-response.dto';
 import type { TokenResponseDto } from './dto/token-response.dto';
+import type { RegisterDto } from './dto/register.dto';
+import { UsersService } from '../users/users.service';
 
 export interface LoginResult extends LoginResponseDto {
   rawRefreshToken: string;
+}
+
+interface TokenUser {
+  id: number;
+  email: string;
+  isSystemAdmin: boolean;
+}
+
+interface LoginUser extends TokenUser {
+  name: string;
 }
 
 @Injectable()
@@ -21,11 +34,28 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly usersService: UsersService,
   ) {}
+
+  async register(dto: RegisterDto): Promise<LoginResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const user = await this.usersService.create(
+        {
+          email: dto.email,
+          name: dto.name,
+          password: dto.password,
+          isSystemAdmin: false,
+        },
+        tx,
+      );
+
+      return this.issueLoginResult(user, [], tx);
+    });
+  }
 
   async login(email: string, password: string): Promise<LoginResult> {
     const user = await this.prisma.user.findFirst({
-      where: { email, isDeleted: false },
+      where: { email, isDeleted: false, status: EntityStatus.ACTIVE },
       select: {
         id: true,
         email: true,
@@ -45,52 +75,30 @@ export class AuthService {
       throw ApiException.unauthorized('Invalid credentials.');
     }
 
-    const affiliations = await this.prisma.organizationUserAffiliation.findMany({
-      where: { userId: user.id, isDeleted: false },
-      select: {
-        organizationId: true,
-        role: true,
-        teamId: true,
-        organization: {
-          select: { id: true, name: true, slug: true },
+    const affiliations = await this.prisma.organizationUserAffiliation.findMany(
+      {
+        where: { userId: user.id, isDeleted: false },
+        select: {
+          organizationId: true,
+          role: true,
+          teamId: true,
+          organization: {
+            select: { id: true, name: true, slug: true },
+          },
         },
       },
-    });
+    );
 
-    const payload: JwtPayload = {
-      sub: user.id,
-      email: user.email,
-      isSystemAdmin: user.isSystemAdmin,
-      organizationId: null,
-      role: null,
-    };
-
-    const accessToken = this.jwtService.sign(payload);
-    const rawRefreshToken = await this.createRefreshToken(user.id);
-
-    const organizations: OrgAffiliationDto[] = affiliations.map((a) => ({
-      organizationId: a.organizationId,
-      organizationName: a.organization.name,
-      organizationSlug: a.organization.slug,
-      role: a.role,
-      teamId: a.teamId,
-    }));
-
-    return {
-      rawRefreshToken,
-      accessToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        isSystemAdmin: user.isSystemAdmin,
-      },
-      organizations,
-    };
+    return this.issueLoginResult(user, this.mapAffiliations(affiliations));
   }
 
-  async refreshAccessToken(rawToken: string): Promise<{ accessToken: string; newRawRefreshToken: string }> {
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  async refreshAccessToken(
+    rawToken: string,
+  ): Promise<{ accessToken: string; newRawRefreshToken: string }> {
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(rawToken)
+      .digest('hex');
 
     const stored = await this.prisma.refreshToken.findFirst({
       where: { tokenHash, isRevoked: false },
@@ -103,6 +111,8 @@ export class AuthService {
             id: true,
             email: true,
             isSystemAdmin: true,
+            status: true,
+            isDeleted: true,
           },
         },
       },
@@ -117,36 +127,44 @@ export class AuthService {
       data: { isRevoked: true },
     });
 
-    const payload: JwtPayload = {
-      sub: stored.user.id,
-      email: stored.user.email,
-      isSystemAdmin: stored.user.isSystemAdmin,
-      organizationId: null,
-      role: null,
-    };
+    if (stored.user.isDeleted || stored.user.status !== EntityStatus.ACTIVE) {
+      throw ApiException.unauthorized('Refresh token is invalid or expired.');
+    }
 
-    const accessToken = this.jwtService.sign(payload);
+    const accessToken = this.signAccessToken(stored.user);
     const newRawRefreshToken = await this.createRefreshToken(stored.userId);
 
     return { accessToken, newRawRefreshToken };
   }
 
-  async createRefreshToken(userId: number): Promise<string> {
+  async createRefreshToken(
+    userId: number,
+    client: Pick<PrismaService, 'refreshToken'> = this.prisma,
+  ): Promise<string> {
     const rawToken = crypto.randomUUID();
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(rawToken)
+      .digest('hex');
     const expiresAt = new Date(Date.now() + this.refreshExpiryMs());
 
-    await this.prisma.refreshToken.create({
+    await client.refreshToken.create({
       data: { userId, tokenHash, expiresAt },
     });
 
     return rawToken;
   }
 
-  async logout(userId: number, rawRefreshToken: string | undefined): Promise<void> {
+  async logout(
+    userId: number,
+    rawRefreshToken: string | undefined,
+  ): Promise<void> {
     if (!rawRefreshToken) return;
 
-    const tokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(rawRefreshToken)
+      .digest('hex');
 
     await this.prisma.refreshToken.updateMany({
       where: { userId, tokenHash, isRevoked: false },
@@ -160,7 +178,7 @@ export class AuthService {
     role: OrgRole | null,
   ): Promise<MeResponseDto> {
     const user = await this.prisma.user.findFirst({
-      where: { id: userId, isDeleted: false },
+      where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
       select: { id: true, email: true, name: true, isSystemAdmin: true },
     });
 
@@ -172,53 +190,67 @@ export class AuthService {
   }
 
   async getUserOrgs(userId: number): Promise<OrgAffiliationDto[]> {
-    const affiliations = await this.prisma.organizationUserAffiliation.findMany({
-      where: { userId, isDeleted: false },
-      select: {
-        organizationId: true,
-        role: true,
-        teamId: true,
-        organization: {
-          select: { id: true, name: true, slug: true },
+    await this.ensureActiveUser(userId);
+
+    const affiliations = await this.prisma.organizationUserAffiliation.findMany(
+      {
+        where: { userId, isDeleted: false },
+        select: {
+          organizationId: true,
+          role: true,
+          teamId: true,
+          organization: {
+            select: { id: true, name: true, slug: true },
+          },
         },
       },
-    });
+    );
 
-    return affiliations.map((a) => ({
-      organizationId: a.organizationId,
-      organizationName: a.organization.name,
-      organizationSlug: a.organization.slug,
-      role: a.role,
-      teamId: a.teamId,
-    }));
+    return this.mapAffiliations(affiliations);
   }
 
-  async chooseOrg(userId: number, organizationId: number): Promise<TokenResponseDto> {
-    const affiliation = await this.prisma.organizationUserAffiliation.findFirst({
-      where: { userId, organizationId, isDeleted: false },
-      select: {
-        userId: true,
-        organizationId: true,
-        role: true,
-        user: {
-          select: { id: true, email: true, isSystemAdmin: true },
+  async chooseOrg(
+    userId: number,
+    organizationId: number,
+  ): Promise<TokenResponseDto> {
+    const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
+      {
+        where: {
+          userId,
+          organizationId,
+          isDeleted: false,
+          user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+        },
+        select: {
+          userId: true,
+          organizationId: true,
+          role: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              isSystemAdmin: true,
+              status: true,
+              isDeleted: true,
+            },
+          },
         },
       },
-    });
+    );
 
     if (!affiliation) {
-      throw ApiException.forbidden('No active affiliation with this organization.');
+      throw ApiException.forbidden(
+        'No active affiliation with this organization.',
+      );
     }
 
-    const payload: JwtPayload = {
-      sub: affiliation.user.id,
-      email: affiliation.user.email,
-      isSystemAdmin: affiliation.user.isSystemAdmin,
-      organizationId: affiliation.organizationId,
-      role: affiliation.role,
+    return {
+      accessToken: this.signAccessToken(
+        affiliation.user,
+        affiliation.organizationId,
+        affiliation.role,
+      ),
     };
-
-    return { accessToken: this.jwtService.sign(payload) };
   }
 
   async changePassword(
@@ -227,7 +259,7 @@ export class AuthService {
     newPassword: string,
   ): Promise<void> {
     const user = await this.prisma.user.findFirst({
-      where: { id: userId, isDeleted: false },
+      where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
       select: { id: true, passwordHash: true },
     });
 
@@ -235,9 +267,15 @@ export class AuthService {
       throw ApiException.notFound('User not found.');
     }
 
-    const passwordValid = await bcrypt.compare(currentPassword, user.passwordHash);
+    const passwordValid = await bcrypt.compare(
+      currentPassword,
+      user.passwordHash,
+    );
     if (!passwordValid) {
-      throw ApiException.badRequest('Current password is incorrect.', 'WRONG_CURRENT_PASSWORD');
+      throw ApiException.badRequest(
+        'Current password is incorrect.',
+        'WRONG_CURRENT_PASSWORD',
+      );
     }
 
     const newHash = await bcrypt.hash(newPassword, 10);
@@ -253,11 +291,88 @@ export class AuthService {
     });
   }
 
+  private async ensureActiveUser(userId: number): Promise<void> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
+      select: { id: true },
+    });
+
+    if (!user) {
+      throw ApiException.notFound('User not found.');
+    }
+  }
+
+  private async issueLoginResult(
+    user: LoginUser,
+    organizations: OrgAffiliationDto[],
+    client: Pick<PrismaService, 'refreshToken'> = this.prisma,
+  ): Promise<LoginResult> {
+    const accessToken = this.signAccessToken(user);
+    const rawRefreshToken = await this.createRefreshToken(user.id, client);
+
+    return {
+      rawRefreshToken,
+      accessToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        isSystemAdmin: user.isSystemAdmin,
+      },
+      organizations,
+    };
+  }
+
+  private signAccessToken(
+    user: TokenUser,
+    organizationId: number | null = null,
+    role: OrgRole | null = null,
+  ): string {
+    return this.jwtService.sign(this.buildPayload(user, organizationId, role));
+  }
+
+  private buildPayload(
+    user: TokenUser,
+    organizationId: number | null,
+    role: OrgRole | null,
+  ): JwtPayload {
+    return {
+      sub: user.id,
+      email: user.email,
+      isSystemAdmin: user.isSystemAdmin,
+      organizationId,
+      role,
+    };
+  }
+
+  private mapAffiliations(
+    affiliations: Array<{
+      organizationId: number;
+      role: OrgRole;
+      teamId: number | null;
+      organization: { name: string; slug: string };
+    }>,
+  ): OrgAffiliationDto[] {
+    return affiliations.map((a) => ({
+      organizationId: a.organizationId,
+      organizationName: a.organization.name,
+      organizationSlug: a.organization.slug,
+      role: a.role,
+      teamId: a.teamId,
+    }));
+  }
+
   private refreshExpiryMs(): number {
-    const value = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d';
+    const value =
+      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d';
     const match = value.match(/^(\d+)([smhd])$/);
     if (!match) return 7 * 86_400_000;
-    const units: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+    const units: Record<string, number> = {
+      s: 1_000,
+      m: 60_000,
+      h: 3_600_000,
+      d: 86_400_000,
+    };
     return parseInt(match[1], 10) * (units[match[2]] ?? 1_000);
   }
 }

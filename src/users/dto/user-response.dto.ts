@@ -7,6 +7,7 @@ export class UserResponseDto {
   @ApiProperty() email: string;
   @ApiProperty() name: string;
   @ApiProperty({ enum: EntityStatus }) status: EntityStatus;
+  @ApiProperty() isSystemAdmin: boolean;
   @ApiProperty() createdAt: Date;
   @ApiProperty() updatedAt: Date;
 }

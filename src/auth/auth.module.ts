@@ -10,11 +10,13 @@ import { SystemAdminGuard } from './guards/system-admin.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
     ConfigModule,
     PrismaModule,
+    UsersModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
