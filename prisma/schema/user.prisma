@@ -10,6 +10,7 @@ model User {
   updatedAt    DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
 
   organizationAffiliations OrganizationUserAffiliation[]
+  refreshTokens            RefreshToken[]
 
   // DB-only rule:
   // CHECK (email = lower(email)).

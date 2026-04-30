@@ -7,9 +7,14 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { OrgRoleGuard } from './guards/org-role.guard';
 import { SystemAdminGuard } from './guards/system-admin.guard';
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
   imports: [
+    ConfigModule,
+    PrismaModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -22,7 +27,8 @@ import { SystemAdminGuard } from './guards/system-admin.guard';
       }),
     }),
   ],
-  providers: [JwtStrategy, JwtAuthGuard, OrgRoleGuard, SystemAdminGuard],
+  controllers: [AuthController],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, OrgRoleGuard, SystemAdminGuard],
   exports: [JwtModule, JwtAuthGuard, OrgRoleGuard, SystemAdminGuard],
 })
 export class AuthModule {}
