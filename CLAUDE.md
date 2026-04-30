@@ -34,7 +34,7 @@ Multi-file schema in `prisma/schema/` — one `.prisma` file per model. Config i
 
 **Conventions:**
 - Timestamps: `DateTime @default(now()) @db.Timestamptz(3) @map("created_at")` / `@updatedAt`
-- Soft delete: `isDeleted Boolean @default(false) @map("is_deleted")` on all entities
+- Soft delete: `isDeleted Boolean @default(false) @map("is_deleted")` — default for most entities; omit for transient/technical records where soft delete doesn't make sense
 - Slugs: lowercase enforced via CHECK constraint
 - Table/column names: snake_case via `@@map` / `@map`
 
@@ -103,12 +103,12 @@ Error format: `{ error: { title, message, code, data }, statusCode }`.
 - Response DTOs: annotate with `@ApiProperty()` for Swagger
 
 ## Prisma Queries
-- Always filter `isDeleted: false` on reads
-- Always use explicit `select` — never return `passwordHash` or internal fields
-- Multi-tenant: always filter by `organizationId` from JWT payload
+- Filter `isDeleted: false` on reads by default; skip only for entities where soft delete is intentionally absent
+- Use explicit `select` on queries that return data to the client; always omit `passwordHash` and internal fields
+- Multi-tenant: scope queries to `organizationId` from JWT payload by default; `SystemAdmin`-gated endpoints may intentionally cross org boundaries
 
 ## Tests
-- Unit tests in `*.service.spec.ts` next to the service
+- Unit tests in `*.service.spec.ts` next to the service — only services are tested; do not write tests for controllers, guards, decorators, or other non-service classes
 - `jest.config.ts` runs only `*.service.spec.ts` under `src/`
 - Mock `PrismaService` with `jest.fn()` — no real DB:
 ```ts
