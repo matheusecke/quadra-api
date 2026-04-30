@@ -2,6 +2,13 @@
 
 Multi-tenant NestJS backend for basketball championship management. Domain context: `/home/matheusecke/tcc/TCC.md`.
 
+## Documentation Sync
+After any implementation that changes behavior, architecture, schema, endpoints, auth flows, module structure, or developer workflow, always review the documents in `docs/` for drift.
+
+Agents must check whether the implemented change created any divergence or requires additions/updates in documentation.
+
+If a document is outdated because of the implementation, update it in the same work session unless the user explicitly asks not to.
+
 ## Language
 All written artifacts must be in **English**: code comments, implementation plans, commit messages, PR titles and descriptions, branch names, migration names, and any other git-related content.
 

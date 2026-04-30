@@ -4,11 +4,12 @@ model RefreshToken {
   tokenHash  String   @unique @map("token_hash")
   expiresAt  DateTime @map("expires_at") @db.Timestamptz(3)
   isRevoked  Boolean  @default(false) @map("is_revoked")
-  isDeleted  Boolean  @default(false) @map("is_deleted")
   createdAt  DateTime @default(now()) @db.Timestamptz(3) @map("created_at")
   updatedAt  DateTime @updatedAt @db.Timestamptz(3) @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
+  @@index([userId, isRevoked])
   @@map("refresh_tokens")
 }

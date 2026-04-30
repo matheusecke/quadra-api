@@ -1,19 +1,20 @@
 # Estrutura da API — tcc-api
 
-Visão atual do backend NestJS + Prisma, alinhada ao estado real do projeto e ao escopo inicial reduzido.
+Visão atual do backend NestJS + Prisma, alinhada ao estado real do projeto neste momento.
 
 ## Estado atual
 
-- Backend em NestJS com `ConfigModule` global, `PrismaModule` global e `AuthModule` já registrados em [src/app.module.ts](/home/matheusecke/tcc/tcc-api/src/app.module.ts:1).
+- Backend em NestJS com `ConfigModule` global, `ThrottlerModule`, `PrismaModule`, `AuthModule` e `UsersModule` registrados em [src/app.module.ts](/home/matheusecke/tcc/tcc-api/src/app.module.ts:1).
 - Bootstrap com `ValidationPipe`, filtros globais para exceções da API e Prisma, `cookie-parser` e Swagger em `/api`, conforme [src/main.ts](/home/matheusecke/tcc/tcc-api/src/main.ts:1).
 - Prisma configurado com multi-file schema em `prisma/schema/`.
-- Escopo atual do banco reduzido ao núcleo:
+- O schema atual cobre o núcleo multi-tenant e o fluxo de sessão/autenticação:
 - `User`
 - `Organization`
 - `Team`
 - `OrganizationUserAffiliation`
 - `OrganizationTeamAffiliation`
-- Módulos de campeonato, partida e estatísticas foram removidos do schema nesta fase inicial.
+- `RefreshToken`
+- Módulos de campeonato, partida e estatísticas não fazem parte do schema atual.
 
 ## Estrutura de diretórios
 
@@ -43,10 +44,20 @@ src/
 │
 ├── auth/
 │   ├── auth.module.ts
+│   ├── auth.controller.ts
+│   ├── auth.service.ts
 │   ├── decorators/
 │   │   ├── current-user.decorator.ts
 │   │   ├── org-roles.decorator.ts
 │   │   └── system-admin.decorator.ts
+│   ├── dto/
+│   │   ├── change-password.dto.ts
+│   │   ├── choose-org.dto.ts
+│   │   ├── login-response.dto.ts
+│   │   ├── login.dto.ts
+│   │   ├── me-response.dto.ts
+│   │   ├── org-affiliation.dto.ts
+│   │   └── token-response.dto.ts
 │   ├── guards/
 │   │   ├── jwt-auth.guard.ts
 │   │   ├── org-role.guard.ts
@@ -55,6 +66,14 @@ src/
 │   │   └── jwt-payload.interface.ts
 │   └── strategies/
 │       └── jwt.strategy.ts
+│
+├── users/
+│   ├── users.module.ts
+│   ├── users.controller.ts
+│   ├── users.service.ts
+│   └── dto/
+│       ├── create-user.dto.ts
+│       └── user-response.dto.ts
 ```
 
 ```text
@@ -65,6 +84,7 @@ prisma/
 │   ├── user.prisma
 │   ├── organization.prisma
 │   ├── team.prisma
+│   ├── refresh-token.prisma
 │   ├── organization-user-affiliation.prisma
 │   └── organization-team-affiliation.prisma
 └── migrations/
@@ -72,13 +92,14 @@ prisma/
 
 ## Banco atual
 
-### Modelos centrais
+### Modelos atuais
 
 | Model Prisma | Tabela no banco | Função |
 | --- | --- | --- |
 | `User` | `users` | Identidade global do usuário |
 | `Organization` | `organizations` | Tenant raiz |
 | `Team` | `teams` | Identidade global da equipe |
+| `RefreshToken` | `refresh_tokens` | Sessão persistida para rotação e revogação de refresh token |
 | `OrganizationUserAffiliation` | `organization_user_affiliations` | Papel do usuário e vínculo opcional com time dentro da organização |
 | `OrganizationTeamAffiliation` | `organization_team_affiliations` | Relação contextual de equipe com organização |
 
@@ -89,11 +110,11 @@ prisma/
 - Tabelas do banco em plural `snake_case`.
 - Colunas do banco em `snake_case`.
 - IDs sequenciais com `Int @default(autoincrement())`.
-- `status` apenas em `users`, `organizations` e `teams`.
-- `is_deleted` em todas as 5 tabelas centrais.
+- `status` existe em `users`, `organizations` e `teams`.
+- `is_deleted` existe nas entidades centrais e affiliations; `refresh_tokens` usa revogação explícita via `is_revoked`.
 - Itens PostgreSQL não mapeados diretamente pelo Prisma são tratados como `DB-only` e documentados com comentário no schema.
 
-Mais detalhes estão em [docs/database.md](/home/matheusecke/tcc/tcc-api/docs/database.md:1).
+Mais detalhes estão em [DATABASE.md](/home/matheusecke/tcc/tcc-api/docs/DATABASE.md:1).
 
 ## Prisma
 
@@ -103,7 +124,7 @@ O Prisma é acessado por um único serviço global:
 - conecta no `onModuleInit`
 - desconecta no `onModuleDestroy`
 
-Esse serviço é exportado por [src/prisma/prisma.module.ts](/home/matheusecke/tcc/tcc-api/src/prisma/prisma.module.ts:1).
+Esse serviço é exportado por [src/prisma/prisma.module.ts](/home/matheusecke/tcc/tcc-api/src/prisma/prisma.module.ts:1) e registrado como módulo global.
 
 ## Erros e respostas
 
@@ -135,19 +156,31 @@ Esse serviço é exportado por [src/prisma/prisma.module.ts](/home/matheusecke/t
 
 ### Responses
 
-- Respostas comuns passam pelo `ResponseTransformInterceptor`.
-- Respostas paginadas usam `PaginationInterceptor`.
-- Convenção atual para listas em services: retornar `{ count, data }`.
+- Respostas comuns passam pelo `ResponseTransformInterceptor`, registrado globalmente em [src/app.module.ts](/home/matheusecke/tcc/tcc-api/src/app.module.ts:19).
+- `PaginationInterceptor` já existe na base, mas ainda não está aplicado em endpoints atuais.
+- A convenção `{ count, data }` fica reservada para listas paginadas quando esse interceptor for adotado.
 
 ## Auth atual
 
-O módulo de autenticação já contém a base estrutural:
+O módulo de autenticação já possui controller, service e fluxo funcional de sessão:
 
+- `AuthController`
+- `AuthService`
 - `JwtStrategy`
 - `JwtAuthGuard` — valida JWT
 - `OrgRoleGuard` — verifica papel dentro de uma organização
 - `SystemAdminGuard` — verifica se usuário é admin de plataforma
 - decorators `@CurrentUser()`, `@OrgRoles()` e `@SystemAdmin()`
+
+### Endpoints atuais
+
+- `POST /auth/login` — autentica usuário, retorna `accessToken` e grava `refreshToken` em cookie `httpOnly`
+- `POST /auth/refresh` — rotaciona refresh token e emite novo `accessToken`
+- `POST /auth/logout` — revoga o refresh token atual e limpa o cookie
+- `GET /auth/me` — retorna contexto do usuário autenticado
+- `GET /auth/org` — lista afiliações do usuário
+- `POST /auth/org` — escolhe uma organização e emite JWT com contexto da org
+- `POST /auth/change-password` — troca senha e revoga os refresh tokens ativos
 
 O payload JWT atual está tipado em [src/auth/interfaces/jwt-payload.interface.ts](/home/matheusecke/tcc/tcc-api/src/auth/interfaces/jwt-payload.interface.ts:1):
 
@@ -161,50 +194,73 @@ O payload JWT atual está tipado em [src/auth/interfaces/jwt-payload.interface.t
 }
 ```
 
+### Sessão e refresh token
+
+- `accessToken` é JWT assinado com expiração curta configurada no `JwtModule`.
+- `refreshToken` é opaco, armazenado no client em cookie `httpOnly` e persistido no banco apenas como hash em `refresh_tokens`.
+- O refresh token atual é rotacionado a cada uso do endpoint `POST /auth/refresh`.
+- Logout revoga o token atual; troca de senha revoga todos os refresh tokens ativos do usuário.
+
+**TODO — hardening do fluxo de auth/session:**
+
+- alinhar expiração do cookie de refresh token com a configuração real de expiração
+- tornar a rotação de refresh token transacional
+- revalidar status/estado do usuário durante o refresh
+- avaliar detecção de reuse de refresh token e revogação de sessão/família de tokens
+- revisar esse fluxo antes de integrar front-end real ou preparar ambiente de produção
+
 ### Camadas de autorização
 
-**OrgRoleGuard**: protege operações dentro de uma organização específica — lê `role` do JWT e valida contra `@OrgRoles()`.
+**OrgRoleGuard**: protege operações dentro de uma organização específica, lendo `role` do JWT e validando contra `@OrgRoles()`.
 
 ```typescript
 @UseGuards(JwtAuthGuard, OrgRoleGuard)
 @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
-@Post('championships')
-createChampionship() { ... }
+@Post('organizations/:orgId/teams')
+createTeam() { ... }
 ```
 
-**SystemAdminGuard**: protege operações de plataforma (criar/deletar orgs, gerenciar users globais, etc.) — lê `isSystemAdmin` do JWT. 
+**SystemAdminGuard**: protege operações de plataforma, lendo `isSystemAdmin` do JWT.
 
 ```typescript
 @UseGuards(JwtAuthGuard, SystemAdminGuard)
-@Post('organizations')
+@Post('admin/organizations')
 createOrganization() { ... }
 ```
 
 **Separação de concerns:**
-- Sistema admin NÃO bypassa `OrgRoleGuard`
-- As duas camadas são completamente independentes
-- Um system admin que precise operar dentro de uma org usa endpoints admin dedicados (`/admin/*`), não os endpoints org-user normais
-- Campo `is_system_admin` vem da tabela `users` e é baked no JWT no login — sem lookup per-request
+
+- Sistema admin não bypassa `OrgRoleGuard` automaticamente.
+- As duas camadas são independentes.
+- O campo `is_system_admin` vem da tabela `users` e é incorporado ao JWT no login, sem lookup per-request.
+
+## Users atual
+
+O módulo `users` já possui implementação inicial:
+
+- `POST /users` — cria usuário com hash de senha
+- `GET /users/:id` — busca usuário ativo por ID
+
+Hoje esse módulo ainda não possui autenticação/autorização própria nem operações de listagem, atualização ou remoção.
 
 ## Testes
 
-**Escopo atual:** Testes unitários cobrem apenas **services** (`*.service.spec.ts`).
+**Escopo atual:** testes unitários cobrem apenas **services** (`*.service.spec.ts`).
 
 - Jest configurado em [jest.config.ts](/home/matheusecke/tcc/tcc-api/jest.config.ts:1)
 - Pattern: `testMatch: ['<rootDir>/**/*.service.spec.ts']`
 - Coverage: apenas `*.service.ts`
-- Guards, decorators e strategies testam-se implicitamente via controllers (quando estes forem implementados)
+- Guards, decorators, strategies e controllers ainda não têm cobertura dedicada
 
 Rodar: `npm test`
 
 ## O que ainda não existe
 
-Apesar de a estrutura base de NestJS estar pronta, o projeto ainda não possui nesta fase:
+Apesar de a base da aplicação já estar funcional, ainda não existem nesta fase:
 
-- endpoint de login (que emitirá JWT com `isSystemAdmin` incluído)
-- módulos de CRUD implementados para `users`, `organizations`, `teams` e affiliations
-- services com regras de negócio do domínio
-- controllers de operação além da base do módulo auth
+- CRUD completo para `users`, `organizations`, `teams` e affiliations
+- endpoints administrativos de plataforma (`/admin/*`)
+- endpoints org-scoped além dos fluxos atuais de auth
 - migrations aplicadas em banco real
 - módulo de auditoria/logs com functions e triggers
 - módulos de campeonato, partida e estatísticas
@@ -218,29 +274,30 @@ Apesar de a estrutura base de NestJS estar pronta, o projeto ainda não possui n
 - complementar o `migration.sql` manualmente
 - aplicar a migration depois
 
-Esse fluxo está documentado em [docs/database.md](/home/matheusecke/tcc/tcc-api/docs/database.md:96).
+Esse fluxo está documentado em [DATABASE.md](/home/matheusecke/tcc/tcc-api/docs/DATABASE.md:96).
 
 ## Próximos blocos naturais
 
-1. **Implementar endpoint de login**
-   - Gerar JWT com `isSystemAdmin: boolean` incluído no payload
-   - Ler campo `is_system_admin` da tabela `users`
-   - Retornar token com organização default (se houver) ou null
-
-2. **Implementar endpoints de admin de plataforma** (`/admin/*`)
-   - `POST /admin/organizations` — criar org (protegido por `SystemAdminGuard`)
+1. **Implementar endpoints de admin de plataforma** (`/admin/*`)
+   - `POST /admin/organizations` — criar org
    - `DELETE /admin/organizations/:id` — deletar org
    - `PATCH /admin/users/:id/set-system-admin` — promover/remover system admin
-   - `GET /admin/users` — listar todos os usuários
+   - `GET /admin/users` — listar usuários
 
-3. **Implementar CRUDs básicos org-scoped**
+2. **Expandir CRUDs básicos**
+   - `users`: listagem, atualização e soft delete
+   - `organizations` e `teams`: criação, busca, atualização e desativação
+
+3. **Implementar endpoints org-scoped**
    - `POST /organizations/:orgId/teams`
    - `GET /organizations/:orgId/teams`
-   - `POST /organizations/:orgId/championships` — criar campeonato
-   - Protegidos por `OrgRoleGuard`
+   - protegidos por `OrgRoleGuard`
 
 4. **Implementar affiliations**
-   - Endpoints para adicionar/remover users e teams de orgs
-   - Validar role/team consistency com DB constraints
+   - endpoints para adicionar/remover users e teams de orgs
+   - validar role/team consistency com DB constraints
 
-5. **Só depois reintroduzir módulos esportivos** (tournaments, matches, statistics)
+5. **Só depois reintroduzir módulos esportivos**
+   - tournaments
+   - matches
+   - statistics
