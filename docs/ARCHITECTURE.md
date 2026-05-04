@@ -99,14 +99,14 @@ prisma/
 
 ### Modelos atuais
 
-| Model Prisma | Tabela no banco | Função |
-| --- | --- | --- |
-| `User` | `users` | Identidade global do usuário |
-| `Organization` | `organizations` | Tenant raiz |
-| `Team` | `teams` | Identidade global da equipe |
-| `RefreshToken` | `refresh_tokens` | Sessão persistida para rotação e revogação de refresh token |
+| Model Prisma                  | Tabela no banco                  | Função                                                             |
+| ----------------------------- | -------------------------------- | ------------------------------------------------------------------ |
+| `User`                        | `users`                          | Identidade global do usuário                                       |
+| `Organization`                | `organizations`                  | Tenant raiz                                                        |
+| `Team`                        | `teams`                          | Identidade global da equipe                                        |
+| `RefreshToken`                | `refresh_tokens`                 | Sessão persistida para rotação e revogação de refresh token        |
 | `OrganizationUserAffiliation` | `organization_user_affiliations` | Papel do usuário e vínculo opcional com time dentro da organização |
-| `OrganizationTeamAffiliation` | `organization_team_affiliations` | Relação contextual de equipe com organização |
+| `OrganizationTeamAffiliation` | `organization_team_affiliations` | Relação contextual de equipe com organização                       |
 
 ### Convenções
 
@@ -137,11 +137,11 @@ Esse serviço é exportado por [src/prisma/prisma.module.ts](/home/matheusecke/t
 
 [src/common/filters/prisma-exception.filter.ts](/home/matheusecke/tcc/tcc-api/src/common/filters/prisma-exception.filter.ts:1) traduz:
 
-| Código Prisma | Resposta da API |
-| --- | --- |
-| `P2002` | `409 DUPLICATE_RECORD` |
-| `P2003` | `422 FOREIGN_KEY_VIOLATION` |
-| `P2025` | `404 RECORD_NOT_FOUND` |
+| Código Prisma | Resposta da API             |
+| ------------- | --------------------------- |
+| `P2002`       | `409 DUPLICATE_RECORD`      |
+| `P2003`       | `422 FOREIGN_KEY_VIOLATION` |
+| `P2025`       | `404 RECORD_NOT_FOUND`      |
 
 ### ApiException
 
@@ -181,11 +181,11 @@ O módulo de autenticação já possui controller, service e fluxo funcional de 
 
 - `POST /auth/register` — creates an `ACTIVE`, non-system-admin user, returns `accessToken`, and stores `refreshToken` in an `httpOnly` cookie
 - `POST /auth/login` — autentica usuário, retorna `accessToken` e grava `refreshToken` em cookie `httpOnly`
-- `POST /auth/refresh` — rotaciona refresh token e emite novo `accessToken`
-- `POST /auth/logout` — revoga o refresh token atual e limpa o cookie
+- `POST /auth/refresh` — rotaciona refresh token e emite novo `accessToken`, preservando o contexto de organização quando ele ainda estiver ativo
+- `POST /auth/logout` — revoga o refresh token atual pelo cookie e limpa o cookie, sem exigir bearer token
 - `GET /auth/me` — retorna contexto do usuário autenticado
 - `GET /auth/org` — lista afiliações do usuário
-- `POST /auth/org` — escolhe uma organização e emite JWT com contexto da org
+- `POST /auth/org` — escolhe uma organização, rotaciona o refresh token com contexto da org e emite JWT org-scoped
 - `POST /auth/change-password` — troca senha e revoga os refresh tokens ativos
 
 O payload JWT atual está tipado em [src/auth/interfaces/jwt-payload.interface.ts](/home/matheusecke/tcc/tcc-api/src/auth/interfaces/jwt-payload.interface.ts:1):
@@ -203,16 +203,18 @@ O payload JWT atual está tipado em [src/auth/interfaces/jwt-payload.interface.t
 ### Sessão e refresh token
 
 - `accessToken` é JWT assinado com expiração curta configurada no `JwtModule`.
-- `refreshToken` é opaco, armazenado no client em cookie `httpOnly` e persistido no banco apenas como hash em `refresh_tokens`.
+- `refreshToken` é opaco, armazenado no client em cookie `httpOnly` e persistido no banco como hash em `refresh_tokens`.
+- `refresh_tokens.organization_id` guarda opcionalmente a organização escolhida; `role` não é persistido e é recalculado pela afiliação ativa no refresh.
 - O refresh token atual é rotacionado a cada uso do endpoint `POST /auth/refresh`.
-- Logout revoga o token atual; troca de senha revoga todos os refresh tokens ativos do usuário.
+- `POST /auth/org` também rotaciona o refresh token atual para associar a sessão à organização escolhida.
+- Logout revoga o token atual pelo cookie; troca de senha revoga todos os refresh tokens ativos do usuário.
 - Login and refresh require the user to be `ACTIVE` and not soft-deleted.
+- Login, listagem de orgs, escolha de org e refresh org-scoped consideram apenas afiliações, organizações e times ativos e não deletados.
+- Quando uma sessão org-scoped passa por refresh e a org/afiliação/time não está mais ativa, o backend rotaciona a sessão para contexto global em vez de derrubar o usuário.
 - Refresh tokens are revoked after password change, email change, user deactivation, platform-admin flag changes, and user soft delete.
 
 **TODO — hardening do fluxo de auth/session:**
 
-- alinhar expiração do cookie de refresh token com a configuração real de expiração
-- tornar a rotação de refresh token transacional
 - avaliar detecção de reuse de refresh token e revogação de sessão/família de tokens
 - revisar esse fluxo antes de integrar front-end real ou preparar ambiente de produção
 
@@ -247,15 +249,15 @@ The `users` module provides account identity operations. It is not the primary s
 
 ### Current endpoints
 
-| Method | Path | Guards | Purpose |
-| --- | --- | --- | --- |
-| `POST` | `/users` | `JwtAuthGuard`, `SystemAdminGuard` | Create a global user; accepts optional `isSystemAdmin`; does not log in the created user |
-| `GET` | `/users` | `JwtAuthGuard`, `SystemAdminGuard` | Admin paginated list; supports identity filters and optional affiliation filters |
-| `GET` | `/users/:id` | `JwtAuthGuard`, `SystemAdminGuard` | Admin lookup by ID |
-| `PATCH` | `/users/:id` | `JwtAuthGuard`, `SystemAdminGuard` | Admin profile update for `email` and `name`; revokes refresh tokens when email changes |
-| `PATCH` | `/users/:id/status` | `JwtAuthGuard`, `SystemAdminGuard` | Update user status; revokes refresh tokens when status becomes `INACTIVE` |
-| `PATCH` | `/users/:id/system-admin` | `JwtAuthGuard`, `SystemAdminGuard` | Promote or demote platform admin access; revokes refresh tokens |
-| `DELETE` | `/users/:id` | `JwtAuthGuard`, `SystemAdminGuard` | Soft delete user, set `status=INACTIVE`, and revoke refresh tokens |
+| Method   | Path                      | Guards                             | Purpose                                                                                  |
+| -------- | ------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| `POST`   | `/users`                  | `JwtAuthGuard`, `SystemAdminGuard` | Create a global user; accepts optional `isSystemAdmin`; does not log in the created user |
+| `GET`    | `/users`                  | `JwtAuthGuard`, `SystemAdminGuard` | Admin paginated list; supports identity filters and optional affiliation filters         |
+| `GET`    | `/users/:id`              | `JwtAuthGuard`, `SystemAdminGuard` | Admin lookup by ID                                                                       |
+| `PATCH`  | `/users/:id`              | `JwtAuthGuard`, `SystemAdminGuard` | Admin profile update for `email` and `name`; revokes refresh tokens when email changes   |
+| `PATCH`  | `/users/:id/status`       | `JwtAuthGuard`, `SystemAdminGuard` | Update user status; revokes refresh tokens when status becomes `INACTIVE`                |
+| `PATCH`  | `/users/:id/system-admin` | `JwtAuthGuard`, `SystemAdminGuard` | Promote or demote platform admin access; revokes refresh tokens                          |
+| `DELETE` | `/users/:id`              | `JwtAuthGuard`, `SystemAdminGuard` | Soft delete user, set `status=INACTIVE`, and revoke refresh tokens                       |
 
 ### Admin user management rules
 

@@ -82,18 +82,15 @@ export class AuthController {
   }
 
   @Post('logout')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoke refresh token and end session' })
   async logout(
-    @CurrentUser() user: JwtPayload,
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ): Promise<void> {
     const rawToken: string | undefined = (req.cookies as Record<string, string>)
       ?.refreshToken;
-    await this.authService.logout(user.sub, rawToken);
+    await this.authService.logout(rawToken);
     res.clearCookie('refreshToken', {
       httpOnly: true,
       sameSite: 'strict',
@@ -129,8 +126,22 @@ export class AuthController {
   async chooseOrg(
     @CurrentUser() user: JwtPayload,
     @Body() dto: ChooseOrgDto,
+    @Req() req: express.Request,
+    @Res({ passthrough: true }) res: express.Response,
   ): Promise<TokenResponseDto> {
-    return this.authService.chooseOrg(user.sub, dto.organizationId);
+    const rawToken: string | undefined = (req.cookies as Record<string, string>)
+      ?.refreshToken;
+    if (!rawToken) {
+      throw ApiException.unauthorized('Refresh token not provided.');
+    }
+
+    const { rawRefreshToken, ...response } = await this.authService.chooseOrg(
+      user.sub,
+      dto.organizationId,
+      rawToken,
+    );
+    this.setRefreshCookie(res, rawRefreshToken);
+    return response;
   }
 
   @Post('change-password')
@@ -157,7 +168,7 @@ export class AuthController {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: this.authService.getRefreshCookieMaxAgeMs(),
     });
   }
 }

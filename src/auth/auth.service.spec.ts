@@ -278,6 +278,22 @@ describe('AuthService', () => {
         role: 'ORG_ADMIN',
         teamId: null,
       });
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            isDeleted: false,
+            organization: {
+              is: { isDeleted: false, status: 'ACTIVE' },
+            },
+            OR: [
+              { teamId: null },
+              { team: { is: { isDeleted: false, status: 'ACTIVE' } } },
+            ],
+          }),
+        }),
+      );
     });
   });
 
@@ -294,6 +310,7 @@ describe('AuthService', () => {
       mockPrisma.refreshToken.findFirst.mockResolvedValue({
         id: 10,
         userId: 1,
+        organizationId: null,
         expiresAt: new Date(Date.now() - 1000),
         user: {
           id: 1,
@@ -313,6 +330,7 @@ describe('AuthService', () => {
       mockPrisma.refreshToken.findFirst.mockResolvedValue({
         id: 10,
         userId: 1,
+        organizationId: null,
         expiresAt: new Date(Date.now() + 100_000),
         user: {
           id: 1,
@@ -322,14 +340,14 @@ describe('AuthService', () => {
           isDeleted: false,
         },
       });
-      mockPrisma.refreshToken.update.mockResolvedValue({});
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
 
       await expect(service.refreshAccessToken('valid-uuid')).rejects.toThrow(
         ApiException,
       );
 
-      expect(mockPrisma.refreshToken.update).toHaveBeenCalledWith({
-        where: { id: 10 },
+      expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { id: 10, isRevoked: false },
         data: { isRevoked: true },
       });
       expect(mockJwtService.sign).not.toHaveBeenCalled();
@@ -339,6 +357,7 @@ describe('AuthService', () => {
       mockPrisma.refreshToken.findFirst.mockResolvedValue({
         id: 10,
         userId: 1,
+        organizationId: null,
         expiresAt: new Date(Date.now() + 100_000),
         user: {
           id: 1,
@@ -348,14 +367,14 @@ describe('AuthService', () => {
           isDeleted: true,
         },
       });
-      mockPrisma.refreshToken.update.mockResolvedValue({});
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
 
       await expect(service.refreshAccessToken('valid-uuid')).rejects.toThrow(
         ApiException,
       );
 
-      expect(mockPrisma.refreshToken.update).toHaveBeenCalledWith({
-        where: { id: 10 },
+      expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { id: 10, isRevoked: false },
         data: { isRevoked: true },
       });
       expect(mockJwtService.sign).not.toHaveBeenCalled();
@@ -365,6 +384,7 @@ describe('AuthService', () => {
       mockPrisma.refreshToken.findFirst.mockResolvedValue({
         id: 10,
         userId: 1,
+        organizationId: null,
         expiresAt: new Date(Date.now() + 100_000),
         user: {
           id: 1,
@@ -374,19 +394,119 @@ describe('AuthService', () => {
           isDeleted: false,
         },
       });
-      mockPrisma.refreshToken.update.mockResolvedValue({});
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
 
       const result = await service.refreshAccessToken('valid-uuid');
 
       expect(result.accessToken).toBe('signed-jwt-token');
       expect(typeof result.newRawRefreshToken).toBe('string');
-      expect(mockPrisma.refreshToken.update).toHaveBeenCalledWith(
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 10 },
+          where: { id: 10, isRevoked: false },
           data: { isRevoked: true },
         }),
       );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 1, organizationId: null }),
+      });
+    });
+
+    it('preserves org context when refresh token organization is still active', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 10,
+        userId: 1,
+        organizationId: 5,
+        expiresAt: new Date(Date.now() + 100_000),
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        organizationId: 5,
+        role: 'ORG_ADMIN',
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
+
+      await service.refreshAccessToken('valid-uuid');
+
+      expect(
+        mockPrisma.organizationUserAffiliation.findFirst,
+      ).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          userId: 1,
+          organizationId: 5,
+          isDeleted: false,
+          organization: {
+            is: { isDeleted: false, status: 'ACTIVE' },
+          },
+        }),
+        select: { organizationId: true, role: true },
+      });
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: 5, role: 'ORG_ADMIN' }),
+      );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 1, organizationId: 5 }),
+      });
+    });
+
+    it('rejects concurrent refresh reuse when the token was already consumed', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 10,
+        userId: 1,
+        organizationId: null,
+        expiresAt: new Date(Date.now() + 100_000),
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.refreshAccessToken('valid-uuid')).rejects.toThrow(
+        ApiException,
+      );
+
+      expect(mockJwtService.sign).not.toHaveBeenCalled();
+      expect(mockPrisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('falls back to global context when refresh token organization is no longer active', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 10,
+        userId: 1,
+        organizationId: 5,
+        expiresAt: new Date(Date.now() + 100_000),
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
+
+      await service.refreshAccessToken('valid-uuid');
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: null, role: null }),
+      );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 1, organizationId: null }),
+      });
     });
   });
 
@@ -394,16 +514,22 @@ describe('AuthService', () => {
     it('revokes the refresh token when it exists', async () => {
       mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
 
-      await service.logout(1, 'some-raw-token');
+      await service.logout('some-raw-token');
 
       expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
-        where: expect.objectContaining({ userId: 1 }),
+        where: expect.objectContaining({
+          tokenHash: expect.any(String),
+          isRevoked: false,
+        }),
         data: { isRevoked: true },
       });
+      expect(
+        mockPrisma.refreshToken.updateMany.mock.calls[0][0].where,
+      ).not.toHaveProperty('userId');
     });
 
     it('completes without error when no refresh token is provided', async () => {
-      await expect(service.logout(1, undefined)).resolves.not.toThrow();
+      await expect(service.logout(undefined)).resolves.not.toThrow();
     });
   });
 
@@ -472,6 +598,19 @@ describe('AuthService', () => {
         role: 'TEAM_ADMIN',
         teamId: 7,
       });
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: 1,
+            isDeleted: false,
+            organization: {
+              is: { isDeleted: false, status: 'ACTIVE' },
+            },
+          }),
+        }),
+      );
     });
 
     it('returns empty array when user has no affiliations', async () => {
@@ -498,10 +637,12 @@ describe('AuthService', () => {
     it('throws 403 when user has no affiliation with the org', async () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
 
-      await expect(service.chooseOrg(1, 99)).rejects.toThrow(ApiException);
+      await expect(
+        service.chooseOrg(1, 99, 'raw-refresh-token'),
+      ).rejects.toThrow(ApiException);
     });
 
-    it('returns access token with org context when affiliation exists', async () => {
+    it('returns access token with org context and rotates refresh token when affiliation exists', async () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
         userId: 1,
         organizationId: 5,
@@ -514,13 +655,58 @@ describe('AuthService', () => {
           isDeleted: false,
         },
       });
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 20,
+        userId: 1,
+        organizationId: null,
+        expiresAt: new Date(Date.now() + 100_000),
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 21 });
 
-      const result = await service.chooseOrg(1, 5);
+      const result = await service.chooseOrg(1, 5, 'raw-refresh-token');
 
       expect(result.accessToken).toBe('signed-jwt-token');
+      expect(typeof result.rawRefreshToken).toBe('string');
       expect(mockJwtService.sign).toHaveBeenCalledWith(
         expect.objectContaining({ organizationId: 5, role: 'ORG_ADMIN' }),
       );
+      expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { id: 20, isRevoked: false },
+        data: { isRevoked: true },
+      });
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 1, organizationId: 5 }),
+      });
+    });
+
+    it('rejects chooseOrg when the refresh token was already consumed', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 20,
+        userId: 1,
+        organizationId: null,
+        expiresAt: new Date(Date.now() + 100_000),
+      });
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        userId: 1,
+        organizationId: 5,
+        role: 'ORG_ADMIN',
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.chooseOrg(1, 5, 'raw-refresh-token'),
+      ).rejects.toThrow(ApiException);
+
+      expect(mockJwtService.sign).not.toHaveBeenCalled();
+      expect(mockPrisma.refreshToken.create).not.toHaveBeenCalled();
     });
   });
 
@@ -570,6 +756,17 @@ describe('AuthService', () => {
         where: { userId: 1, isRevoked: false },
         data: { isRevoked: true },
       });
+    });
+  });
+
+  describe('getRefreshCookieMaxAgeMs', () => {
+    it('uses the configured refresh token expiry for cookie maxAge', () => {
+      mockConfigService.get.mockImplementation((key: string) => {
+        if (key === 'JWT_REFRESH_EXPIRES_IN') return '2h';
+        return undefined;
+      });
+
+      expect(service.getRefreshCookieMaxAgeMs()).toBe(7_200_000);
     });
   });
 });

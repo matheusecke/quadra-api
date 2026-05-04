@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { EntityStatus } from '@prisma/client';
+import { EntityStatus, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,6 +15,10 @@ import type { RegisterDto } from './dto/register.dto';
 import { UsersService } from '../users/users.service';
 
 export interface LoginResult extends LoginResponseDto {
+  rawRefreshToken: string;
+}
+
+interface ChooseOrgResult extends TokenResponseDto {
   rawRefreshToken: string;
 }
 
@@ -77,7 +81,7 @@ export class AuthService {
 
     const affiliations = await this.prisma.organizationUserAffiliation.findMany(
       {
-        where: { userId: user.id, isDeleted: false },
+        where: this.activeAffiliationWhere(user.id),
         select: {
           organizationId: true,
           role: true,
@@ -95,79 +99,81 @@ export class AuthService {
   async refreshAccessToken(
     rawToken: string,
   ): Promise<{ accessToken: string; newRawRefreshToken: string }> {
-    const tokenHash = crypto
-      .createHash('sha256')
-      .update(rawToken)
-      .digest('hex');
+    const tokenHash = this.hashToken(rawToken);
 
-    const stored = await this.prisma.refreshToken.findFirst({
-      where: { tokenHash, isRevoked: false },
-      select: {
-        id: true,
-        userId: true,
-        expiresAt: true,
-        user: {
-          select: {
-            id: true,
-            email: true,
-            isSystemAdmin: true,
-            status: true,
-            isDeleted: true,
+    return this.prisma.$transaction(async (tx) => {
+      const stored = await tx.refreshToken.findFirst({
+        where: { tokenHash, isRevoked: false },
+        select: {
+          id: true,
+          userId: true,
+          organizationId: true,
+          expiresAt: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              isSystemAdmin: true,
+              status: true,
+              isDeleted: true,
+            },
           },
         },
-      },
+      });
+
+      if (!stored || stored.expiresAt < new Date()) {
+        throw ApiException.unauthorized('Refresh token is invalid or expired.');
+      }
+
+      await this.consumeRefreshToken(tx, stored.id);
+
+      if (stored.user.isDeleted || stored.user.status !== EntityStatus.ACTIVE) {
+        throw ApiException.unauthorized('Refresh token is invalid or expired.');
+      }
+
+      const orgContext = await this.getActiveOrgContext(
+        tx,
+        stored.userId,
+        stored.organizationId,
+      );
+      const accessToken = this.signAccessToken(
+        stored.user,
+        orgContext.organizationId,
+        orgContext.role,
+      );
+      const newRawRefreshToken = await this.createRefreshToken(
+        stored.userId,
+        tx,
+        orgContext.organizationId,
+      );
+
+      return { accessToken, newRawRefreshToken };
     });
-
-    if (!stored || stored.expiresAt < new Date()) {
-      throw ApiException.unauthorized('Refresh token is invalid or expired.');
-    }
-
-    await this.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { isRevoked: true },
-    });
-
-    if (stored.user.isDeleted || stored.user.status !== EntityStatus.ACTIVE) {
-      throw ApiException.unauthorized('Refresh token is invalid or expired.');
-    }
-
-    const accessToken = this.signAccessToken(stored.user);
-    const newRawRefreshToken = await this.createRefreshToken(stored.userId);
-
-    return { accessToken, newRawRefreshToken };
   }
 
   async createRefreshToken(
     userId: number,
     client: Pick<PrismaService, 'refreshToken'> = this.prisma,
+    organizationId: number | null = null,
   ): Promise<string> {
     const rawToken = crypto.randomUUID();
-    const tokenHash = crypto
-      .createHash('sha256')
-      .update(rawToken)
-      .digest('hex');
+    const tokenHash = this.hashToken(rawToken);
     const expiresAt = new Date(Date.now() + this.refreshExpiryMs());
 
     await client.refreshToken.create({
-      data: { userId, tokenHash, expiresAt },
+      data: { userId, organizationId, tokenHash, expiresAt },
     });
 
     return rawToken;
   }
 
-  async logout(
-    userId: number,
-    rawRefreshToken: string | undefined,
-  ): Promise<void> {
+  async logout(rawRefreshToken: string | undefined): Promise<void> {
     if (!rawRefreshToken) return;
 
-    const tokenHash = crypto
-      .createHash('sha256')
-      .update(rawRefreshToken)
-      .digest('hex');
+    const tokenHash = this.hashToken(rawRefreshToken);
 
     await this.prisma.refreshToken.updateMany({
-      where: { userId, tokenHash, isRevoked: false },
+      where: { tokenHash, isRevoked: false },
       data: { isRevoked: true },
     });
   }
@@ -194,7 +200,7 @@ export class AuthService {
 
     const affiliations = await this.prisma.organizationUserAffiliation.findMany(
       {
-        where: { userId, isDeleted: false },
+        where: this.activeAffiliationWhere(userId),
         select: {
           organizationId: true,
           role: true,
@@ -212,15 +218,26 @@ export class AuthService {
   async chooseOrg(
     userId: number,
     organizationId: number,
-  ): Promise<TokenResponseDto> {
-    const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
-      {
-        where: {
-          userId,
-          organizationId,
-          isDeleted: false,
-          user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
-        },
+    rawRefreshToken: string,
+  ): Promise<ChooseOrgResult> {
+    const tokenHash = this.hashToken(rawRefreshToken);
+
+    return this.prisma.$transaction(async (tx) => {
+      const stored = await tx.refreshToken.findFirst({
+        where: { tokenHash, isRevoked: false },
+        select: { id: true, userId: true, expiresAt: true },
+      });
+
+      if (
+        !stored ||
+        stored.userId !== userId ||
+        stored.expiresAt < new Date()
+      ) {
+        throw ApiException.unauthorized('Refresh token is invalid or expired.');
+      }
+
+      const affiliation = await tx.organizationUserAffiliation.findFirst({
+        where: this.activeAffiliationWhere(userId, organizationId),
         select: {
           userId: true,
           organizationId: true,
@@ -235,22 +252,31 @@ export class AuthService {
             },
           },
         },
-      },
-    );
+      });
 
-    if (!affiliation) {
-      throw ApiException.forbidden(
-        'No active affiliation with this organization.',
-      );
-    }
+      if (!affiliation) {
+        throw ApiException.forbidden(
+          'No active affiliation with this organization.',
+        );
+      }
 
-    return {
-      accessToken: this.signAccessToken(
-        affiliation.user,
+      await this.consumeRefreshToken(tx, stored.id);
+
+      const newRawRefreshToken = await this.createRefreshToken(
+        userId,
+        tx,
         affiliation.organizationId,
-        affiliation.role,
-      ),
-    };
+      );
+
+      return {
+        rawRefreshToken: newRawRefreshToken,
+        accessToken: this.signAccessToken(
+          affiliation.user,
+          affiliation.organizationId,
+          affiliation.role,
+        ),
+      };
+    });
   }
 
   async changePassword(
@@ -291,6 +317,28 @@ export class AuthService {
     });
   }
 
+  getRefreshCookieMaxAgeMs(): number {
+    return this.refreshExpiryMs();
+  }
+
+  private hashToken(rawToken: string): string {
+    return crypto.createHash('sha256').update(rawToken).digest('hex');
+  }
+
+  private async consumeRefreshToken(
+    client: Pick<PrismaService, 'refreshToken'>,
+    id: number,
+  ): Promise<void> {
+    const result = await client.refreshToken.updateMany({
+      where: { id, isRevoked: false },
+      data: { isRevoked: true },
+    });
+
+    if (result.count !== 1) {
+      throw ApiException.unauthorized('Refresh token is invalid or expired.');
+    }
+  }
+
   private async ensureActiveUser(userId: number): Promise<void> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
@@ -300,6 +348,49 @@ export class AuthService {
     if (!user) {
       throw ApiException.notFound('User not found.');
     }
+  }
+
+  private activeAffiliationWhere(
+    userId: number,
+    organizationId?: number,
+  ): Prisma.OrganizationUserAffiliationWhereInput {
+    return {
+      userId,
+      ...(organizationId !== undefined ? { organizationId } : {}),
+      isDeleted: false,
+      user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+      organization: {
+        is: { isDeleted: false, status: EntityStatus.ACTIVE },
+      },
+      OR: [
+        { teamId: null },
+        { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
+      ],
+    };
+  }
+
+  private async getActiveOrgContext(
+    client: Pick<PrismaService, 'organizationUserAffiliation'>,
+    userId: number,
+    organizationId: number | null,
+  ): Promise<{ organizationId: number | null; role: OrgRole | null }> {
+    if (organizationId === null) {
+      return { organizationId: null, role: null };
+    }
+
+    const affiliation = await client.organizationUserAffiliation.findFirst({
+      where: this.activeAffiliationWhere(userId, organizationId),
+      select: { organizationId: true, role: true },
+    });
+
+    if (!affiliation) {
+      return { organizationId: null, role: null };
+    }
+
+    return {
+      organizationId: affiliation.organizationId,
+      role: affiliation.role,
+    };
   }
 
   private async issueLoginResult(

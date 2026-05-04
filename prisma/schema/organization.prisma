@@ -9,6 +9,7 @@ model Organization {
 
   userAffiliations OrganizationUserAffiliation[]
   teamAffiliations OrganizationTeamAffiliation[]
+  refreshTokens    RefreshToken[]
 
   // DB-only rule:
   // CHECK (slug = lower(slug)).
