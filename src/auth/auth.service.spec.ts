@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { OrgRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
@@ -261,7 +262,7 @@ describe('AuthService', () => {
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
         {
           organizationId: 5,
-          role: 'ORG_ADMIN',
+          role: OrgRole.ORG_ADMIN,
           teamId: null,
           organization: { id: 5, name: 'Clube A', slug: 'clube-a' },
         },
@@ -275,7 +276,7 @@ describe('AuthService', () => {
         organizationId: 5,
         organizationName: 'Clube A',
         organizationSlug: 'clube-a',
-        role: 'ORG_ADMIN',
+        role: OrgRole.ORG_ADMIN,
         teamId: null,
       });
       expect(
@@ -429,7 +430,7 @@ describe('AuthService', () => {
       });
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
         organizationId: 5,
-        role: 'ORG_ADMIN',
+        role: OrgRole.ORG_ADMIN,
       });
       mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
@@ -450,7 +451,7 @@ describe('AuthService', () => {
         select: { organizationId: true, role: true },
       });
       expect(mockJwtService.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: 5, role: 'ORG_ADMIN' }),
+        expect.objectContaining({ organizationId: 5, role: OrgRole.ORG_ADMIN }),
       );
       expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ userId: 1, organizationId: 5 }),
@@ -544,7 +545,7 @@ describe('AuthService', () => {
         isDeleted: false,
       });
 
-      const result = await service.getMe(1, 5, 'ORG_ADMIN');
+      const result = await service.getMe(1, 5, OrgRole.ORG_ADMIN);
 
       expect(result).toMatchObject({
         id: 1,
@@ -552,7 +553,7 @@ describe('AuthService', () => {
         name: 'User',
         isSystemAdmin: false,
         organizationId: 5,
-        role: 'ORG_ADMIN',
+        role: OrgRole.ORG_ADMIN,
       });
     });
 
@@ -646,7 +647,7 @@ describe('AuthService', () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
         userId: 1,
         organizationId: 5,
-        role: 'ORG_ADMIN',
+        role: OrgRole.ORG_ADMIN,
         user: {
           id: 1,
           email: 'u@e.com',
@@ -669,7 +670,7 @@ describe('AuthService', () => {
       expect(result.accessToken).toBe('signed-jwt-token');
       expect(typeof result.rawRefreshToken).toBe('string');
       expect(mockJwtService.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: 5, role: 'ORG_ADMIN' }),
+        expect.objectContaining({ organizationId: 5, role: OrgRole.ORG_ADMIN }),
       );
       expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
         where: { id: 20, isRevoked: false },
@@ -690,7 +691,7 @@ describe('AuthService', () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
         userId: 1,
         organizationId: 5,
-        role: 'ORG_ADMIN',
+        role: OrgRole.ORG_ADMIN,
         user: {
           id: 1,
           email: 'u@e.com',

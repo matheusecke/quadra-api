@@ -24,13 +24,20 @@ import { UsersModule } from '../users/users.module';
       useFactory: (configService: ConfigService) => ({
         secret: configService.getOrThrow<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: (configService.get<string>('JWT_EXPIRES_IN') ?? '15m') as StringValue,
+          expiresIn: (configService.get<string>('JWT_EXPIRES_IN') ??
+            '15m') as StringValue,
         },
       }),
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, OrgRoleGuard, SystemAdminGuard],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    OrgRoleGuard,
+    SystemAdminGuard,
+  ],
   exports: [JwtModule, JwtAuthGuard, OrgRoleGuard, SystemAdminGuard],
 })
 export class AuthModule {}

@@ -6,7 +6,9 @@ export class UpdateUserDto {
   @ApiProperty({ example: 'john.updated@example.com', required: false })
   @IsOptional()
   @IsEmail()
-  @Transform(({ value }) => (typeof value === 'string' ? value.toLowerCase().trim() : value))
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.toLowerCase().trim() : value,
+  )
   email?: string;
 
   @ApiProperty({ example: 'John Updated', required: false })

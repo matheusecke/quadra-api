@@ -1,133 +1,117 @@
 # tcc-api
 
-Multi-tenant NestJS backend for basketball championship management. Domain context: `/home/matheusecke/tcc/TCC.md`.
+Multi-tenant NestJS backend for basketball championship management. Domain context (Portuguese, parent repo): [../TCC.md](../TCC.md).
+
+## Canonical documentation (use for depth)
+
+Load **`CLAUDE.md`** for non‑negotiable agent rules, commands, and pointers. For everything else, prefer the linked doc so this file and `docs/` do not drift.
+
+| Need | Document |
+| ---- | -------- |
+| App snapshot, doc map, high-level conventions | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Schema naming, tables, soft delete, DB-only SQL, migration workflow | [docs/DATABASE.md](docs/DATABASE.md) |
+| Errors, response envelope, pagination, filters | [docs/HTTP-LAYER.md](docs/HTTP-LAYER.md) |
+| `src/` / `prisma/` trees, `AppModule` composition | [docs/PROJECT-LAYOUT.md](docs/PROJECT-LAYOUT.md) |
+| Jest scope, mocks | [docs/TESTING-STRATEGY.md](docs/TESTING-STRATEGY.md) |
+| Gaps and roadmap | [docs/ROADMAP-GAPS.md](docs/ROADMAP-GAPS.md) |
+| Nest module–specific docs (when present) | `src/<domain>/docs/README.md` — concrete paths and links live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 
 ## Documentation Sync
-After any implementation that changes behavior, architecture, schema, endpoints, auth flows, module structure, or developer workflow, always review the documents in `docs/` for drift.
+
+After any implementation that changes behavior, architecture, schema, endpoints, auth flows, module structure, or developer workflow, review documentation for drift — start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/DATABASE.md](docs/DATABASE.md), then `src/<domain>/docs/README.md` for any module you changed, plus other `docs/*.md` files if the change is cross-cutting.
 
 Agents must check whether the implemented change created any divergence or requires additions/updates in documentation.
 
 If a document is outdated because of the implementation, update it in the same work session unless the user explicitly asks not to.
 
+## Planning
+
+For **multi-step or non-trivial features**, produce a written implementation plan before coding.
+
+**When to skip a full plan** (no `writing-plans` artifact and no `subagent-driven-development` run for the whole change):
+
+- Trivial, localized edits (typos, comments, formatting).
+- Single-file mechanical refactors with no public API or behavior change.
+- Bugs with a known root cause and a small, obvious patch (reuse or add minimal tests).
+- Documentation-only updates aligned with code already merged.
+- Dependency or tooling tweaks that do not touch domain logic.
+
+**Rule of thumb:** if you can list the exact files, “done” criteria, and tests in ~2 minutes and there are no product, auth, or multi-tenant trade-offs, a formal plan is optional. Still run tests and **Documentation Sync** when behavior or public contracts change.
+
+**Complex features** (unclear requirements, large scope, multiple subsystems, sensitive auth/security paths, or material schema/API churn): use the Superpowers skill **`brainstorming`** first to align on intent, scope, trade-offs, and design — then **`writing-plans`** so the plan reflects settled decisions.
+
+For the plan itself, use **`writing-plans`** (bite-sized tasks, exact file paths, no vague placeholders, DRY/YAGNI, TDD where it fits, explicit test commands and expected outcomes). Default save location unless the user specifies otherwise: `docs/plans/YYYY-MM-DD-<feature-name>.md`.
+
+**Execution:** Prefer **`superpowers:subagent-driven-development`** — fresh context per task, spec compliance review, then code-quality review, iterate until clean; do not skip review gates.
+
+**Plan skeleton (minimum structure):**
+
+1. **Header** — Short title, **goal** (what ships), **motivation** (why / problem / constraints), **approach** in 2–3 sentences (architecture touchpoints), tech stack if non-obvious.
+2. **Task breakdown** — Numbered tasks. For each task include:
+   - **Files** — `Create:` / `Modify:` / `Test:` with repository-relative paths.
+   - **Work** — What changes and acceptance criteria in plain language.
+   - **Quality** — Tests to add or run (`npm test`, `npm run lint`), and that task-level **review** (spec match + code quality) happens before marking the task done.
+3. **Per-task steps** — Checkbox steps (`- [ ]`) where useful; keep steps small (single logical action when possible).
+4. **Final review** — After all tasks: run full verification (`npm test`, `npm run lint`), confirm **Documentation Sync** above if behavior or public API changed, and a short **whole-change review** (consistency, security, multi-tenant rules) before calling the work complete.
+
+Optional but valuable: file map upfront (what each new/changed file owns), link to [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) / [docs/DATABASE.md](docs/DATABASE.md) / relevant `src/<domain>/docs/README.md`, and note migration handoff if schema SQL is touched (agents do not run migrate commands).
+
 ## Language
+
 All written artifacts must be in **English**: code comments, implementation plans, commit messages, PR titles and descriptions, branch names, migration names, and any other git-related content.
 
 ## Stack
+
 - NestJS 11 + TypeScript, port **3001**
 - Prisma 7 + `@prisma/adapter-pg` (driver adapter), PostgreSQL via `pg` pool
 - JWT (passport-jwt) Bearer, bcryptjs, Swagger at `/api`
 
 ## Commands
+
 ```bash
 npm run start:dev                 # watch mode
 npm run test / test:cov / lint
-npm run prisma:migrate:dev        # new migration
-npm run prisma:migrate:deploy     # apply in prod
+npm run prisma:migrate:dev        # new migration — run only if explicitly requested (agents: never; see Agent restriction below)
+npm run prisma:migrate:deploy     # apply in prod — same: only when explicitly requested (agents: never)
 npm run prisma:migrate:status / prisma:generate / prisma:reset / prisma:studio
 ```
 
 ## Module structure
+
 ```
 src/<domain>/
+  docs/README.md          # optional but recommended: module-specific documentation
   <domain>.module.ts / .controller.ts / .service.ts / .service.spec.ts
   dto/create-<domain>.dto.ts / <domain>-response.dto.ts
 ```
+
+**Documentation layout:** project-wide Markdown in `docs/` uses **UPPERCASE** filenames (e.g. `HTTP-LAYER.md`). Module-only docs: `src/<domain>/docs/README.md`. Hub: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 Global modules: `PrismaModule` (`PrismaService`), `AuthModule` (guards, strategy, decorators).
 
-## Prisma Schema
-Multi-file schema in `prisma/schema/` — one `.prisma` file per model. Config in `prisma.config.ts`.
+## Prisma (agents)
+
+Multi-file schema in `prisma/schema/`; config in `prisma.config.ts`. **Field/table naming, soft delete, slugs, DB-only comments, migration workflow:** [docs/DATABASE.md](docs/DATABASE.md).
 
 > **Agent restriction:** Never run any migration command (`prisma:migrate:dev`, `prisma:migrate:deploy`, `prisma:migrate:reset`, or any `prisma migrate *`). Only `prisma:generate` is allowed. All migrations — local, dev, and prod — must be applied manually by the user. After creating a migration file, always explicitly tell the user that the migration is ready and needs to be applied manually.
 
-**Conventions:**
-- Timestamps: `DateTime @default(now()) @db.Timestamptz(3) @map("created_at")` / `@updatedAt`
-- Soft delete: `isDeleted Boolean @default(false) @map("is_deleted")` — default for most entities; omit for transient/technical records where soft delete doesn't make sense
-- Slugs: lowercase enforced via CHECK constraint
-- Table/column names: snake_case via `@@map` / `@map`
+## API, auth, and data access (summary)
 
-**DB-only constraints** (partial unique indexes, CHECK) — not supported by Prisma; add manually to migration SQL. Document in the `.prisma` file:
-```
-// DB-only rule: <description>
-// Must be added manually in migration SQL. First added in: <migration_name>
-```
-Always review generated migration SQL and add constraints before applying.
+**Per-module API and domain notes:** `src/<domain>/docs/README.md` — which modules have docs is listed in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Auth & Authorization
+**HTTP responses, errors, `ApiException`, pagination:** [docs/HTTP-LAYER.md](docs/HTTP-LAYER.md).
 
-**JWT Payload:**
-```ts
-interface JwtPayload {
-  sub: number;          // userId
-  email: string;
-  isSystemAdmin: boolean;
-  organizationId: number | null;
-  role: OrgRole | null;
-}
-```
+**Query habits** (soft delete, `select`, multi-tenant scoping): follow existing services and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) conventions; naming in [docs/DATABASE.md](docs/DATABASE.md).
 
-**Guards (use in this order):**
-```ts
-@UseGuards(JwtAuthGuard, OrgRoleGuard)
-@OrgRoles('ORG_ADMIN')
-```
-- `JwtAuthGuard` — validates JWT, populates `req.user`
-- `OrgRoleGuard` — checks `role`; requires `@OrgRoles(...)` on the handler
-- `SystemAdminGuard` — checks `isSystemAdmin`; use with `@SystemAdmin()`
-
-**Decorators:** `@CurrentUser()` / `@CurrentUser('sub')` / `@OrgRoles(...)` / `@SystemAdmin()`
-
-**OrgRole values:** `ORG_ADMIN`, `TEAM_ADMIN`, `ATHLETE`, `COACHING_STAFF` — role is session-scoped (from JWT), never a global profile role.
-
-## Responses & Errors
-
-All endpoints wrapped automatically by `ResponseTransformInterceptor`:
-- Success: `{ data, statusCode }`
-- Paginated: `{ data, meta, links, statusCode }` (passed through directly)
-- Skip: `@SkipResponseTransform()`
-
-**Always use `ApiException` static methods — never throw `HttpException` directly:**
-```ts
-throw ApiException.notFound('...');
-throw ApiException.conflict('...');
-throw ApiException.forbidden('...');
-throw ApiException.unauthorized('...');
-throw ApiException.badRequest('...', 'CODE', { field: ['msg'] });
-throw ApiException.unprocessable('...');
-```
-Error format: `{ error: { title, message, code, data }, statusCode }`.
-
-`PrismaExceptionFilter` auto-maps: `P2002`→409, `P2003`→422, `P2025`→404.
-
-## Pagination
-1. Query DTO extends `PaginationDefaultsDto` (`page`, `limit`)
-2. Service returns `{ count: number; data: T[] }`
-3. Controller uses `@UseInterceptors(PaginationInterceptor)`
-
-## DTOs
-- Validation: `class-validator` + `class-transformer`
-- Global `ValidationPipe`: `whitelist: true`, `forbidNonWhitelisted: true`
-- Validation errors → `ApiException` with `code: 'VALIDATION_ERROR'` and field details in `data`
-- Response DTOs: annotate with `@ApiProperty()` for Swagger
-
-## Prisma Queries
-- Filter `isDeleted: false` on reads by default; skip only for entities where soft delete is intentionally absent
-- Use explicit `select` on queries that return data to the client; always omit `passwordHash` and internal fields
-- Multi-tenant: scope queries to `organizationId` from JWT payload by default; `SystemAdmin`-gated endpoints may intentionally cross org boundaries
-
-## Tests
-- Unit tests in `*.service.spec.ts` next to the service — only services are tested; do not write tests for controllers, guards, decorators, or other non-service classes
-- `jest.config.ts` runs only `*.service.spec.ts` under `src/`
-- Mock `PrismaService` with `jest.fn()` — no real DB:
-```ts
-const mockPrisma = { user: { findFirst: jest.fn(), create: jest.fn() } };
-// { provide: PrismaService, useValue: mockPrisma }
-```
+**Tests:** [docs/TESTING-STRATEGY.md](docs/TESTING-STRATEGY.md).
 
 ## Local Environment
+
 ```env
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tcc?schema=public
 JWT_SECRET=...
 JWT_EXPIRES_IN=15m   # optional, default 15m
 PORT=3001            # optional
 ```
+
 Docker Compose (`docker-compose.yml`) runs the API on external network `tcc-network`; PostgreSQL in container `tcc-postgres`.

@@ -19,15 +19,18 @@ interface PaginatedServiceResult<T> {
 }
 
 @Injectable()
-export class PaginationInterceptor<T>
-  implements NestInterceptor<PaginatedServiceResult<T>, PaginationResponseDto<T>>
-{
+export class PaginationInterceptor<T> implements NestInterceptor<
+  PaginatedServiceResult<T>,
+  PaginationResponseDto<T>
+> {
   intercept(
     context: ExecutionContext,
     next: CallHandler<PaginatedServiceResult<T>>,
   ): Observable<PaginationResponseDto<T>> {
     const request = context.switchToHttp().getRequest<Request>();
-    const response = context.switchToHttp().getResponse<{ statusCode: number }>();
+    const response = context
+      .switchToHttp()
+      .getResponse<{ statusCode: number }>();
 
     const page = parseInt(String(request.query['page'] ?? '1'), 10) || 1;
     const limit = parseInt(String(request.query['limit'] ?? '10'), 10) || 10;

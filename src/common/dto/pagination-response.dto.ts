@@ -9,7 +9,10 @@ export class PaginationMeta {
     this.totalItems = totalItems;
     this.itemsPerPage = itemsPerPage;
     this.currentPage = currentPage;
-    this.itemCount = Math.min(itemsPerPage, Math.max(0, totalItems - (currentPage - 1) * itemsPerPage));
+    this.itemCount = Math.min(
+      itemsPerPage,
+      Math.max(0, totalItems - (currentPage - 1) * itemsPerPage),
+    );
     this.totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
   }
 }
