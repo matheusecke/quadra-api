@@ -1,95 +1,174 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# tcc-api
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend (**REST API**) for a **multi-tenant web platform** to run **basketball championships** across many sport organizations in one system. Built for a **computer engineering capstone (TCC)** — production-quality patterns, incremental scope.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+**Stack:** NestJS 11, TypeScript, Prisma 7 + PostgreSQL, JWT access tokens and httpOnly refresh cookies. Default port **3001**; **OpenAPI (Swagger)** at **`/api`**.
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## TCC workspace repositories
 
-## Project setup
+The product is split across **separate Git repositories** that are meant to live side by side in one parent folder (adjust names if your layout differs):
 
-```bash
-$ npm install
+| Repository | Role |
+| ---------- | ---- |
+| **`tcc-api`** (this repo) | REST API — auth, sessions, multi-tenant persistence, future championship/match modules. |
+| **`tcc-web`** | Browser SPA (React + Vite) — UI, calls the API over HTTP. |
+| **`tcc-infra`** | Local **Docker Compose** definitions (PostgreSQL, shared network, optional **full stack** compose that builds API + web). AWS/ECS-oriented material may live here as the project grows. |
+
+Expected layout for integrated work:
+
+```text
+<workspace>/
+  tcc-api/
+  tcc-web/
+  tcc-infra/
 ```
 
-## Compile and run the project
+---
 
-```bash
-# development
-$ npm run start
+## Docker and how services connect
 
-# watch mode
-$ npm run start:dev
+**Intended local workflow:** run the database (and optionally API + web) **in containers** so hostnames, ports, and the shared **`tcc-network`** match what the compose files expect. Running everything in Docker avoids “works on my machine” drift for DB hostnames (`tcc-postgres` vs `localhost`) and matches how the repos were wired.
 
-# production mode
-$ npm run start:prod
+### What each layer does
+
+1. **`tcc-infra`** — Defines Docker network **`tcc-network`** and container **`tcc-postgres`** (PostgreSQL 16). Publishes the database on host port **`5433`** → container `5432` (so host tools use `localhost:5433`). Optionally **`docker-compose-full.yml`** in that repo builds and runs **postgres + API + web** together.
+2. **`tcc-api`** — `docker-compose.yml` here builds the API image (`Dockerfile.local`), attaches the API to **`tcc-network`**, and sets `DATABASE_URL` to `...@tcc-postgres:5432/...`. The compose file treats **`tcc-network` as external** — bring infra (or full stack) up first so the network (and DB) exist.
+3. **`tcc-web`** — `docker-compose.yml` runs the Vite dev server in a container with **`VITE_API_URL=http://localhost:3001`** so the **browser** still talks to the API on the host-mapped port.
+
+### Communication paths
+
+```text
+Browser  ──HTTP (JSON, cookies)──►  tcc-web  :5173   (Vite app)
+              │
+              └── same browser ──►  tcc-api  :3001   (REST + Swagger /api)
+                                        │
+                                        └── TCP ──►  PostgreSQL (tcc-postgres:5432 on Docker network)
 ```
 
-## Run tests
+- **Web → API:** the SPA uses `VITE_API_URL` (see `tcc-web`). The API enables CORS with credentials for dev (default origin **`http://localhost:5173`** in `src/main.ts`, overridable with **`CORS_ORIGIN`**).
+- **API → DB:** inside Docker, `DATABASE_URL` uses hostname **`tcc-postgres`**. From the **host** (e.g. `npm run start:dev` on your machine with infra up), point `DATABASE_URL` at **`localhost:5433`** to reach the same database through the published port.
+
+### One-command full stack (typical)
+
+From the machine that has **all three** repos checked out next to each other:
 
 ```bash
-# unit tests
-$ npm run test
-
-# test coverage
-$ npm run test:cov
+cd tcc-infra
+docker compose -f docker-compose-full.yml up --build
 ```
 
-## Deployment
+That starts **postgres**, **tcc-api** on **http://localhost:3001**, and **tcc-web** on **http://localhost:5173**. Apply Prisma migrations yourself when the schema changes (see [CLAUDE.md](CLAUDE.md)).
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+### API-only container (after DB is up)
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+If you already started **`tcc-infra/docker-compose.yml`** (Postgres + network) and only want the API container from this repo:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+cd tcc-api
+docker compose up --build
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## What problem it solves
 
-Check out a few resources that may come in handy when working with NestJS:
+Organizations often keep schedules, results, rosters, and history in **scattered tools** (spreadsheets, chats, social networks). The product aims to **centralize operations**: schedules, matches, participation, manual stats entry, and a **sporting history** view — with **strict data isolation per organization (tenant)**.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+---
 
-## Support
+## Product scope (high level)
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+**In scope for the product vision**
 
-## Stay in touch
+- Authentication and authorization; organization and team lifecycle; invites and memberships.
+- Championships and matches; manual result and statistics entry; calendars and basic indicators.
+- Evolution path for more features after the core tenant and membership layer is stable.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+**Explicitly out of scope for the first product version**
+
+- Real-time push; advanced auto-bracketing / calendar automation; heavy analytics; native mobile app; complex financial modules.
+
+The **API in this repository** does not implement the full product yet. Today it covers the **multi-tenant core**, **auth/session**, and **platform-admin user management**; championships, matches, and statistics modules are **not** in the schema yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP-GAPS.md](docs/ROADMAP-GAPS.md) for the live technical picture.
+
+---
+
+## Domain rules that shape the backend
+
+These product decisions are fixed in the domain model and APIs you build here:
+
+**Multi-tenant isolation**
+
+- Operational data is **scoped by organization**. Users must not see another tenant’s operational data.
+- After login, the user **selects an active organization** for the session; listings (championships, matches, history, etc.) are **filtered to that organization** unless the product explicitly defines otherwise.
+- Initial UX assumption: **no** cross-organization “global dashboard” for the same user; everything is experienced in the **active org context** (a possible unified view is deferred).
+
+**Global identities, tenant-scoped relationships**
+
+- **User** is a **global** identity: the same person can participate in **multiple organizations**, which remain isolated from each other operationally.
+- **Team** is also **global**: one team record can be linked to **several organizations** via **`OrganizationTeamAffiliation`** (status lifecycle: `PENDING` → `ACTIVE` or `REJECTED` in Prisma). Invites, rosters, and competition data under each org stay **tenant-scoped**.
+
+**Roles and memberships**
+
+- Each user has **exactly one role per organization**; the role lives on **`OrganizationUserAffiliation`**, not on a “global profile role”.
+- Session roles in the API align with: **`ORG_ADMIN`**, **`TEAM_ADMIN`**, **`ATHLETE`**, **`COACHING_STAFF`** (see Prisma enum and [src/auth/docs/README.md](src/auth/docs/README.md)).
+- **`ORG_ADMIN`**: no team binding (`teamId` null) — administers the whole organization.
+- **`TEAM_ADMIN`**, **`ATHLETE`**, **`COACHING_STAFF`**: **`teamId` is required** — the user is always bound to a specific team inside the org. Service-layer validation enforces this together with DB rules.
+
+**Other consolidated rules**
+
+- A user may be linked to **more than one team** (across contexts); a team may enter **many championships**.
+- An athlete **must not** play the same championship for two different teams.
+- Coaching staff is a **distinct role** from athlete.
+- **Jersey number** is contextual to the user–team affiliation in that organization.
+- Stats and bracketing are **manual** in the first version (no automated engine requirement in v1).
+
+---
+
+## Documentation in this repository
+
+| Audience | Document |
+| -------- | -------- |
+| Agent and developer rules (commands, Prisma restrictions, planning) | [CLAUDE.md](CLAUDE.md) |
+| Architecture hub, document map, current implementation snapshot | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Database naming, migrations, DB-only SQL | [docs/DATABASE.md](docs/DATABASE.md) |
+| HTTP errors, response envelope, pagination | [docs/HTTP-LAYER.md](docs/HTTP-LAYER.md) |
+| Repository layout | [docs/PROJECT-LAYOUT.md](docs/PROJECT-LAYOUT.md) |
+| Tests policy | [docs/TESTING-STRATEGY.md](docs/TESTING-STRATEGY.md) |
+| Known gaps / next milestones | [docs/ROADMAP-GAPS.md](docs/ROADMAP-GAPS.md) |
+
+Project-wide Markdown under `docs/` uses **UPPERCASE** filenames. Nest modules may add **`src/<domain>/docs/README.md`**; the architecture doc lists them.
+
+---
+
+## Quick start (API on the host)
+
+For **API-only** iteration on your machine (no API container), with Postgres reachable (e.g. infra up and `DATABASE_URL` pointing at **`localhost:5433`**):
+
+```bash
+npm install
+npm run prisma:generate
+npm run start:dev
+```
+
+Environment variables: [CLAUDE.md](CLAUDE.md) (Local Environment). Prefer the **Docker** section above when you need the **full stack** or the same wiring as CI/teammates.
+
+---
+
+## Common commands
+
+```bash
+npm run start:dev    # API in watch mode
+npm test             # unit tests (services only, per project convention)
+npm run lint
+npm run prisma:generate
+```
+
+**Migrations:** automated agents must **not** run `prisma migrate` commands; humans apply migrations when ready. Full policy in [CLAUDE.md](CLAUDE.md).
+
+---
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Private / thesis project — see [package.json](package.json) (`license` field).

@@ -11,10 +11,6 @@ export default {
   ],
   coverageDirectory: '../coverage',
   testEnvironment: 'node',
-  testPathIgnorePatterns: [
-    '/node_modules/',
-    '/test/',
-    '\\.e2e-spec\\.ts$',
-  ],
+  testPathIgnorePatterns: ['/node_modules/', '/test/', '\\.e2e-spec\\.ts$'],
   passWithNoTests: true,
 };

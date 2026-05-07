@@ -19,7 +19,8 @@ import { ResponseTransformInterceptor } from './common/interceptors/response-tra
   providers: [
     {
       provide: APP_INTERCEPTOR,
-      useFactory: (reflector: Reflector) => new ResponseTransformInterceptor(reflector),
+      useFactory: (reflector: Reflector) =>
+        new ResponseTransformInterceptor(reflector),
       inject: [Reflector],
     },
   ],

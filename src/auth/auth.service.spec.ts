@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { OrgRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
+import { UsersService } from '../users/users.service';
 
 const mockPrisma = {
   user: {
@@ -20,6 +22,7 @@ const mockPrisma = {
     findMany: jest.fn(),
     findFirst: jest.fn(),
   },
+  $transaction: jest.fn(),
 };
 
 const mockJwtService = {
@@ -34,30 +37,147 @@ const mockConfigService = {
   getOrThrow: jest.fn(),
 };
 
+const mockUsersService = {
+  create: jest.fn(),
+};
+
 describe('AuthService', () => {
   let service: AuthService;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => unknown) =>
+        callback(mockPrisma),
+    );
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: UsersService, useValue: mockUsersService },
       ],
     }).compile();
 
     service = module.get<AuthService>(AuthService);
   });
 
+  describe('register', () => {
+    it('creates an active non-admin user, signs tokens, and returns no organizations', async () => {
+      mockUsersService.create.mockResolvedValue({
+        id: 1,
+        email: 'new@example.com',
+        name: 'New User',
+        isSystemAdmin: false,
+        status: 'ACTIVE',
+      });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 1 });
+
+      const result = await service.register({
+        email: 'new@example.com',
+        name: 'New User',
+        password: 'password123',
+      });
+
+      expect(mockUsersService.create).toHaveBeenCalledWith(
+        {
+          email: 'new@example.com',
+          name: 'New User',
+          password: 'password123',
+          isSystemAdmin: false,
+        },
+        mockPrisma,
+      );
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockJwtService.sign).toHaveBeenCalledWith({
+        sub: 1,
+        email: 'new@example.com',
+        isSystemAdmin: false,
+        organizationId: null,
+        role: null,
+      });
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        accessToken: 'signed-jwt-token',
+        user: {
+          id: 1,
+          email: 'new@example.com',
+          name: 'New User',
+          isSystemAdmin: false,
+        },
+        organizations: [],
+      });
+      expect(typeof result.rawRefreshToken).toBe('string');
+    });
+
+    it('does not allow registration to create a system admin user', async () => {
+      mockUsersService.create.mockResolvedValue({
+        id: 2,
+        email: 'client@example.com',
+        name: 'Client User',
+        isSystemAdmin: false,
+        status: 'ACTIVE',
+      });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 2 });
+
+      await service.register({
+        email: 'client@example.com',
+        name: 'Client User',
+        password: 'password123',
+        isSystemAdmin: true,
+      } as any);
+
+      expect(mockUsersService.create).toHaveBeenCalledWith(
+        {
+          email: 'client@example.com',
+          name: 'Client User',
+          password: 'password123',
+          isSystemAdmin: false,
+        },
+        mockPrisma,
+      );
+    });
+
+    it('rejects the registration transaction when refresh token creation fails', async () => {
+      mockUsersService.create.mockResolvedValue({
+        id: 3,
+        email: 'rollback@example.com',
+        name: 'Rollback User',
+        isSystemAdmin: false,
+        status: 'ACTIVE',
+      });
+      mockPrisma.refreshToken.create.mockRejectedValue(new Error('db error'));
+
+      await expect(
+        service.register({
+          email: 'rollback@example.com',
+          name: 'Rollback User',
+          password: 'password123',
+        }),
+      ).rejects.toThrow('db error');
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockUsersService.create).toHaveBeenCalledWith(
+        {
+          email: 'rollback@example.com',
+          name: 'Rollback User',
+          password: 'password123',
+          isSystemAdmin: false,
+        },
+        mockPrisma,
+      );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('login', () => {
     it('throws 401 when user is not found', async () => {
       mockPrisma.user.findFirst.mockResolvedValue(null);
 
-      await expect(service.login('unknown@example.com', 'pass1234')).rejects.toThrow(
-        ApiException,
-      );
+      await expect(
+        service.login('unknown@example.com', 'pass1234'),
+      ).rejects.toThrow(ApiException);
     });
 
     it('throws 401 when password does not match', async () => {
@@ -71,9 +191,36 @@ describe('AuthService', () => {
       });
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
 
-      await expect(service.login('user@example.com', 'wrongpassword')).rejects.toThrow(
-        ApiException,
-      );
+      await expect(
+        service.login('user@example.com', 'wrongpassword'),
+      ).rejects.toThrow(ApiException);
+    });
+
+    it('queries only active non-deleted users before checking the password', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.login('inactive@example.com', 'correctpass'),
+      ).rejects.toThrow(ApiException);
+
+      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          email: 'inactive@example.com',
+          isDeleted: false,
+          status: 'ACTIVE',
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          passwordHash: true,
+          isSystemAdmin: true,
+          status: true,
+        },
+      });
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).not.toHaveBeenCalled();
     });
 
     it('returns login result with accessToken when credentials are valid', async () => {
@@ -115,7 +262,7 @@ describe('AuthService', () => {
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
         {
           organizationId: 5,
-          role: 'ORG_ADMIN',
+          role: OrgRole.ORG_ADMIN,
           teamId: null,
           organization: { id: 5, name: 'Clube A', slug: 'clube-a' },
         },
@@ -129,9 +276,25 @@ describe('AuthService', () => {
         organizationId: 5,
         organizationName: 'Clube A',
         organizationSlug: 'clube-a',
-        role: 'ORG_ADMIN',
+        role: OrgRole.ORG_ADMIN,
         teamId: null,
       });
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            isDeleted: false,
+            organization: {
+              is: { isDeleted: false, status: 'ACTIVE' },
+            },
+            OR: [
+              { teamId: null },
+              { team: { is: { isDeleted: false, status: 'ACTIVE' } } },
+            ],
+          }),
+        }),
+      );
     });
   });
 
@@ -139,42 +302,212 @@ describe('AuthService', () => {
     it('throws 401 when refresh token is not found in DB', async () => {
       mockPrisma.refreshToken.findFirst.mockResolvedValue(null);
 
-      await expect(service.refreshAccessToken('unknown-uuid')).rejects.toThrow(ApiException);
+      await expect(service.refreshAccessToken('unknown-uuid')).rejects.toThrow(
+        ApiException,
+      );
     });
 
     it('throws 401 when refresh token is expired', async () => {
       mockPrisma.refreshToken.findFirst.mockResolvedValue({
         id: 10,
         userId: 1,
+        organizationId: null,
         expiresAt: new Date(Date.now() - 1000),
-        user: { id: 1, email: 'u@e.com', isSystemAdmin: false },
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
       });
 
-      await expect(service.refreshAccessToken('any-uuid')).rejects.toThrow(ApiException);
+      await expect(service.refreshAccessToken('any-uuid')).rejects.toThrow(
+        ApiException,
+      );
+    });
+
+    it('revokes and rejects when refresh token user is inactive', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 10,
+        userId: 1,
+        organizationId: null,
+        expiresAt: new Date(Date.now() + 100_000),
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'INACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+      await expect(service.refreshAccessToken('valid-uuid')).rejects.toThrow(
+        ApiException,
+      );
+
+      expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { id: 10, isRevoked: false },
+        data: { isRevoked: true },
+      });
+      expect(mockJwtService.sign).not.toHaveBeenCalled();
+    });
+
+    it('revokes and rejects when refresh token user is deleted', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 10,
+        userId: 1,
+        organizationId: null,
+        expiresAt: new Date(Date.now() + 100_000),
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: true,
+        },
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+      await expect(service.refreshAccessToken('valid-uuid')).rejects.toThrow(
+        ApiException,
+      );
+
+      expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { id: 10, isRevoked: false },
+        data: { isRevoked: true },
+      });
+      expect(mockJwtService.sign).not.toHaveBeenCalled();
     });
 
     it('returns new accessToken and rotates refresh token', async () => {
       mockPrisma.refreshToken.findFirst.mockResolvedValue({
         id: 10,
         userId: 1,
+        organizationId: null,
         expiresAt: new Date(Date.now() + 100_000),
         user: {
           id: 1,
           email: 'u@e.com',
           isSystemAdmin: false,
-          organizationAffiliations: [],
+          status: 'ACTIVE',
+          isDeleted: false,
         },
       });
-      mockPrisma.refreshToken.update.mockResolvedValue({});
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
 
       const result = await service.refreshAccessToken('valid-uuid');
 
       expect(result.accessToken).toBe('signed-jwt-token');
       expect(typeof result.newRawRefreshToken).toBe('string');
-      expect(mockPrisma.refreshToken.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 10 }, data: { isRevoked: true } }),
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 10, isRevoked: false },
+          data: { isRevoked: true },
+        }),
       );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 1, organizationId: null }),
+      });
+    });
+
+    it('preserves org context when refresh token organization is still active', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 10,
+        userId: 1,
+        organizationId: 5,
+        expiresAt: new Date(Date.now() + 100_000),
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        organizationId: 5,
+        role: OrgRole.ORG_ADMIN,
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
+
+      await service.refreshAccessToken('valid-uuid');
+
+      expect(
+        mockPrisma.organizationUserAffiliation.findFirst,
+      ).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          userId: 1,
+          organizationId: 5,
+          isDeleted: false,
+          organization: {
+            is: { isDeleted: false, status: 'ACTIVE' },
+          },
+        }),
+        select: { organizationId: true, role: true },
+      });
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: 5, role: OrgRole.ORG_ADMIN }),
+      );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 1, organizationId: 5 }),
+      });
+    });
+
+    it('rejects concurrent refresh reuse when the token was already consumed', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 10,
+        userId: 1,
+        organizationId: null,
+        expiresAt: new Date(Date.now() + 100_000),
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.refreshAccessToken('valid-uuid')).rejects.toThrow(
+        ApiException,
+      );
+
+      expect(mockJwtService.sign).not.toHaveBeenCalled();
+      expect(mockPrisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('falls back to global context when refresh token organization is no longer active', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 10,
+        userId: 1,
+        organizationId: 5,
+        expiresAt: new Date(Date.now() + 100_000),
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
+
+      await service.refreshAccessToken('valid-uuid');
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: null, role: null }),
+      );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 1, organizationId: null }),
+      });
     });
   });
 
@@ -182,16 +515,22 @@ describe('AuthService', () => {
     it('revokes the refresh token when it exists', async () => {
       mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
 
-      await service.logout(1, 'some-raw-token');
+      await service.logout('some-raw-token');
 
       expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
-        where: expect.objectContaining({ userId: 1 }),
+        where: expect.objectContaining({
+          tokenHash: expect.any(String),
+          isRevoked: false,
+        }),
         data: { isRevoked: true },
       });
+      expect(
+        mockPrisma.refreshToken.updateMany.mock.calls[0][0].where,
+      ).not.toHaveProperty('userId');
     });
 
     it('completes without error when no refresh token is provided', async () => {
-      await expect(service.logout(1, undefined)).resolves.not.toThrow();
+      await expect(service.logout(undefined)).resolves.not.toThrow();
     });
   });
 
@@ -202,9 +541,11 @@ describe('AuthService', () => {
         email: 'u@e.com',
         name: 'User',
         isSystemAdmin: false,
+        status: 'ACTIVE',
+        isDeleted: false,
       });
 
-      const result = await service.getMe(1, 5, 'ORG_ADMIN');
+      const result = await service.getMe(1, 5, OrgRole.ORG_ADMIN);
 
       expect(result).toMatchObject({
         id: 1,
@@ -212,19 +553,33 @@ describe('AuthService', () => {
         name: 'User',
         isSystemAdmin: false,
         organizationId: 5,
-        role: 'ORG_ADMIN',
+        role: OrgRole.ORG_ADMIN,
       });
     });
 
     it('throws 404 when user is not found', async () => {
       mockPrisma.user.findFirst.mockResolvedValue(null);
 
-      await expect(service.getMe(999, null, null)).rejects.toThrow(ApiException);
+      await expect(service.getMe(999, null, null)).rejects.toThrow(
+        ApiException,
+      );
+    });
+
+    it('throws 404 for inactive or deleted users', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.getMe(1, null, null)).rejects.toThrow(ApiException);
+
+      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
+        where: { id: 1, isDeleted: false, status: 'ACTIVE' },
+        select: { id: true, email: true, name: true, isSystemAdmin: true },
+      });
     });
   });
 
   describe('getUserOrgs', () => {
     it('returns mapped org affiliations for user', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 1 });
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
         {
           organizationId: 3,
@@ -244,14 +599,38 @@ describe('AuthService', () => {
         role: 'TEAM_ADMIN',
         teamId: 7,
       });
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: 1,
+            isDeleted: false,
+            organization: {
+              is: { isDeleted: false, status: 'ACTIVE' },
+            },
+          }),
+        }),
+      );
     });
 
     it('returns empty array when user has no affiliations', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 1 });
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
 
       const result = await service.getUserOrgs(1);
 
       expect(result).toEqual([]);
+    });
+
+    it('throws 404 before listing affiliations for inactive or deleted users', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.getUserOrgs(1)).rejects.toThrow(ApiException);
+
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).not.toHaveBeenCalled();
     });
   });
 
@@ -259,23 +638,76 @@ describe('AuthService', () => {
     it('throws 403 when user has no affiliation with the org', async () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
 
-      await expect(service.chooseOrg(1, 99)).rejects.toThrow(ApiException);
+      await expect(
+        service.chooseOrg(1, 99, 'raw-refresh-token'),
+      ).rejects.toThrow(ApiException);
     });
 
-    it('returns access token with org context when affiliation exists', async () => {
+    it('returns access token with org context and rotates refresh token when affiliation exists', async () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
         userId: 1,
         organizationId: 5,
-        role: 'ORG_ADMIN',
-        user: { id: 1, email: 'u@e.com', isSystemAdmin: false },
+        role: OrgRole.ORG_ADMIN,
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
       });
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 20,
+        userId: 1,
+        organizationId: null,
+        expiresAt: new Date(Date.now() + 100_000),
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 21 });
 
-      const result = await service.chooseOrg(1, 5);
+      const result = await service.chooseOrg(1, 5, 'raw-refresh-token');
 
       expect(result.accessToken).toBe('signed-jwt-token');
+      expect(typeof result.rawRefreshToken).toBe('string');
       expect(mockJwtService.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: 5, role: 'ORG_ADMIN' }),
+        expect.objectContaining({ organizationId: 5, role: OrgRole.ORG_ADMIN }),
       );
+      expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { id: 20, isRevoked: false },
+        data: { isRevoked: true },
+      });
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 1, organizationId: 5 }),
+      });
+    });
+
+    it('rejects chooseOrg when the refresh token was already consumed', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue({
+        id: 20,
+        userId: 1,
+        organizationId: null,
+        expiresAt: new Date(Date.now() + 100_000),
+      });
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        userId: 1,
+        organizationId: 5,
+        role: OrgRole.ORG_ADMIN,
+        user: {
+          id: 1,
+          email: 'u@e.com',
+          isSystemAdmin: false,
+          status: 'ACTIVE',
+          isDeleted: false,
+        },
+      });
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.chooseOrg(1, 5, 'raw-refresh-token'),
+      ).rejects.toThrow(ApiException);
+
+      expect(mockJwtService.sign).not.toHaveBeenCalled();
+      expect(mockPrisma.refreshToken.create).not.toHaveBeenCalled();
     });
   });
 
@@ -286,16 +718,33 @@ describe('AuthService', () => {
         passwordHash: '$2a$10$incorrecthash',
       });
 
-      await expect(service.changePassword(1, 'wrongcurrent', 'newpass12')).rejects.toThrow(
-        ApiException,
-      );
+      await expect(
+        service.changePassword(1, 'wrongcurrent', 'newpass12'),
+      ).rejects.toThrow(ApiException);
+    });
+
+    it('throws 404 for inactive or deleted users', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.changePassword(1, 'oldpassword', 'newpassword1'),
+      ).rejects.toThrow(ApiException);
+
+      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
+        where: { id: 1, isDeleted: false, status: 'ACTIVE' },
+        select: { id: true, passwordHash: true },
+      });
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
     it('updates password hash and revokes all refresh tokens', async () => {
       const bcrypt = require('bcryptjs');
       const hash = await bcrypt.hash('oldpassword', 10);
 
-      mockPrisma.user.findFirst.mockResolvedValue({ id: 1, passwordHash: hash });
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 1,
+        passwordHash: hash,
+      });
       mockPrisma.user.update = jest.fn().mockResolvedValue({});
       mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 2 });
 
@@ -308,6 +757,17 @@ describe('AuthService', () => {
         where: { userId: 1, isRevoked: false },
         data: { isRevoked: true },
       });
+    });
+  });
+
+  describe('getRefreshCookieMaxAgeMs', () => {
+    it('uses the configured refresh token expiry for cookie maxAge', () => {
+      mockConfigService.get.mockImplementation((key: string) => {
+        if (key === 'JWT_REFRESH_EXPIRES_IN') return '2h';
+        return undefined;
+      });
+
+      expect(service.getRefreshCookieMaxAgeMs()).toBe(7_200_000);
     });
   });
 });

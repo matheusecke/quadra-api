@@ -19,7 +19,10 @@ export class ApiException extends HttpException {
     return new ApiException(HttpStatus.CONFLICT, 'Conflict', message, code);
   }
 
-  static unprocessable(message: string, code = 'UNPROCESSABLE_ENTITY'): ApiException {
+  static unprocessable(
+    message: string,
+    code = 'UNPROCESSABLE_ENTITY',
+  ): ApiException {
     return new ApiException(
       HttpStatus.UNPROCESSABLE_ENTITY,
       'Unprocessable Entity',
@@ -33,7 +36,12 @@ export class ApiException extends HttpException {
   }
 
   static unauthorized(message: string, code = 'UNAUTHORIZED'): ApiException {
-    return new ApiException(HttpStatus.UNAUTHORIZED, 'Unauthorized', message, code);
+    return new ApiException(
+      HttpStatus.UNAUTHORIZED,
+      'Unauthorized',
+      message,
+      code,
+    );
   }
 
   static badRequest(
@@ -41,6 +49,12 @@ export class ApiException extends HttpException {
     code = 'BAD_REQUEST',
     data: Record<string, unknown> = {},
   ): ApiException {
-    return new ApiException(HttpStatus.BAD_REQUEST, 'Bad Request', message, code, data);
+    return new ApiException(
+      HttpStatus.BAD_REQUEST,
+      'Bad Request',
+      message,
+      code,
+      data,
+    );
   }
 }

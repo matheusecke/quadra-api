@@ -1,6 +1,6 @@
 # Database Conventions
 
-This document is the source of truth for database naming, Prisma mapping, and migration conventions in `tcc-api`.
+This document is the source of truth for database naming, Prisma mapping, and migration conventions in `tcc-api`. It is **project-wide** (lives in `docs/`). Application-module notes that are not strictly about the database belong in `src/<domain>/docs/README.md`; the Prisma **client** module is described in [`src/prisma/docs/README.md`](../src/prisma/docs/README.md).
 
 ## Naming
 
@@ -29,6 +29,7 @@ This document is the source of truth for database naming, Prisma mapping, and mi
 | `Team` | `teams` | Global team identity |
 | `OrganizationUserAffiliation` | `organization_user_affiliations` | User role and optional team inside an organization |
 | `OrganizationTeamAffiliation` | `organization_team_affiliations` | Team affiliation lifecycle inside an organization |
+| `RefreshToken` | `refresh_tokens` | Opaque refresh session (hashed token), optional org context, rotation and revocation |
 
 ## Mapping Examples
 

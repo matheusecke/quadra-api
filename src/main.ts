@@ -16,6 +16,12 @@ async function bootstrap(): Promise<void> {
   // Enable graceful shutdown hooks (required for PrismaService.$disconnect)
   app.enableShutdownHooks();
 
+  // CORS — credentials: true is required for the httpOnly refresh token cookie
+  app.enableCors({
+    origin: process.env['CORS_ORIGIN'] ?? 'http://localhost:5173',
+    credentials: true,
+  });
+
   // Global pipes
   app.useGlobalPipes(
     new ValidationPipe({

@@ -10,11 +10,13 @@ import { SystemAdminGuard } from './guards/system-admin.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
     ConfigModule,
     PrismaModule,
+    UsersModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -22,13 +24,20 @@ import { PrismaModule } from '../prisma/prisma.module';
       useFactory: (configService: ConfigService) => ({
         secret: configService.getOrThrow<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: (configService.get<string>('JWT_EXPIRES_IN') ?? '15m') as StringValue,
+          expiresIn: (configService.get<string>('JWT_EXPIRES_IN') ??
+            '15m') as StringValue,
         },
       }),
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, OrgRoleGuard, SystemAdminGuard],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    OrgRoleGuard,
+    SystemAdminGuard,
+  ],
   exports: [JwtModule, JwtAuthGuard, OrgRoleGuard, SystemAdminGuard],
 })
 export class AuthModule {}

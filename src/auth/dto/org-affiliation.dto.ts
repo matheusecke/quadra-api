@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import type { OrgRole } from '@prisma/client';
+import { OrgRole } from '@prisma/client';
 
 export class OrgAffiliationDto {
   @ApiProperty()
@@ -11,7 +11,7 @@ export class OrgAffiliationDto {
   @ApiProperty()
   organizationSlug: string;
 
-  @ApiProperty({ enum: ['ORG_ADMIN', 'TEAM_ADMIN', 'ATHLETE', 'COACHING_STAFF'] })
+  @ApiProperty({ enum: OrgRole, enumName: 'OrgRole' })
   role: OrgRole;
 
   @ApiProperty({ nullable: true })

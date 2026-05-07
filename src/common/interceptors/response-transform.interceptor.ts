@@ -16,7 +16,9 @@ export const SKIP_RESPONSE_TRANSFORM = 'skipResponseTransform';
 export const SkipResponseTransform = () =>
   SetMetadata(SKIP_RESPONSE_TRANSFORM, true);
 
-function isPaginatedResponse(data: unknown): data is PaginationResponseDto<unknown> {
+function isPaginatedResponse(
+  data: unknown,
+): data is PaginationResponseDto<unknown> {
   return (
     typeof data === 'object' &&
     data !== null &&
@@ -27,15 +29,18 @@ function isPaginatedResponse(data: unknown): data is PaginationResponseDto<unkno
 }
 
 @Injectable()
-export class ResponseTransformInterceptor<T>
-  implements NestInterceptor<T, { data: T; statusCode: number } | PaginationResponseDto<unknown> | T>
-{
+export class ResponseTransformInterceptor<T> implements NestInterceptor<
+  T,
+  { data: T; statusCode: number } | PaginationResponseDto<unknown> | T
+> {
   constructor(private readonly reflector: Reflector) {}
 
   intercept(
     context: ExecutionContext,
     next: CallHandler<T>,
-  ): Observable<{ data: T; statusCode: number } | PaginationResponseDto<unknown> | T> {
+  ): Observable<
+    { data: T; statusCode: number } | PaginationResponseDto<unknown> | T
+  > {
     const skip = this.reflector.getAllAndOverride<boolean>(
       SKIP_RESPONSE_TRANSFORM,
       [context.getHandler(), context.getClass()],
@@ -45,7 +50,9 @@ export class ResponseTransformInterceptor<T>
       return next.handle();
     }
 
-    const response = context.switchToHttp().getResponse<{ statusCode: number }>();
+    const response = context
+      .switchToHttp()
+      .getResponse<{ statusCode: number }>();
 
     return next.handle().pipe(
       map((data) => {
