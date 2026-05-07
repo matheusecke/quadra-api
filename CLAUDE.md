@@ -28,6 +28,8 @@ If a document is outdated because of the implementation, update it in the same w
 
 For **multi-step or non-trivial features**, produce a written implementation plan before coding.
 
+**Clarifications:** Before and during planning or implementation, **ask targeted questions** (or explicitly log assumptions in the plan) whenever requirements, edge cases, auth/multi-tenant boundaries, data lifecycle, or acceptance criteria are **ambiguous or unstated**. Prefer a short clarification over inventing behavior — silent guesses cause gaps, rework, and security or product bugs.
+
 **When to skip a full plan** (no `writing-plans` artifact and no `subagent-driven-development` run for the whole change):
 
 - Trivial, localized edits (typos, comments, formatting).
@@ -46,7 +48,7 @@ For the plan itself, use **`writing-plans`** (bite-sized tasks, exact file paths
 
 **Plan skeleton (minimum structure):**
 
-1. **Header** — Short title, **goal** (what ships), **motivation** (why / problem / constraints), **approach** in 2–3 sentences (architecture touchpoints), tech stack if non-obvious.
+1. **Header** — Short title, **goal** (what ships), **motivation** (why / problem / constraints), **approach** in 2–3 sentences (architecture touchpoints), tech stack if non-obvious. If anything material was still open after clarification, add **open questions resolved** or **documented assumptions** so implementers do not guess.
 2. **Task breakdown** — Numbered tasks. For each task include:
    - **Files** — `Create:` / `Modify:` / `Test:` with repository-relative paths.
    - **Work** — What changes and acceptance criteria in plain language.
