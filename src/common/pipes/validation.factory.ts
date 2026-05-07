@@ -1,7 +1,9 @@
 import { ValidationError } from '@nestjs/common';
 import { ApiException } from '../exceptions/api.exception';
 
-export function validationExceptionFactory(errors: ValidationError[]): ApiException {
+export function validationExceptionFactory(
+  errors: ValidationError[],
+): ApiException {
   const data: Record<string, string[]> = {};
 
   const flattenErrors = (errs: ValidationError[], parentKey = ''): void => {
@@ -17,5 +19,9 @@ export function validationExceptionFactory(errors: ValidationError[]): ApiExcept
   };
 
   flattenErrors(errors);
-  return ApiException.badRequest('Invalid data in request.', 'VALIDATION_ERROR', data);
+  return ApiException.badRequest(
+    'Invalid data in request.',
+    'VALIDATION_ERROR',
+    data,
+  );
 }

@@ -1,0 +1,18 @@
+model RefreshToken {
+  id             Int      @id @default(autoincrement())
+  userId         Int      @map("user_id")
+  organizationId Int?     @map("organization_id")
+  tokenHash      String   @unique @map("token_hash")
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(3)
+  isRevoked      Boolean  @default(false) @map("is_revoked")
+  createdAt      DateTime @default(now()) @db.Timestamptz(3) @map("created_at")
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3) @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, isRevoked])
+  @@index([userId, organizationId, isRevoked])
+  @@map("refresh_tokens")
+}

@@ -7,7 +7,9 @@ function getDatabaseConfig(): { connectionString: string; schema?: string } {
   const databaseUrl = process.env.DATABASE_URL;
 
   if (!databaseUrl) {
-    throw new Error('DATABASE_URL must be defined before PrismaService is initialized.');
+    throw new Error(
+      'DATABASE_URL must be defined before PrismaService is initialized.',
+    );
   }
 
   const url = new URL(databaseUrl);
@@ -23,7 +25,10 @@ function getDatabaseConfig(): { connectionString: string; schema?: string } {
 }
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly pool: Pool;
 
   constructor() {
