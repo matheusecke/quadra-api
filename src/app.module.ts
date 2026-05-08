@@ -6,6 +6,8 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { OrganizationsModule } from './organizations/organizations.module';
+import { TeamsModule } from './teams/teams.module';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 
 @Module({
@@ -15,6 +17,8 @@ import { ResponseTransformInterceptor } from './common/interceptors/response-tra
     PrismaModule,
     AuthModule,
     UsersModule,
+    OrganizationsModule,
+    TeamsModule,
   ],
   providers: [
     {
