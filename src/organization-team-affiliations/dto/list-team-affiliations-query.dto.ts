@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { AffiliationStatus } from '@prisma/client';
 import { PaginationDefaultsDto } from '../../common/dto/pagination-defaults.dto';
@@ -15,4 +15,10 @@ export class ListTeamAffiliationsQueryDto extends PaginationDefaultsDto {
   @IsString()
   @Transform(({ value }) => value?.trim())
   q?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  inviteExpired?: boolean;
 }

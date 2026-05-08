@@ -66,12 +66,14 @@ export class OrganizationTeamAffiliationsService {
   }
 
   async findAll(orgId: number, query: ListTeamAffiliationsQueryDto) {
-    const { page, limit, status, q } = query;
+    const { page, limit, status, q, inviteExpired } = query;
     const skip = (page - 1) * limit;
     const where = {
       organizationId: orgId,
       isDeleted: false,
-      ...(status ? { status } : {}),
+      ...(inviteExpired
+        ? { status: AffiliationStatus.PENDING, inviteExpiresAt: { lt: new Date() } }
+        : status ? { status } : {}),
       ...(q ? { team: { name: { contains: q, mode: 'insensitive' as const } } } : {}),
     };
     const [count, data] = await Promise.all([
@@ -173,12 +175,14 @@ export class OrganizationTeamAffiliationsService {
   }
 
   async findByTeam(teamId: number, query: ListTeamAffiliationsQueryDto) {
-    const { page, limit, status, q } = query;
+    const { page, limit, status, q, inviteExpired } = query;
     const skip = (page - 1) * limit;
     const where = {
       teamId,
       isDeleted: false,
-      ...(status ? { status } : {}),
+      ...(inviteExpired
+        ? { status: AffiliationStatus.PENDING, inviteExpiresAt: { lt: new Date() } }
+        : status ? { status } : {}),
       ...(q ? { organization: { name: { contains: q, mode: 'insensitive' as const } } } : {}),
     };
     const [count, data] = await Promise.all([

@@ -161,6 +161,25 @@ describe('OrganizationTeamAffiliationsService', () => {
         mockPrisma.organizationTeamAffiliation.findMany.mock.calls[0][0].where;
       expect(callWhere.team).toBeUndefined();
     });
+
+    it('includes PENDING status and inviteExpiresAt lt filter when inviteExpired=true', async () => {
+      mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationTeamAffiliation.findMany.mockResolvedValue([]);
+      await service.findAll(1, { page: 1, limit: 10, inviteExpired: true });
+      const callWhere =
+        mockPrisma.organizationTeamAffiliation.findMany.mock.calls[0][0].where;
+      expect(callWhere.status).toBe('PENDING');
+      expect(callWhere.inviteExpiresAt).toEqual({ lt: expect.any(Date) });
+    });
+
+    it('does not include inviteExpiresAt in where when inviteExpired is absent', async () => {
+      mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationTeamAffiliation.findMany.mockResolvedValue([]);
+      await service.findAll(1, { page: 1, limit: 10 });
+      const callWhere =
+        mockPrisma.organizationTeamAffiliation.findMany.mock.calls[0][0].where;
+      expect(callWhere.inviteExpiresAt).toBeUndefined();
+    });
   });
 
   describe('findById()', () => {
@@ -413,6 +432,25 @@ describe('OrganizationTeamAffiliationsService', () => {
       const callWhere =
         mockPrisma.organizationTeamAffiliation.findMany.mock.calls[0][0].where;
       expect(callWhere.organization).toBeUndefined();
+    });
+
+    it('includes PENDING status and inviteExpiresAt lt filter when inviteExpired=true', async () => {
+      mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationTeamAffiliation.findMany.mockResolvedValue([]);
+      await service.findByTeam(5, { page: 1, limit: 10, inviteExpired: true });
+      const callWhere =
+        mockPrisma.organizationTeamAffiliation.findMany.mock.calls[0][0].where;
+      expect(callWhere.status).toBe('PENDING');
+      expect(callWhere.inviteExpiresAt).toEqual({ lt: expect.any(Date) });
+    });
+
+    it('does not include inviteExpiresAt in where when inviteExpired is absent', async () => {
+      mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationTeamAffiliation.findMany.mockResolvedValue([]);
+      await service.findByTeam(5, { page: 1, limit: 10 });
+      const callWhere =
+        mockPrisma.organizationTeamAffiliation.findMany.mock.calls[0][0].where;
+      expect(callWhere.inviteExpiresAt).toBeUndefined();
     });
   });
 });
