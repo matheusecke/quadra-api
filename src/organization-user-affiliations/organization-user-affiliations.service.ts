@@ -91,12 +91,14 @@ export class OrganizationUserAffiliationsService {
   }
 
   async findAll(orgId: number, query: ListUserAffiliationsQueryDto) {
-    const { page, limit, status, role, teamId, q } = query;
+    const { page, limit, status, role, teamId, q, inviteExpired } = query;
     const skip = (page - 1) * limit;
     const where = {
       organizationId: orgId,
       isDeleted: false,
-      ...(status ? { status } : {}),
+      ...(inviteExpired
+        ? { status: AffiliationStatus.PENDING, inviteExpiresAt: { lt: new Date() } }
+        : status ? { status } : {}),
       ...(role ? { role } : {}),
       ...(teamId ? { teamId } : {}),
       ...(q
