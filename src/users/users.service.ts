@@ -227,6 +227,10 @@ export class UsersService {
       });
     }
 
+    if (query.isSystemAdmin !== undefined) {
+      filters.push({ isSystemAdmin: query.isSystemAdmin });
+    }
+
     return { AND: filters };
   }
 
