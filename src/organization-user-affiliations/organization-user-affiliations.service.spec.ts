@@ -192,6 +192,29 @@ describe('OrganizationUserAffiliationsService', () => {
       expect(result.count).toBe(1);
       expect(result.data).toHaveLength(1);
     });
+
+    it('includes user OR filter when q is provided', async () => {
+      mockPrisma.organizationUserAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+      await service.findAll(1, { page: 1, limit: 10, q: 'john' });
+      const where =
+        mockPrisma.organizationUserAffiliation.findMany.mock.calls[0][0].where;
+      expect(where.user).toEqual({
+        OR: [
+          { name: { contains: 'john', mode: 'insensitive' } },
+          { email: { contains: 'john', mode: 'insensitive' } },
+        ],
+      });
+    });
+
+    it('does not include user key when q is not provided', async () => {
+      mockPrisma.organizationUserAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+      await service.findAll(1, { page: 1, limit: 10 });
+      const where =
+        mockPrisma.organizationUserAffiliation.findMany.mock.calls[0][0].where;
+      expect(where.user).toBeUndefined();
+    });
   });
 
   describe('findById()', () => {
@@ -274,32 +297,57 @@ describe('OrganizationUserAffiliationsService', () => {
   describe('update() additional', () => {
     it('throws 404 if active affiliation not found', async () => {
       mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
-      await expect(service.update(1, 1, { role: OrgRole.ATHLETE })).rejects.toMatchObject({ status: 404 });
+      await expect(
+        service.update(1, 1, { role: OrgRole.ATHLETE }),
+      ).rejects.toMatchObject({ status: 404 });
     });
 
     it('updates affiliation successfully', async () => {
       mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1, status: 'ACTIVE', role: 'ATHLETE', teamId: 2,
+        id: 1,
+        status: 'ACTIVE',
+        role: 'ATHLETE',
+        teamId: 2,
       });
-      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({ id: 1, status: 'ACTIVE' });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
+        id: 1,
+        status: 'ACTIVE',
+      });
       mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
-        id: 1, role: 'TEAM_ADMIN', teamId: 2, status: 'ACTIVE',
+        id: 1,
+        role: 'TEAM_ADMIN',
+        teamId: 2,
+        status: 'ACTIVE',
       });
-      const result = await service.update(1, 1, { role: OrgRole.TEAM_ADMIN, teamId: 2 });
+      const result = await service.update(1, 1, {
+        role: OrgRole.TEAM_ADMIN,
+        teamId: 2,
+      });
       expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalled();
       expect(result).toBeDefined();
     });
 
     it('clears teamId and jerseyNumber when switching to ORG_ADMIN', async () => {
       mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1, status: 'ACTIVE', role: 'ATHLETE', teamId: 2,
+        id: 1,
+        status: 'ACTIVE',
+        role: 'ATHLETE',
+        teamId: 2,
       });
       mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
-        id: 1, role: 'ORG_ADMIN', teamId: null, jerseyNumber: null, status: 'ACTIVE',
+        id: 1,
+        role: 'ORG_ADMIN',
+        teamId: null,
+        jerseyNumber: null,
+        status: 'ACTIVE',
       });
       await service.update(1, 1, { role: OrgRole.ORG_ADMIN });
-      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ teamId: null, jerseyNumber: null }) }),
+      expect(
+        mockPrisma.organizationUserAffiliation.update,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ teamId: null, jerseyNumber: null }),
+        }),
       );
     });
   });
@@ -307,22 +355,38 @@ describe('OrganizationUserAffiliationsService', () => {
   describe('resend()', () => {
     it('throws 404 if affiliation not found', async () => {
       mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
-      await expect(service.resend(1, 99)).rejects.toMatchObject({ status: 404 });
+      await expect(service.resend(1, 99)).rejects.toMatchObject({
+        status: 404,
+      });
     });
 
     it('throws 422 if affiliation is not PENDING', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({ id: 1, status: 'ACTIVE' });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        id: 1,
+        status: 'ACTIVE',
+      });
       await expect(service.resend(1, 1)).rejects.toMatchObject({ status: 422 });
     });
 
     it('regenerates token and returns raw token', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({ id: 1, status: 'PENDING' });
-      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({ id: 1, status: 'PENDING' });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        id: 1,
+        status: 'PENDING',
+      });
+      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
+        id: 1,
+        status: 'PENDING',
+      });
       const result = await service.resend(1, 1);
       expect(result.inviteToken).toHaveLength(64);
-      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalledWith(
+      expect(
+        mockPrisma.organizationUserAffiliation.update,
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ inviteToken: expect.any(String), inviteExpiresAt: expect.any(Date) }),
+          data: expect.objectContaining({
+            inviteToken: expect.any(String),
+            inviteExpiresAt: expect.any(Date),
+          }),
         }),
       );
     });
@@ -331,15 +395,26 @@ describe('OrganizationUserAffiliationsService', () => {
   describe('updateStatus()', () => {
     it('throws 404 if affiliation not found', async () => {
       mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
-      await expect(service.updateStatus(1, 99, { status: 'ACTIVE' as any })).rejects.toMatchObject({ status: 404 });
+      await expect(
+        service.updateStatus(1, 99, { status: 'ACTIVE' as any }),
+      ).rejects.toMatchObject({ status: 404 });
     });
 
     it('updates status', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({ id: 1 });
-      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({ id: 1, status: 'ACTIVE' });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        id: 1,
+      });
+      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
+        id: 1,
+        status: 'ACTIVE',
+      });
       await service.updateStatus(1, 1, { status: 'ACTIVE' as any });
-      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'ACTIVE' }) }),
+      expect(
+        mockPrisma.organizationUserAffiliation.update,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'ACTIVE' }),
+        }),
       );
     });
   });

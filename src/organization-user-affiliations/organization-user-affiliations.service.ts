@@ -91,7 +91,7 @@ export class OrganizationUserAffiliationsService {
   }
 
   async findAll(orgId: number, query: ListUserAffiliationsQueryDto) {
-    const { page, limit, status, role, teamId } = query;
+    const { page, limit, status, role, teamId, q } = query;
     const skip = (page - 1) * limit;
     const where = {
       organizationId: orgId,
@@ -99,6 +99,16 @@ export class OrganizationUserAffiliationsService {
       ...(status ? { status } : {}),
       ...(role ? { role } : {}),
       ...(teamId ? { teamId } : {}),
+      ...(q
+        ? {
+            user: {
+              OR: [
+                { name: { contains: q, mode: 'insensitive' as const } },
+                { email: { contains: q, mode: 'insensitive' as const } },
+              ],
+            },
+          }
+        : {}),
     };
     const [count, data] = await Promise.all([
       this.prisma.organizationUserAffiliation.count({ where }),
