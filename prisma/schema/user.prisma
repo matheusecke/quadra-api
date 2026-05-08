@@ -10,6 +10,7 @@ model User {
   updatedAt    DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
 
   organizationAffiliations    OrganizationUserAffiliation[]
+  userAffiliationsCreated     OrganizationUserAffiliation[] @relation("UserAffiliationCreatedBy")
   teamAffiliationsCreated     OrganizationTeamAffiliation[] @relation("TeamAffiliationCreatedBy")
   refreshTokens               RefreshToken[]
 
