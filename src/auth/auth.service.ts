@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { EntityStatus, Prisma } from '@prisma/client';
+import { AffiliationStatus, EntityStatus, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -358,6 +358,7 @@ export class AuthService {
       userId,
       ...(organizationId !== undefined ? { organizationId } : {}),
       isDeleted: false,
+      status: AffiliationStatus.ACTIVE,
       user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
       organization: {
         is: { isDeleted: false, status: EntityStatus.ACTIVE },
