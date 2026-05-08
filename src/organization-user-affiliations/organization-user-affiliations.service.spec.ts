@@ -271,6 +271,79 @@ describe('OrganizationUserAffiliationsService', () => {
     });
   });
 
+  describe('update() additional', () => {
+    it('throws 404 if active affiliation not found', async () => {
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
+      await expect(service.update(1, 1, { role: OrgRole.ATHLETE })).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('updates affiliation successfully', async () => {
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        id: 1, status: 'ACTIVE', role: 'ATHLETE', teamId: 2,
+      });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({ id: 1, status: 'ACTIVE' });
+      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
+        id: 1, role: 'TEAM_ADMIN', teamId: 2, status: 'ACTIVE',
+      });
+      const result = await service.update(1, 1, { role: OrgRole.TEAM_ADMIN, teamId: 2 });
+      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalled();
+      expect(result).toBeDefined();
+    });
+
+    it('clears teamId and jerseyNumber when switching to ORG_ADMIN', async () => {
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        id: 1, status: 'ACTIVE', role: 'ATHLETE', teamId: 2,
+      });
+      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
+        id: 1, role: 'ORG_ADMIN', teamId: null, jerseyNumber: null, status: 'ACTIVE',
+      });
+      await service.update(1, 1, { role: OrgRole.ORG_ADMIN });
+      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ teamId: null, jerseyNumber: null }) }),
+      );
+    });
+  });
+
+  describe('resend()', () => {
+    it('throws 404 if affiliation not found', async () => {
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
+      await expect(service.resend(1, 99)).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('throws 422 if affiliation is not PENDING', async () => {
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({ id: 1, status: 'ACTIVE' });
+      await expect(service.resend(1, 1)).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('regenerates token and returns raw token', async () => {
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({ id: 1, status: 'PENDING' });
+      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({ id: 1, status: 'PENDING' });
+      const result = await service.resend(1, 1);
+      expect(result.inviteToken).toHaveLength(64);
+      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ inviteToken: expect.any(String), inviteExpiresAt: expect.any(Date) }),
+        }),
+      );
+    });
+  });
+
+  describe('updateStatus()', () => {
+    it('throws 404 if affiliation not found', async () => {
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
+      await expect(service.updateStatus(1, 99, { status: 'ACTIVE' as any })).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('updates status', async () => {
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({ id: 1 });
+      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({ id: 1, status: 'ACTIVE' });
+      await service.updateStatus(1, 1, { status: 'ACTIVE' as any });
+      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'ACTIVE' }) }),
+      );
+    });
+  });
+
   describe('remove()', () => {
     it('throws 422 if ORG_ADMIN tries to remove themselves', async () => {
       mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
