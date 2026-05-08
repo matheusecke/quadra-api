@@ -1,6 +1,17 @@
 import {
-  Controller, Post, Get, Patch, Delete, Body, Param, ParseIntPipe,
-  UseGuards, UseInterceptors, Query, HttpCode, HttpStatus,
+  Controller,
+  Post,
+  Get,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  ParseIntPipe,
+  UseGuards,
+  UseInterceptors,
+  Query,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';

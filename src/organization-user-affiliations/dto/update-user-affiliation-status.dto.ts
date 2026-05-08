@@ -3,5 +3,7 @@ import { IsEnum } from 'class-validator';
 import { AffiliationStatus } from '@prisma/client';
 
 export class UpdateUserAffiliationStatusDto {
-  @ApiProperty({ enum: AffiliationStatus }) @IsEnum(AffiliationStatus) status: AffiliationStatus;
+  @ApiProperty({ enum: AffiliationStatus })
+  @IsEnum(AffiliationStatus)
+  status: AffiliationStatus;
 }

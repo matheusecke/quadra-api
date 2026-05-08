@@ -8,5 +8,7 @@ export enum InviteDecision {
 
 export class UserInviteResponseDto {
   @ApiProperty() @IsString() @Length(64, 64) token: string;
-  @ApiProperty({ enum: InviteDecision }) @IsEnum(InviteDecision) decision: InviteDecision;
+  @ApiProperty({ enum: InviteDecision })
+  @IsEnum(InviteDecision)
+  decision: InviteDecision;
 }

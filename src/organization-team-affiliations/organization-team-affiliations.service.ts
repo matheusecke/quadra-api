@@ -4,20 +4,32 @@ import { AffiliationToken } from '../common/utils/affiliation-token.util';
 import { ApiException } from '../common/exceptions/api.exception';
 import { AffiliationStatus } from '@prisma/client';
 import { CreateTeamAffiliationDto } from './dto/create-team-affiliation.dto';
-import { InviteDecision, TeamInviteResponseDto } from './dto/team-invite-response.dto';
+import {
+  InviteDecision,
+  TeamInviteResponseDto,
+} from './dto/team-invite-response.dto';
 import { UpdateTeamAffiliationStatusDto } from './dto/update-team-affiliation-status.dto';
 import { ListTeamAffiliationsQueryDto } from './dto/list-team-affiliations-query.dto';
 
 const affiliationSelect = {
-  id: true, organizationId: true, teamId: true, status: true,
-  createdByUserId: true, createdAt: true, updatedAt: true,
+  id: true,
+  organizationId: true,
+  teamId: true,
+  status: true,
+  createdByUserId: true,
+  createdAt: true,
+  updatedAt: true,
 };
 
 @Injectable()
 export class OrganizationTeamAffiliationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(orgId: number, dto: CreateTeamAffiliationDto, currentUserId: number) {
+  async create(
+    orgId: number,
+    dto: CreateTeamAffiliationDto,
+    currentUserId: number,
+  ) {
     const team = await this.prisma.team.findUnique({
       where: { id: dto.teamId, isDeleted: false },
     });
@@ -31,7 +43,10 @@ export class OrganizationTeamAffiliationsService {
         status: { in: [AffiliationStatus.PENDING, AffiliationStatus.ACTIVE] },
       },
     });
-    if (existing) throw ApiException.conflict('Team already has a pending or active affiliation with this organization');
+    if (existing)
+      throw ApiException.conflict(
+        'Team already has a pending or active affiliation with this organization',
+      );
 
     const { raw, hash, expiresAt } = AffiliationToken.generate();
 
@@ -61,7 +76,10 @@ export class OrganizationTeamAffiliationsService {
     const [count, data] = await Promise.all([
       this.prisma.organizationTeamAffiliation.count({ where }),
       this.prisma.organizationTeamAffiliation.findMany({
-        where, select: affiliationSelect, skip, take: limit,
+        where,
+        select: affiliationSelect,
+        skip,
+        take: limit,
         orderBy: { createdAt: 'desc' },
       }),
     ]);
@@ -91,7 +109,11 @@ export class OrganizationTeamAffiliationsService {
     if (dto.decision === InviteDecision.ACCEPT) {
       return this.prisma.organizationTeamAffiliation.update({
         where: { id: aff.id },
-        data: { status: AffiliationStatus.ACTIVE, inviteToken: null, inviteExpiresAt: null },
+        data: {
+          status: AffiliationStatus.ACTIVE,
+          inviteToken: null,
+          inviteExpiresAt: null,
+        },
         select: affiliationSelect,
       });
     }
@@ -109,7 +131,9 @@ export class OrganizationTeamAffiliationsService {
     });
     if (!aff) throw ApiException.notFound('Affiliation not found');
     if (aff.status !== AffiliationStatus.PENDING)
-      throw ApiException.unprocessable('Can only resend invite for PENDING affiliations');
+      throw ApiException.unprocessable(
+        'Can only resend invite for PENDING affiliations',
+      );
 
     const { raw, hash, expiresAt } = AffiliationToken.generate();
     const updated = await this.prisma.organizationTeamAffiliation.update({
@@ -131,7 +155,11 @@ export class OrganizationTeamAffiliationsService {
     });
   }
 
-  async updateStatus(orgId: number, id: number, dto: UpdateTeamAffiliationStatusDto) {
+  async updateStatus(
+    orgId: number,
+    id: number,
+    dto: UpdateTeamAffiliationStatusDto,
+  ) {
     const aff = await this.prisma.organizationTeamAffiliation.findUnique({
       where: { id, organizationId: orgId, isDeleted: false },
     });
@@ -154,7 +182,10 @@ export class OrganizationTeamAffiliationsService {
     const [count, data] = await Promise.all([
       this.prisma.organizationTeamAffiliation.count({ where }),
       this.prisma.organizationTeamAffiliation.findMany({
-        where, select: affiliationSelect, skip, take: limit,
+        where,
+        select: affiliationSelect,
+        skip,
+        take: limit,
         orderBy: { createdAt: 'desc' },
       }),
     ]);

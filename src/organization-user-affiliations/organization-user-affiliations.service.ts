@@ -4,22 +4,36 @@ import { AffiliationToken } from '../common/utils/affiliation-token.util';
 import { ApiException } from '../common/exceptions/api.exception';
 import { AffiliationStatus, OrgRole } from '@prisma/client';
 import { CreateUserAffiliationDto } from './dto/create-user-affiliation.dto';
-import { UserInviteResponseDto, InviteDecision } from './dto/user-invite-response.dto';
+import {
+  UserInviteResponseDto,
+  InviteDecision,
+} from './dto/user-invite-response.dto';
 import { UpdateUserAffiliationDto } from './dto/update-user-affiliation.dto';
 import { UpdateUserAffiliationStatusDto } from './dto/update-user-affiliation-status.dto';
 import { ListUserAffiliationsQueryDto } from './dto/list-user-affiliations-query.dto';
 
 const affiliationSelect = {
-  id: true, userId: true, organizationId: true, role: true,
-  teamId: true, jerseyNumber: true, status: true,
-  createdByUserId: true, createdAt: true, updatedAt: true,
+  id: true,
+  userId: true,
+  organizationId: true,
+  role: true,
+  teamId: true,
+  jerseyNumber: true,
+  status: true,
+  createdByUserId: true,
+  createdAt: true,
+  updatedAt: true,
 };
 
 @Injectable()
 export class OrganizationUserAffiliationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(orgId: number, dto: CreateUserAffiliationDto, currentUserId: number) {
+  async create(
+    orgId: number,
+    dto: CreateUserAffiliationDto,
+    currentUserId: number,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { id: dto.userId, isDeleted: false, status: 'ACTIVE' },
     });
@@ -27,18 +41,34 @@ export class OrganizationUserAffiliationsService {
 
     const existing = await this.prisma.organizationUserAffiliation.findFirst({
       where: {
-        userId: dto.userId, organizationId: orgId, isDeleted: false,
+        userId: dto.userId,
+        organizationId: orgId,
+        isDeleted: false,
         status: { in: [AffiliationStatus.PENDING, AffiliationStatus.ACTIVE] },
       },
     });
-    if (existing) throw ApiException.conflict('User already has a pending or active affiliation in this organization');
+    if (existing)
+      throw ApiException.conflict(
+        'User already has a pending or active affiliation in this organization',
+      );
 
     if (dto.role !== OrgRole.ORG_ADMIN) {
-      if (!dto.teamId) throw ApiException.unprocessable('teamId is required for non-ORG_ADMIN roles');
+      if (!dto.teamId)
+        throw ApiException.unprocessable(
+          'teamId is required for non-ORG_ADMIN roles',
+        );
       const teamAff = await this.prisma.organizationTeamAffiliation.findFirst({
-        where: { organizationId: orgId, teamId: dto.teamId, isDeleted: false, status: AffiliationStatus.ACTIVE },
+        where: {
+          organizationId: orgId,
+          teamId: dto.teamId,
+          isDeleted: false,
+          status: AffiliationStatus.ACTIVE,
+        },
       });
-      if (!teamAff) throw ApiException.unprocessable('Team is not actively affiliated with this organization');
+      if (!teamAff)
+        throw ApiException.unprocessable(
+          'Team is not actively affiliated with this organization',
+        );
     }
 
     const { raw, hash, expiresAt } = AffiliationToken.generate();
@@ -64,7 +94,8 @@ export class OrganizationUserAffiliationsService {
     const { page, limit, status, role, teamId } = query;
     const skip = (page - 1) * limit;
     const where = {
-      organizationId: orgId, isDeleted: false,
+      organizationId: orgId,
+      isDeleted: false,
       ...(status ? { status } : {}),
       ...(role ? { role } : {}),
       ...(teamId ? { teamId } : {}),
@@ -72,7 +103,10 @@ export class OrganizationUserAffiliationsService {
     const [count, data] = await Promise.all([
       this.prisma.organizationUserAffiliation.count({ where }),
       this.prisma.organizationUserAffiliation.findMany({
-        where, select: affiliationSelect, skip, take: limit,
+        where,
+        select: affiliationSelect,
+        skip,
+        take: limit,
         orderBy: { createdAt: 'desc' },
       }),
     ]);
@@ -104,7 +138,11 @@ export class OrganizationUserAffiliationsService {
     if (dto.decision === InviteDecision.ACCEPT) {
       return this.prisma.organizationUserAffiliation.update({
         where: { id: aff.id },
-        data: { status: AffiliationStatus.ACTIVE, inviteToken: null, inviteExpiresAt: null },
+        data: {
+          status: AffiliationStatus.ACTIVE,
+          inviteToken: null,
+          inviteExpiresAt: null,
+        },
         select: affiliationSelect,
       });
     }
@@ -118,7 +156,12 @@ export class OrganizationUserAffiliationsService {
 
   async update(orgId: number, id: number, dto: UpdateUserAffiliationDto) {
     const aff = await this.prisma.organizationUserAffiliation.findUnique({
-      where: { id, organizationId: orgId, isDeleted: false, status: AffiliationStatus.ACTIVE },
+      where: {
+        id,
+        organizationId: orgId,
+        isDeleted: false,
+        status: AffiliationStatus.ACTIVE,
+      },
     });
     if (!aff) throw ApiException.notFound('Active affiliation not found');
 
@@ -126,18 +169,32 @@ export class OrganizationUserAffiliationsService {
     const newTeamId = dto.teamId !== undefined ? dto.teamId : aff.teamId;
 
     if (newRole !== OrgRole.ORG_ADMIN) {
-      if (!newTeamId) throw ApiException.unprocessable('teamId is required for non-ORG_ADMIN roles');
+      if (!newTeamId)
+        throw ApiException.unprocessable(
+          'teamId is required for non-ORG_ADMIN roles',
+        );
       const teamAff = await this.prisma.organizationTeamAffiliation.findFirst({
-        where: { organizationId: orgId, teamId: newTeamId, isDeleted: false, status: AffiliationStatus.ACTIVE },
+        where: {
+          organizationId: orgId,
+          teamId: newTeamId,
+          isDeleted: false,
+          status: AffiliationStatus.ACTIVE,
+        },
       });
-      if (!teamAff) throw ApiException.unprocessable('Team is not actively affiliated with this organization');
+      if (!teamAff)
+        throw ApiException.unprocessable(
+          'Team is not actively affiliated with this organization',
+        );
     }
 
     const data: Record<string, unknown> = {};
     if (dto.role !== undefined) data.role = dto.role;
     if (dto.teamId !== undefined) data.teamId = dto.teamId;
     if (dto.jerseyNumber !== undefined) data.jerseyNumber = dto.jerseyNumber;
-    if (newRole === OrgRole.ORG_ADMIN) { data.teamId = null; data.jerseyNumber = null; }
+    if (newRole === OrgRole.ORG_ADMIN) {
+      data.teamId = null;
+      data.jerseyNumber = null;
+    }
 
     return this.prisma.organizationUserAffiliation.update({
       where: { id },
@@ -152,7 +209,9 @@ export class OrganizationUserAffiliationsService {
     });
     if (!aff) throw ApiException.notFound('Affiliation not found');
     if (aff.status !== AffiliationStatus.PENDING)
-      throw ApiException.unprocessable('Can only resend invite for PENDING affiliations');
+      throw ApiException.unprocessable(
+        'Can only resend invite for PENDING affiliations',
+      );
 
     const { raw, hash, expiresAt } = AffiliationToken.generate();
     const updated = await this.prisma.organizationUserAffiliation.update({
@@ -163,13 +222,20 @@ export class OrganizationUserAffiliationsService {
     return { affiliation: updated, inviteToken: raw };
   }
 
-  async remove(orgId: number, id: number, currentUserId: number, isSystemAdmin: boolean) {
+  async remove(
+    orgId: number,
+    id: number,
+    currentUserId: number,
+    isSystemAdmin: boolean,
+  ) {
     const aff = await this.prisma.organizationUserAffiliation.findUnique({
       where: { id, organizationId: orgId, isDeleted: false },
     });
     if (!aff) throw ApiException.notFound('Affiliation not found');
     if (!isSystemAdmin && aff.userId === currentUserId)
-      throw ApiException.unprocessable('You cannot remove your own affiliation');
+      throw ApiException.unprocessable(
+        'You cannot remove your own affiliation',
+      );
 
     await this.prisma.organizationUserAffiliation.update({
       where: { id },
@@ -177,7 +243,11 @@ export class OrganizationUserAffiliationsService {
     });
   }
 
-  async updateStatus(orgId: number, id: number, dto: UpdateUserAffiliationStatusDto) {
+  async updateStatus(
+    orgId: number,
+    id: number,
+    dto: UpdateUserAffiliationStatusDto,
+  ) {
     const aff = await this.prisma.organizationUserAffiliation.findUnique({
       where: { id, organizationId: orgId, isDeleted: false },
     });

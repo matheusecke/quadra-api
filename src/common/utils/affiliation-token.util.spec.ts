@@ -24,8 +24,12 @@ describe('AffiliationToken', () => {
       const { expiresAt } = AffiliationToken.generate();
       const after = Date.now();
       const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-      expect(expiresAt.getTime()).toBeGreaterThanOrEqual(before + sevenDaysMs - 1000);
-      expect(expiresAt.getTime()).toBeLessThanOrEqual(after + sevenDaysMs + 1000);
+      expect(expiresAt.getTime()).toBeGreaterThanOrEqual(
+        before + sevenDaysMs - 1000,
+      );
+      expect(expiresAt.getTime()).toBeLessThanOrEqual(
+        after + sevenDaysMs + 1000,
+      );
     });
 
     it('respects custom expiry days', () => {
@@ -49,7 +53,9 @@ describe('AffiliationToken', () => {
     });
 
     it('produces different hashes for different inputs', () => {
-      expect(AffiliationToken.hash('abc')).not.toBe(AffiliationToken.hash('xyz'));
+      expect(AffiliationToken.hash('abc')).not.toBe(
+        AffiliationToken.hash('xyz'),
+      );
     });
   });
 });

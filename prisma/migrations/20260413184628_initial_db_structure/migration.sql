@@ -13,6 +13,9 @@ CREATE TABLE "organization_team_affiliations" (
     "organization_id" INTEGER NOT NULL,
     "team_id" INTEGER NOT NULL,
     "status" "affiliation_status" NOT NULL DEFAULT 'PENDING',
+    "created_by_user_id" INTEGER,
+    "invite_token" TEXT,
+    "invite_expires_at" TIMESTAMPTZ(3),
     "is_deleted" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ(3) NOT NULL,
@@ -28,6 +31,10 @@ CREATE TABLE "organization_user_affiliations" (
     "role" "org_role" NOT NULL,
     "team_id" INTEGER,
     "jersey_number" INTEGER,
+    "status" "affiliation_status" NOT NULL DEFAULT 'PENDING',
+    "created_by_user_id" INTEGER,
+    "invite_token" TEXT,
+    "invite_expires_at" TIMESTAMPTZ(3),
     "is_deleted" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ(3) NOT NULL,
@@ -82,13 +89,19 @@ ALTER TABLE "organization_team_affiliations" ADD CONSTRAINT "organization_team_a
 ALTER TABLE "organization_team_affiliations" ADD CONSTRAINT "organization_team_affiliations_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "organization_team_affiliations" ADD CONSTRAINT "organization_team_affiliations_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "organization_user_affiliations" ADD CONSTRAINT "organization_user_affiliations_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "organization_user_affiliations" ADD CONSTRAINT "organization_user_affiliations_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "organization_user_affiliations" ADD CONSTRAINT "organization_user_affiliations_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "organization_user_affiliations" ADD CONSTRAINT "organization_user_affiliations_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "organization_user_affiliations" ADD CONSTRAINT "organization_user_affiliations_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- DB-only constraints
 ALTER TABLE "users"
@@ -129,11 +142,17 @@ CREATE UNIQUE INDEX "teams_slug_active_unique_idx"
 
 CREATE UNIQUE INDEX "organization_user_affiliations_user_org_active_unique_idx"
     ON "organization_user_affiliations" ("user_id", "organization_id")
-    WHERE "is_deleted" = false;
+    WHERE "is_deleted" = false AND "status" = 'ACTIVE';
 
 CREATE UNIQUE INDEX "organization_team_affiliations_org_team_active_unique_idx"
     ON "organization_team_affiliations" ("organization_id", "team_id")
     WHERE "is_deleted" = false;
+
+CREATE UNIQUE INDEX "organization_user_affiliations_invite_token_key"
+    ON "organization_user_affiliations" ("invite_token");
+
+CREATE UNIQUE INDEX "organization_team_affiliations_invite_token_key"
+    ON "organization_team_affiliations" ("invite_token");
 
 -- DB-only partial indexes
 CREATE INDEX "organization_user_affiliations_org_team_active_idx"

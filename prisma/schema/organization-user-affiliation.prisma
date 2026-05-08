@@ -22,8 +22,7 @@ model OrganizationUserAffiliation {
   // Partial unique index on organization_user_affiliations(user_id, organization_id)
   // WHERE is_deleted = false AND status = 'ACTIVE'.
   // Must be added manually in migration SQL.
-  // First added in migration: add_status_invite_fields_org_user_affiliation
-  // (replaces initial_db_structure index which lacked status = 'ACTIVE' filter)
+  // First added in migration: initial_db_structure
   //
   // DB-only rule:
   // Partial index on organization_user_affiliations(organization_id, role)
