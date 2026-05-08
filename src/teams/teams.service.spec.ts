@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpStatus } from '@nestjs/common';
-import { EntityStatus } from '@prisma/client';
+import { AffiliationStatus, EntityStatus } from '@prisma/client';
 import { TeamsService } from './teams.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
@@ -100,6 +100,42 @@ describe('TeamsService', () => {
         }),
       );
       expect(result).toEqual({ count: 2, data: [baseTeam] });
+    });
+
+    it('includes organizationTeamAffiliations filter when organizationId is provided', async () => {
+      mockPrisma.team.count.mockResolvedValue(1);
+      mockPrisma.team.findMany.mockResolvedValue([baseTeam]);
+
+      await service.findAll({ page: 1, limit: 10, organizationId: 42 });
+
+      expect(mockPrisma.team.count).toHaveBeenCalledWith({
+        where: {
+          AND: expect.arrayContaining([
+            {
+              organizationTeamAffiliations: {
+                some: {
+                  organizationId: 42,
+                  isDeleted: false,
+                  status: AffiliationStatus.ACTIVE,
+                },
+              },
+            },
+          ]),
+        },
+      });
+    });
+
+    it('does not include organizationTeamAffiliations filter when organizationId is absent', async () => {
+      mockPrisma.team.count.mockResolvedValue(2);
+      mockPrisma.team.findMany.mockResolvedValue([baseTeam]);
+
+      await service.findAll({ page: 1, limit: 10 });
+
+      const andFilters: object[] =
+        mockPrisma.team.count.mock.calls[0][0].where.AND;
+      expect(
+        andFilters.some((f) => 'organizationTeamAffiliations' in f),
+      ).toBe(false);
     });
   });
 

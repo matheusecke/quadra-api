@@ -1,7 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { EntityStatus } from '@prisma/client';
-import { Transform } from 'class-transformer';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { PaginationDefaultsDto } from '../../common/dto/pagination-defaults.dto';
 
 export class ListTeamsQueryDto extends PaginationDefaultsDto {
@@ -19,4 +19,11 @@ export class ListTeamsQueryDto extends PaginationDefaultsDto {
   @IsOptional()
   @IsEnum(EntityStatus)
   status?: EntityStatus;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  organizationId?: number;
 }
