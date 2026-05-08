@@ -14,10 +14,12 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 
 ## Implemented today (snapshot)
 
-- NestJS app with global `ConfigModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule` (`src/app.module.ts`).
+- NestJS app with global `ConfigModule`, `ThrottlerModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule` (`src/app.module.ts`).
 - Bootstrap: `ValidationPipe`, global exception filters, `cookie-parser`, CORS with credentials, Swagger at `/api`, port `3001` by default (`src/main.ts`).
 - Prisma multi-file schema under `prisma/schema/` covering multi-tenant core + auth persistence: `User`, `Organization`, `Team`, `OrganizationUserAffiliation`, `OrganizationTeamAffiliation`, `RefreshToken`.
-- Shared utility `src/common/utils/slugify.ts` — slug generation used by `OrganizationsModule` and `TeamsModule`.
+- Shared utilities:
+  - `src/common/utils/slugify.ts` — slug generation used by `OrganizationsModule` and `TeamsModule`.
+  - `src/common/utils/affiliation-token.util.ts` — invite token generation (`crypto.randomBytes(32)`) and SHA-256 hashing used by both affiliation modules.
 - **Not in schema yet:** championships, matches, statistics.
 
 ## Document map (by concern)
@@ -40,6 +42,8 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 | Users | [`src/users/docs/README.md`](../src/users/docs/README.md) | User CRUD, admin rules |
 | Organizations | [`src/organizations/docs/README.md`](../src/organizations/docs/README.md) | Org CRUD, slug, soft delete, token revocation |
 | Teams | [`src/teams/docs/README.md`](../src/teams/docs/README.md) | Team CRUD, slug, soft delete |
+| Organization–Team Affiliations | [`src/organization-team-affiliations/docs/README.md`](../src/organization-team-affiliations/docs/README.md) | Invite flow, token lifecycle, status transitions |
+| Organization–User Affiliations | [`src/organization-user-affiliations/docs/README.md`](../src/organization-user-affiliations/docs/README.md) | Invite flow, role/team constraints, self-removal prevention |
 
 ## Conventions (high level)
 

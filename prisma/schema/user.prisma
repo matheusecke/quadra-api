@@ -9,8 +9,10 @@ model User {
   createdAt    DateTime     @default(now()) @db.Timestamptz(3) @map("created_at")
   updatedAt    DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
 
-  organizationAffiliations OrganizationUserAffiliation[]
-  refreshTokens            RefreshToken[]
+  organizationAffiliations    OrganizationUserAffiliation[]
+  userAffiliationsCreated     OrganizationUserAffiliation[] @relation("UserAffiliationCreatedBy")
+  teamAffiliationsCreated     OrganizationTeamAffiliation[] @relation("TeamAffiliationCreatedBy")
+  refreshTokens               RefreshToken[]
 
   // DB-only rule:
   // CHECK (email = lower(email)).
