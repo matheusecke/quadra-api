@@ -21,7 +21,11 @@ export class ListUserAffiliationsQueryDto extends PaginationDefaultsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  })
   q?: string;
   @ApiPropertyOptional()
   @IsOptional()

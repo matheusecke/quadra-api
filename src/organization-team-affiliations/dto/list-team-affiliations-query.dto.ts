@@ -13,7 +13,11 @@ export class ListTeamAffiliationsQueryDto extends PaginationDefaultsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  })
   q?: string;
 
   @ApiPropertyOptional()
