@@ -28,6 +28,12 @@ If a document is outdated because of the implementation, update it in the same w
 
 For **multi-step or non-trivial features**, produce a written implementation plan before coding.
 
+At the **start of the plan** (before task breakdown), state that development should run on a **new Git branch** created for the work. Name branches with a conventional prefix plus a short **kebab-case** slug, aligned with common team patterns — for example: `feature/<slug>` (new behavior), `bugfix/<slug>` or `fix/<slug>` (defects), `hotfix/<slug>` (urgent production fixes), `chore/<slug>` (tooling or maintenance), `docs/<slug>` (documentation-only), `refactor/<slug>` (behavior-preserving structural changes), or `release/<version>` when appropriate. Pick the prefix that matches the change; when unsure, default to `feature/*` for product work and `bugfix/*` for corrections. Include the command implementers should run (substitute the full branch name for the placeholder):
+
+```bash
+git checkout -b <branch-name>
+```
+
 **Clarifications:** Before and during planning or implementation, **ask targeted questions** (or explicitly log assumptions in the plan) whenever requirements, edge cases, auth/multi-tenant boundaries, data lifecycle, or acceptance criteria are **ambiguous or unstated**. Prefer a short clarification over inventing behavior — silent guesses cause gaps, rework, and security or product bugs.
 
 **When to skip a full plan** (no `writing-plans` artifact and no `subagent-driven-development` run for the whole change):
@@ -54,7 +60,7 @@ For the plan itself, use **`writing-plans`** (bite-sized tasks, exact file paths
    - **Work** — What changes and acceptance criteria in plain language.
    - **Quality** — Tests to add or run (`npm test`, `npm run lint`), and that task-level **review** (spec match + code quality) happens before marking the task done.
 3. **Per-task steps** — Checkbox steps (`- [ ]`) where useful; keep steps small (single logical action when possible).
-4. **Final review** — After all tasks: run full verification (`npm test`, `npm run lint`), confirm **Documentation Sync** above if behavior or public API changed, and a short **whole-change review** (consistency, security, multi-tenant rules) before calling the work complete.
+4. **Final review** — After all tasks: run full verification (`npm test`), confirm **Documentation Sync** above if behavior or public API changed, and a short **whole-change review** (consistency, security, multi-tenant rules) before calling the work complete.
 
 Optional but valuable: file map upfront (what each new/changed file owns), link to [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) / [docs/DATABASE.md](docs/DATABASE.md) / relevant `src/<domain>/docs/README.md`, and note migration handoff if schema SQL is touched (agents do not run migrate commands).
 
