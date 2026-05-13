@@ -4,19 +4,20 @@ What is **not** implemented yet and sensible next increments. Use together with 
 
 ## Not in this codebase yet
 
-- Full CRUD for `organizations`, `teams`, and public/admin flows for affiliations (beyond what auth needs internally).
 - Platform admin routes outside user management (e.g. `/admin/organizations`).
-- Org-scoped business APIs (e.g. teams under an org) beyond auth’s org selection.
 - Dedicated audit logging module (DB triggers/functions pattern is described in [DATABASE.md](./DATABASE.md) as future work).
 - Championship, match, and statistics modules (not in Prisma schema yet).
+
+## Completed
+
+- **Organizations and teams CRUD** — full lifecycle with slug, soft delete, and system-admin guards.
+- **Affiliation APIs** — `OrganizationTeamAffiliationsModule` and `OrganizationUserAffiliationsModule` implement the full invite/accept/reject flow with token-based handshake, role/team constraints, resend, status override, and soft delete. Auth is scoped to ACTIVE affiliations.
 
 ## Natural next blocks
 
 1. **Platform admin APIs** — e.g. `POST /admin/organizations`, lifecycle for orgs aligned with `TCC.md`.
-2. **Organizations and teams CRUD** — create, read, update, deactivate; respect multi-tenant rules.
-3. **Org-scoped endpoints** — e.g. teams under `organizations/:orgId`, protected with `JwtAuthGuard` + `OrgRoleGuard`.
-4. **Affiliation APIs** — add/remove users and teams; enforce consistency with DB constraints documented in [DATABASE.md](./DATABASE.md); roster/coach views should use these, not raw `/users` list semantics.
-5. **Sports domain** — reintroduce tournaments, matches, statistics after the tenant and membership layer is stable.
+2. **Org-scoped endpoints** — e.g. roster views, team roster under org.
+3. **Sports domain** — reintroduce tournaments, matches, statistics after the tenant and membership layer is stable.
 
 ## Migrations
 

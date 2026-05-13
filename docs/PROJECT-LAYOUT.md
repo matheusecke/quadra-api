@@ -27,9 +27,11 @@ src/
 │   ├── interceptors/
 │   │   ├── pagination.interceptor.ts
 │   │   └── response-transform.interceptor.ts
-│   └── pipes/
-│       ├── validation.factory.ts
-│       └── parse-int-api.pipe.ts
+│   ├── pipes/
+│   │   ├── validation.factory.ts
+│   │   └── parse-int-api.pipe.ts
+│   └── utils/
+│       └── slugify.ts
 │
 ├── auth/
 │   ├── docs/
@@ -43,12 +45,28 @@ src/
 │   ├── interfaces/
 │   └── strategies/
 │
-└── users/
+├── users/
+│   ├── docs/
+│   │   └── README.md
+│   ├── users.module.ts
+│   ├── users.controller.ts
+│   ├── users.service.ts
+│   └── dto/
+│
+├── organizations/
+│   ├── docs/
+│   │   └── README.md
+│   ├── organizations.module.ts
+│   ├── organizations.controller.ts
+│   ├── organizations.service.ts
+│   └── dto/
+│
+└── teams/
     ├── docs/
     │   └── README.md
-    ├── users.module.ts
-    ├── users.controller.ts
-    ├── users.service.ts
+    ├── teams.module.ts
+    ├── teams.controller.ts
+    ├── teams.service.ts
     └── dto/
 ```
 
@@ -74,7 +92,7 @@ Registered in `src/app.module.ts`:
 
 - `ConfigModule` (global)
 - `ThrottlerModule` (default rate limit; auth routes use stricter `@Throttle` where needed)
-- `PrismaModule`, `AuthModule`, `UsersModule`
+- `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`
 - Global `ResponseTransformInterceptor` via `APP_INTERCEPTOR`
 
 Bootstrap (`src/main.ts`): `cookie-parser`, shutdown hooks, CORS with credentials, `ValidationPipe`, global filters, Swagger at `/api`, default port `3001`.

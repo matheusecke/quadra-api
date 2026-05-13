@@ -173,6 +173,47 @@ describe('UsersService', () => {
       );
       expect(result).toEqual({ count: 1, data: [baseUser] });
     });
+
+    it('filters by isSystemAdmin=true', async () => {
+      mockPrisma.user.count.mockResolvedValue(1);
+      mockPrisma.user.findMany.mockResolvedValue([baseUser]);
+
+      await service.findAll({ page: 1, limit: 10, isSystemAdmin: true });
+
+      const where = mockPrisma.user.count.mock.calls[0][0].where;
+      expect(where.AND).toEqual(
+        expect.arrayContaining([{ isSystemAdmin: true }]),
+      );
+    });
+
+    it('filters by isSystemAdmin=false', async () => {
+      mockPrisma.user.count.mockResolvedValue(2);
+      mockPrisma.user.findMany.mockResolvedValue([baseUser]);
+
+      await service.findAll({ page: 1, limit: 10, isSystemAdmin: false });
+
+      const where = mockPrisma.user.count.mock.calls[0][0].where;
+      expect(where.AND).toEqual(
+        expect.arrayContaining([{ isSystemAdmin: false }]),
+      );
+    });
+
+    it('does not add isSystemAdmin filter when absent', async () => {
+      mockPrisma.user.count.mockResolvedValue(3);
+      mockPrisma.user.findMany.mockResolvedValue([baseUser]);
+
+      await service.findAll({ page: 1, limit: 10 });
+
+      const where = mockPrisma.user.count.mock.calls[0][0].where;
+      const andFilters: unknown[] = where.AND as unknown[];
+      const hasIsSystemAdmin = andFilters.some(
+        (f) =>
+          typeof f === 'object' &&
+          f !== null &&
+          'isSystemAdmin' in (f as object),
+      );
+      expect(hasIsSystemAdmin).toBe(false);
+    });
   });
 
   describe('findById', () => {
