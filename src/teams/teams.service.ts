@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { EntityStatus, Prisma } from '@prisma/client';
+import { AffiliationStatus, EntityStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { slugify } from '../common/utils/slugify';
 import { ApiException } from '../common/exceptions/api.exception';
@@ -54,6 +54,18 @@ export class TeamsService {
 
     if (query.q) {
       filters.push({ name: { contains: query.q, mode: 'insensitive' } });
+    }
+
+    if (query.organizationId) {
+      filters.push({
+        organizationTeamAffiliations: {
+          some: {
+            organizationId: query.organizationId,
+            isDeleted: false,
+            status: AffiliationStatus.ACTIVE,
+          },
+        },
+      });
     }
 
     const where: Prisma.TeamWhereInput = { AND: filters };

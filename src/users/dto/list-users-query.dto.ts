@@ -1,7 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { EntityStatus, OrgRole } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { PaginationDefaultsDto } from '../../common/dto/pagination-defaults.dto';
 
 export class ListUsersQueryDto extends PaginationDefaultsDto {
@@ -38,4 +38,10 @@ export class ListUsersQueryDto extends PaginationDefaultsDto {
   @IsOptional()
   @IsEnum(OrgRole)
   role?: OrgRole;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  isSystemAdmin?: boolean;
 }
