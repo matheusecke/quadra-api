@@ -38,6 +38,7 @@ import { UpdateUserAffiliationStatusDto } from './dto/update-user-affiliation-st
 import { ListUserAffiliationsQueryDto } from './dto/list-user-affiliations-query.dto';
 import { UserAffiliationResponseDto } from './dto/user-affiliation-response.dto';
 import { UserAffiliationInviteBundleDto } from './dto/user-affiliation-invite-bundle.dto';
+import { Throttle } from '@nestjs/throttler';
 import { ApiStandardCrudErrors } from '../common/swagger/api-error-responses.decorators';
 import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorator';
 
@@ -149,9 +150,11 @@ export class OrganizationUserAffiliationsController {
     return this.service.updateStatus(orgId, id, dto);
   }
 
+  // Invite email resend abuse: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
   @Post('organizations/:orgId/user-affiliations/:id/resend')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Re-send invite for a pending affiliation (org admin)',
   })

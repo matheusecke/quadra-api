@@ -37,6 +37,7 @@ import { UpdateTeamAffiliationStatusDto } from './dto/update-team-affiliation-st
 import { ListTeamAffiliationsQueryDto } from './dto/list-team-affiliations-query.dto';
 import { TeamAffiliationResponseDto } from './dto/team-affiliation-response.dto';
 import { TeamAffiliationInviteBundleDto } from './dto/team-affiliation-invite-bundle.dto';
+import { Throttle } from '@nestjs/throttler';
 import { ApiStandardCrudErrors } from '../common/swagger/api-error-responses.decorators';
 import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorator';
 
@@ -121,9 +122,11 @@ export class OrganizationTeamAffiliationsController {
     return this.service.updateStatus(orgId, id, dto);
   }
 
+  // Invite email resend abuse: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
   @Post('organizations/:orgId/team-affiliations/:id/resend')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Re-send invite for a pending team affiliation (org admin)',
   })
