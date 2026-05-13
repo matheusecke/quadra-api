@@ -27,18 +27,18 @@ interface JwtPayload {
 
 ## Endpoints
 
-| Method | Path                     | Auth | Purpose |
-| ------ | ------------------------ | ---- | ------- |
-| `POST` | `/auth/register`        | —    | Creates an `ACTIVE` non–system-admin user; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
-| `POST` | `/auth/login`           | —    | Authenticates; returns `accessToken`; refresh cookie |
-| `POST` | `/auth/refresh`         | Cookie | Rotates refresh token; new `accessToken`; preserves org context when still valid |
-| `POST` | `/auth/logout`          | Cookie | Revokes current refresh token and clears cookie (no bearer required) |
-| `GET`  | `/auth/me`              | Bearer | Current user and session context |
-| `GET`  | `/auth/org`             | Bearer | User’s organization affiliations |
-| `POST` | `/auth/org`             | Bearer | Chooses organization; rotates refresh with org context; org-scoped JWT |
-| `POST` | `/auth/change-password` | Bearer | Changes password; revokes active refresh tokens |
+| Method | Path                    | Auth   | Purpose                                                                                                                  |
+| ------ | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `POST` | `/auth/register`        | —      | Creates an `ACTIVE` non–system-admin user; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
+| `POST` | `/auth/login`           | —      | Authenticates; returns `accessToken`; refresh cookie                                                                     |
+| `POST` | `/auth/refresh`         | Cookie | Rotates refresh token; new `accessToken`; preserves org context when still valid                                         |
+| `POST` | `/auth/logout`          | Cookie | Revokes current refresh token and clears cookie (no bearer required)                                                     |
+| `GET`  | `/auth/me`              | Bearer | Current user and session context                                                                                         |
+| `GET`  | `/auth/org`             | Bearer | User’s organization affiliations                                                                                         |
+| `POST` | `/auth/org`             | Bearer | Chooses organization; rotates refresh with org context; org-scoped JWT                                                   |
+| `POST` | `/auth/change-password` | Bearer | Changes password; revokes active refresh tokens                                                                          |
 
-Register and login use a stricter `@Throttle` than the global default.
+Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Register, login, refresh, choose-org, and change-password use **stricter** `@Throttle` limits than the global default. See [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md#rate-limiting).
 
 ## Session and refresh token
 

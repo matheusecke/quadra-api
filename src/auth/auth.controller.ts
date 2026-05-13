@@ -49,6 +49,7 @@ import {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // Stricter than global limit: credential stuffing / registration abuse. Details: docs/HTTP-LAYER.md (Rate limiting).
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -70,6 +71,7 @@ export class AuthController {
     return response;
   }
 
+  // Stricter than global limit: brute-force risk on passwords. Details: docs/HTTP-LAYER.md (Rate limiting).
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -93,8 +95,10 @@ export class AuthController {
     return response;
   }
 
+  // Session rotation abuse: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiSecurity('refreshToken')
   @ApiOperation({
     summary: 'Rotate refresh token and issue new access token',
@@ -171,10 +175,12 @@ export class AuthController {
     return this.authService.getUserOrgs(user.sub);
   }
 
+  // Org context switch + refresh rotation: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
   @Post('org')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('refreshToken')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Choose an organization and receive an org-scoped access token',
@@ -208,9 +214,11 @@ export class AuthController {
     return response;
   }
 
+  // Account takeover surface: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
   @Post('change-password')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Change current user password (requires current password)',

@@ -91,8 +91,8 @@ prisma/
 Registered in `src/app.module.ts`:
 
 - `ConfigModule` (global)
-- `ThrottlerModule` (default rate limit; auth routes use stricter `@Throttle` where needed)
-- `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`
+- `ThrottlerModule` + global `ThrottlerGuard` (`APP_GUARD` in `app.module.ts`) — default rate limit; stricter `@Throttle` on selected routes; `/api` excluded for Swagger. **Full trade-offs, proxy and replica behavior, evolution path:** [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting).
+- `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`
 - Global `ResponseTransformInterceptor` via `APP_INTERCEPTOR`
 
 Bootstrap (`src/main.ts`): `cookie-parser`, shutdown hooks, CORS with credentials, `ValidationPipe`, global filters, Swagger at `/api`, default port `3001`.
