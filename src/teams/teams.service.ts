@@ -58,7 +58,7 @@ export class TeamsService {
 
     if (query.organizationId) {
       filters.push({
-        organizationTeamAffiliations: {
+        organizationAffiliations: {
           some: {
             organizationId: query.organizationId,
             isDeleted: false,
