@@ -97,8 +97,13 @@ export class OrganizationUserAffiliationsService {
       organizationId: orgId,
       isDeleted: false,
       ...(inviteExpired
-        ? { status: AffiliationStatus.PENDING, inviteExpiresAt: { lt: new Date() } }
-        : status ? { status } : {}),
+        ? {
+            status: AffiliationStatus.PENDING,
+            inviteExpiresAt: { lt: new Date() },
+          }
+        : status
+          ? { status }
+          : {}),
       ...(role ? { role } : {}),
       ...(teamId ? { teamId } : {}),
       ...(q

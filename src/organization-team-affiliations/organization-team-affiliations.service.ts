@@ -72,9 +72,16 @@ export class OrganizationTeamAffiliationsService {
       organizationId: orgId,
       isDeleted: false,
       ...(inviteExpired
-        ? { status: AffiliationStatus.PENDING, inviteExpiresAt: { lt: new Date() } }
-        : status ? { status } : {}),
-      ...(q ? { team: { name: { contains: q, mode: 'insensitive' as const } } } : {}),
+        ? {
+            status: AffiliationStatus.PENDING,
+            inviteExpiresAt: { lt: new Date() },
+          }
+        : status
+          ? { status }
+          : {}),
+      ...(q
+        ? { team: { name: { contains: q, mode: 'insensitive' as const } } }
+        : {}),
     };
     const [count, data] = await Promise.all([
       this.prisma.organizationTeamAffiliation.count({ where }),
@@ -181,9 +188,20 @@ export class OrganizationTeamAffiliationsService {
       teamId,
       isDeleted: false,
       ...(inviteExpired
-        ? { status: AffiliationStatus.PENDING, inviteExpiresAt: { lt: new Date() } }
-        : status ? { status } : {}),
-      ...(q ? { organization: { name: { contains: q, mode: 'insensitive' as const } } } : {}),
+        ? {
+            status: AffiliationStatus.PENDING,
+            inviteExpiresAt: { lt: new Date() },
+          }
+        : status
+          ? { status }
+          : {}),
+      ...(q
+        ? {
+            organization: {
+              name: { contains: q, mode: 'insensitive' as const },
+            },
+          }
+        : {}),
     };
     const [count, data] = await Promise.all([
       this.prisma.organizationTeamAffiliation.count({ where }),

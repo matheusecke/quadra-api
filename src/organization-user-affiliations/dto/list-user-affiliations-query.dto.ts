@@ -1,5 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { AffiliationStatus, OrgRole } from '@prisma/client';
 import { PaginationDefaultsDto } from '../../common/dto/pagination-defaults.dto';

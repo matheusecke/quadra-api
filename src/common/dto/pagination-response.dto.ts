@@ -1,9 +1,20 @@
+import { ApiProperty } from '@nestjs/swagger';
+
 export class PaginationMeta {
-  totalItems: number;
-  itemCount: number;
-  itemsPerPage: number;
-  totalPages: number;
-  currentPage: number;
+  @ApiProperty({ example: 42 })
+  totalItems!: number;
+
+  @ApiProperty({ example: 10 })
+  itemCount!: number;
+
+  @ApiProperty({ example: 10 })
+  itemsPerPage!: number;
+
+  @ApiProperty({ example: 5 })
+  totalPages!: number;
+
+  @ApiProperty({ example: 1 })
+  currentPage!: number;
 
   constructor(totalItems: number, itemsPerPage: number, currentPage: number) {
     this.totalItems = totalItems;
@@ -18,15 +29,38 @@ export class PaginationMeta {
 }
 
 export class PaginationLinks {
-  first: string;
-  previous: string | null;
-  next: string | null;
-  last: string;
+  @ApiProperty({
+    example:
+      'http://localhost:3001/organizations/1/user-affiliations?page=1&limit=10',
+  })
+  first!: string;
+
+  @ApiProperty({
+    example: null,
+    nullable: true,
+    description: 'Null on the first page.',
+  })
+  previous!: string | null;
+
+  @ApiProperty({
+    example:
+      'http://localhost:3001/organizations/1/user-affiliations?page=2&limit=10',
+    nullable: true,
+    description: 'Null when there is no next page.',
+  })
+  next!: string | null;
+
+  @ApiProperty({
+    example:
+      'http://localhost:3001/organizations/1/user-affiliations?page=5&limit=10',
+  })
+  last!: string;
 }
 
+/** Runtime envelope for paginated JSON; Swagger uses `ApiPaginatedOkResponse` per item type. */
 export class PaginationResponseDto<T> {
-  data: T[];
-  meta: PaginationMeta;
-  links: PaginationLinks;
-  statusCode: number;
+  data!: T[];
+  meta!: PaginationMeta;
+  links!: PaginationLinks;
+  statusCode!: number;
 }

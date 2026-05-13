@@ -19,6 +19,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiParam,
 } from '@nestjs/swagger';
 import { TeamsService } from './teams.service';
 import { CreateTeamDto } from './dto/create-team.dto';
@@ -30,11 +31,14 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SystemAdminGuard } from '../auth/guards/system-admin.guard';
 import { PaginationInterceptor } from '../common/interceptors/pagination.interceptor';
 import { ParseIntApiPipe } from '../common/pipes/parse-int-api.pipe';
+import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorator';
+import { ApiStandardCrudErrors } from '../common/swagger/api-error-responses.decorators';
 
 @ApiTags('teams')
 @Controller('teams')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
+@ApiStandardCrudErrors()
 export class TeamsController {
   constructor(private readonly teamsService: TeamsService) {}
 
@@ -50,7 +54,7 @@ export class TeamsController {
   @Get()
   @UseInterceptors(PaginationInterceptor)
   @ApiOperation({ summary: 'List teams' })
-  @ApiOkResponse({ type: [TeamResponseDto] })
+  @ApiPaginatedOkResponse(TeamResponseDto)
   findAll(
     @Query() query: ListTeamsQueryDto,
   ): Promise<{ count: number; data: TeamResponseDto[] }> {
@@ -60,6 +64,7 @@ export class TeamsController {
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get a team by ID' })
+  @ApiParam({ name: 'id', example: 1, description: 'Team id.' })
   @ApiOkResponse({ type: TeamResponseDto })
   findById(@Param('id', ParseIntApiPipe) id: number): Promise<TeamResponseDto> {
     return this.teamsService.findById(id);
@@ -68,6 +73,7 @@ export class TeamsController {
   @Patch(':id')
   @UseGuards(SystemAdminGuard)
   @ApiOperation({ summary: 'Update team name (system admin only)' })
+  @ApiParam({ name: 'id', example: 1, description: 'Team id.' })
   @ApiOkResponse({ type: TeamResponseDto })
   update(
     @Param('id', ParseIntApiPipe) id: number,
@@ -79,6 +85,7 @@ export class TeamsController {
   @Patch(':id/status')
   @UseGuards(SystemAdminGuard)
   @ApiOperation({ summary: 'Update team status (system admin only)' })
+  @ApiParam({ name: 'id', example: 1, description: 'Team id.' })
   @ApiOkResponse({ type: TeamResponseDto })
   updateStatus(
     @Param('id', ParseIntApiPipe) id: number,
@@ -91,6 +98,7 @@ export class TeamsController {
   @UseGuards(SystemAdminGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft delete a team (system admin only)' })
+  @ApiParam({ name: 'id', example: 1, description: 'Team id.' })
   @ApiNoContentResponse()
   async softDelete(@Param('id', ParseIntApiPipe) id: number): Promise<void> {
     await this.teamsService.softDelete(id);

@@ -2,11 +2,28 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AffiliationStatus } from '@prisma/client';
 
 export class TeamAffiliationResponseDto {
-  @ApiProperty() id: number;
-  @ApiProperty() organizationId: number;
-  @ApiProperty() teamId: number;
-  @ApiProperty({ enum: AffiliationStatus }) status: AffiliationStatus;
-  @ApiPropertyOptional() createdByUserId: number | null;
-  @ApiProperty() createdAt: Date;
-  @ApiProperty() updatedAt: Date;
+  @ApiProperty({ example: 5 })
+  id!: number;
+
+  @ApiProperty({ example: 1 })
+  organizationId!: number;
+
+  @ApiProperty({ example: 3 })
+  teamId!: number;
+
+  @ApiProperty({
+    enum: AffiliationStatus,
+    enumName: 'AffiliationStatus',
+    example: AffiliationStatus.PENDING,
+  })
+  status!: AffiliationStatus;
+
+  @ApiPropertyOptional({ example: 1, nullable: true })
+  createdByUserId!: number | null;
+
+  @ApiProperty({ example: '2025-01-01T12:00:00.000Z' })
+  createdAt!: Date;
+
+  @ApiProperty({ example: '2025-01-02T12:00:00.000Z' })
+  updatedAt!: Date;
 }

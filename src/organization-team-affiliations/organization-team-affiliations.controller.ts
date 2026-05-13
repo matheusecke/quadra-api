@@ -13,7 +13,15 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiParam,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiNoContentResponse,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrgRoleGuard } from '../auth/guards/org-role.guard';
 import { OrgRoles } from '../auth/decorators/org-roles.decorator';
@@ -27,9 +35,14 @@ import { CreateTeamAffiliationDto } from './dto/create-team-affiliation.dto';
 import { TeamInviteResponseDto } from './dto/team-invite-response.dto';
 import { UpdateTeamAffiliationStatusDto } from './dto/update-team-affiliation-status.dto';
 import { ListTeamAffiliationsQueryDto } from './dto/list-team-affiliations-query.dto';
+import { TeamAffiliationResponseDto } from './dto/team-affiliation-response.dto';
+import { TeamAffiliationInviteBundleDto } from './dto/team-affiliation-invite-bundle.dto';
+import { ApiStandardCrudErrors } from '../common/swagger/api-error-responses.decorators';
+import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorator';
 
 @ApiTags('organization-team-affiliations')
 @ApiBearerAuth()
+@ApiStandardCrudErrors()
 @UseGuards(JwtAuthGuard)
 @Controller()
 export class OrganizationTeamAffiliationsController {
@@ -38,6 +51,11 @@ export class OrganizationTeamAffiliationsController {
   @Post('organizations/:orgId/team-affiliations')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
+  @ApiOperation({
+    summary: 'Invite a team to affiliate with an organization (org admin)',
+  })
+  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
+  @ApiCreatedResponse({ type: TeamAffiliationInviteBundleDto })
   create(
     @Param('orgId', ParseIntPipe) orgId: number,
     @Body() dto: CreateTeamAffiliationDto,
@@ -48,6 +66,13 @@ export class OrganizationTeamAffiliationsController {
 
   @Get('organizations/:orgId/team-affiliations')
   @UseInterceptors(PaginationInterceptor)
+  @ApiOperation({
+    summary: 'List team affiliations for an organization',
+    description:
+      'Requires authentication; org members may use this per route guards.',
+  })
+  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
+  @ApiPaginatedOkResponse(TeamAffiliationResponseDto)
   findAll(
     @Param('orgId', ParseIntPipe) orgId: number,
     @Query() query: ListTeamAffiliationsQueryDto,
@@ -56,6 +81,12 @@ export class OrganizationTeamAffiliationsController {
   }
 
   @Get('organizations/:orgId/team-affiliations/:id')
+  @ApiOperation({
+    summary: 'Get a team affiliation by id within an organization',
+  })
+  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
+  @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
+  @ApiOkResponse({ type: TeamAffiliationResponseDto })
   findById(
     @Param('orgId', ParseIntPipe) orgId: number,
     @Param('id', ParseIntPipe) id: number,
@@ -65,6 +96,12 @@ export class OrganizationTeamAffiliationsController {
 
   @Post('organization-team-affiliations/invite-response')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Accept or reject a team affiliation invite',
+    description:
+      'Uses the raw invite token. Caller must be authenticated with JWT.',
+  })
+  @ApiOkResponse({ type: TeamAffiliationResponseDto })
   respondToInvite(@Body() dto: TeamInviteResponseDto) {
     return this.service.respondToInvite(dto);
   }
@@ -72,6 +109,10 @@ export class OrganizationTeamAffiliationsController {
   @Patch('organizations/:orgId/team-affiliations/:id/status')
   @UseGuards(SystemAdminGuard)
   @SystemAdmin()
+  @ApiOperation({ summary: 'Update team affiliation status (system admin)' })
+  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
+  @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
+  @ApiOkResponse({ type: TeamAffiliationResponseDto })
   updateStatus(
     @Param('orgId', ParseIntPipe) orgId: number,
     @Param('id', ParseIntPipe) id: number,
@@ -83,6 +124,12 @@ export class OrganizationTeamAffiliationsController {
   @Post('organizations/:orgId/team-affiliations/:id/resend')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
+  @ApiOperation({
+    summary: 'Re-send invite for a pending team affiliation (org admin)',
+  })
+  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
+  @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
+  @ApiOkResponse({ type: TeamAffiliationInviteBundleDto })
   resend(
     @Param('orgId', ParseIntPipe) orgId: number,
     @Param('id', ParseIntPipe) id: number,
@@ -94,6 +141,10 @@ export class OrganizationTeamAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Soft-delete a team affiliation (org admin)' })
+  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
+  @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
+  @ApiNoContentResponse({ description: 'Affiliation removed.' })
   remove(
     @Param('orgId', ParseIntPipe) orgId: number,
     @Param('id', ParseIntPipe) id: number,
@@ -103,6 +154,12 @@ export class OrganizationTeamAffiliationsController {
 
   @Get('teams/:teamId/affiliations')
   @UseInterceptors(PaginationInterceptor)
+  @ApiOperation({
+    summary: 'List organization affiliations for a team',
+    description: 'Paginated list scoped by global `teamId`.',
+  })
+  @ApiParam({ name: 'teamId', example: 3, description: 'Team id.' })
+  @ApiPaginatedOkResponse(TeamAffiliationResponseDto)
   findByTeam(
     @Param('teamId', ParseIntPipe) teamId: number,
     @Query() query: ListTeamAffiliationsQueryDto,

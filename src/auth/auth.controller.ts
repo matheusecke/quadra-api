@@ -9,7 +9,15 @@ import {
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiSecurity,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiNoContentResponse,
+} from '@nestjs/swagger';
 // Namespace import required: 'isolatedModules' + 'emitDecoratorMetadata' need a runtime
 // value reference when the type appears in a decorated parameter position.
 import * as express from 'express';
@@ -27,6 +35,14 @@ import { ApiException } from '../common/exceptions/api.exception';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
+import {
+  ApiBadRequestErrorResponse,
+  ApiConflictErrorResponse,
+  ApiForbiddenErrorResponse,
+  ApiNotFoundErrorResponse,
+  ApiUnauthorizedErrorResponse,
+  ApiUnprocessableEntityErrorResponse,
+} from '../common/swagger/api-error-responses.decorators';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -36,7 +52,14 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Register user and receive tokens' })
+  @ApiOperation({
+    summary: 'Register user and receive tokens',
+    description:
+      'Creates an active user, issues an access token (JWT), and sets the httpOnly `refreshToken` cookie.',
+  })
+  @ApiCreatedResponse({ type: LoginResponseDto })
+  @ApiBadRequestErrorResponse()
+  @ApiConflictErrorResponse()
   async register(
     @Body() dto: RegisterDto,
     @Res({ passthrough: true }) res: express.Response,
@@ -50,7 +73,14 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Authenticate user and receive tokens' })
+  @ApiOperation({
+    summary: 'Authenticate user and receive tokens',
+    description:
+      'Returns a JWT access token and sets the httpOnly `refreshToken` cookie.',
+  })
+  @ApiOkResponse({ type: LoginResponseDto })
+  @ApiBadRequestErrorResponse()
+  @ApiUnauthorizedErrorResponse()
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: express.Response,
@@ -65,7 +95,14 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Rotate refresh token and issue new access token' })
+  @ApiSecurity('refreshToken')
+  @ApiOperation({
+    summary: 'Rotate refresh token and issue new access token',
+    description:
+      'Reads the `refreshToken` cookie, validates it, rotates the session, sets a new cookie, and returns a new access token.',
+  })
+  @ApiOkResponse({ type: TokenResponseDto })
+  @ApiUnauthorizedErrorResponse()
   async refresh(
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
@@ -83,7 +120,15 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Revoke refresh token and end session' })
+  @ApiSecurity('refreshToken')
+  @ApiOperation({
+    summary: 'Revoke refresh token and end session',
+    description:
+      'Revokes the current refresh session and clears the `refreshToken` cookie.',
+  })
+  @ApiNoContentResponse({
+    description: 'Session ended (no response body).',
+  })
   async logout(
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
@@ -101,7 +146,14 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current user profile' })
+  @ApiOperation({
+    summary: 'Get current user profile',
+    description:
+      'Uses the Bearer access token. `organizationId` and `role` reflect the org context encoded in that token.',
+  })
+  @ApiOkResponse({ type: MeResponseDto })
+  @ApiUnauthorizedErrorResponse()
+  @ApiNotFoundErrorResponse()
   async me(@CurrentUser() user: JwtPayload): Promise<MeResponseDto> {
     return this.authService.getMe(user.sub, user.organizationId, user.role);
   }
@@ -111,7 +163,10 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'List organizations where the current user has affiliation',
+    description: 'Returns active affiliations with org metadata and role.',
   })
+  @ApiOkResponse({ type: [OrgAffiliationDto] })
+  @ApiUnauthorizedErrorResponse()
   async getOrgs(@CurrentUser() user: JwtPayload): Promise<OrgAffiliationDto[]> {
     return this.authService.getUserOrgs(user.sub);
   }
@@ -119,10 +174,19 @@ export class AuthController {
   @Post('org')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
+  @ApiSecurity('refreshToken')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Choose an organization and receive an org-scoped access token',
+    description:
+      'Requires Bearer authentication plus the `refreshToken` cookie. Rotates the refresh session and returns an access token scoped to the chosen organization.',
   })
+  @ApiOkResponse({ type: TokenResponseDto })
+  @ApiBadRequestErrorResponse()
+  @ApiUnauthorizedErrorResponse()
+  @ApiForbiddenErrorResponse()
+  @ApiNotFoundErrorResponse()
+  @ApiUnprocessableEntityErrorResponse()
   async chooseOrg(
     @CurrentUser() user: JwtPayload,
     @Body() dto: ChooseOrgDto,
@@ -151,6 +215,9 @@ export class AuthController {
   @ApiOperation({
     summary: 'Change current user password (requires current password)',
   })
+  @ApiNoContentResponse({ description: 'Password updated.' })
+  @ApiBadRequestErrorResponse()
+  @ApiUnauthorizedErrorResponse()
   async changePassword(
     @CurrentUser() user: JwtPayload,
     @Body() dto: ChangePasswordDto,
