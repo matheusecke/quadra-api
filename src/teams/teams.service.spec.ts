@@ -102,7 +102,7 @@ describe('TeamsService', () => {
       expect(result).toEqual({ count: 2, data: [baseTeam] });
     });
 
-    it('includes organizationTeamAffiliations filter when organizationId is provided', async () => {
+    it('includes organizationAffiliations filter when organizationId is provided', async () => {
       mockPrisma.team.count.mockResolvedValue(1);
       mockPrisma.team.findMany.mockResolvedValue([baseTeam]);
 
@@ -112,7 +112,7 @@ describe('TeamsService', () => {
         where: {
           AND: expect.arrayContaining([
             {
-              organizationTeamAffiliations: {
+              organizationAffiliations: {
                 some: {
                   organizationId: 42,
                   isDeleted: false,
@@ -125,7 +125,7 @@ describe('TeamsService', () => {
       });
     });
 
-    it('does not include organizationTeamAffiliations filter when organizationId is absent', async () => {
+    it('does not include organizationAffiliations filter when organizationId is absent', async () => {
       mockPrisma.team.count.mockResolvedValue(2);
       mockPrisma.team.findMany.mockResolvedValue([baseTeam]);
 
@@ -133,9 +133,9 @@ describe('TeamsService', () => {
 
       const andFilters: object[] =
         mockPrisma.team.count.mock.calls[0][0].where.AND;
-      expect(
-        andFilters.some((f) => 'organizationTeamAffiliations' in f),
-      ).toBe(false);
+      expect(andFilters.some((f) => 'organizationAffiliations' in f)).toBe(
+        false,
+      );
     });
   });
 
