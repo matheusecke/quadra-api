@@ -20,6 +20,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiParam,
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -34,8 +35,11 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { SetSystemAdminDto } from './dto/set-system-admin.dto';
 import { ParseIntApiPipe } from '../common/pipes/parse-int-api.pipe';
+import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorator';
+import { ApiStandardCrudErrors } from '../common/swagger/api-error-responses.decorators';
 
 @ApiTags('users')
+@ApiStandardCrudErrors()
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -55,7 +59,7 @@ export class UsersController {
   @UseInterceptors(PaginationInterceptor)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List users as a system admin' })
-  @ApiOkResponse({ type: [UserResponseDto] })
+  @ApiPaginatedOkResponse(UserResponseDto)
   findAll(
     @Query() query: ListUsersQueryDto,
   ): Promise<{ count: number; data: UserResponseDto[] }> {
@@ -67,6 +71,7 @@ export class UsersController {
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get a user as a system admin' })
+  @ApiParam({ name: 'id', example: 1, description: 'User id.' })
   @ApiOkResponse({ type: UserResponseDto })
   findById(@Param('id', ParseIntApiPipe) id: number): Promise<UserResponseDto> {
     return this.usersService.findById(id);
@@ -76,6 +81,7 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, SystemAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a user profile as a system admin' })
+  @ApiParam({ name: 'id', example: 1, description: 'User id.' })
   @ApiOkResponse({ type: UserResponseDto })
   update(
     @Param('id', ParseIntApiPipe) id: number,
@@ -88,6 +94,7 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, SystemAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update user status as a system admin' })
+  @ApiParam({ name: 'id', example: 1, description: 'User id.' })
   @ApiOkResponse({ type: UserResponseDto })
   updateStatus(
     @Param('id', ParseIntApiPipe) id: number,
@@ -101,6 +108,7 @@ export class UsersController {
   @UseGuards(JwtAuthGuard, SystemAdminGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update platform admin access as a system admin' })
+  @ApiParam({ name: 'id', example: 1, description: 'User id.' })
   @ApiOkResponse({ type: UserResponseDto })
   setSystemAdmin(
     @Param('id', ParseIntApiPipe) id: number,
@@ -115,6 +123,7 @@ export class UsersController {
   @ApiBearerAuth()
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft delete a user as a system admin' })
+  @ApiParam({ name: 'id', example: 1, description: 'User id.' })
   @ApiNoContentResponse()
   async softDelete(
     @Param('id', ParseIntApiPipe) id: number,

@@ -207,10 +207,7 @@ describe('UsersService', () => {
       const where = mockPrisma.user.count.mock.calls[0][0].where;
       const andFilters: unknown[] = where.AND as unknown[];
       const hasIsSystemAdmin = andFilters.some(
-        (f) =>
-          typeof f === 'object' &&
-          f !== null &&
-          'isSystemAdmin' in (f as object),
+        (f) => typeof f === 'object' && f !== null && 'isSystemAdmin' in f,
       );
       expect(hasIsSystemAdmin).toBe(false);
     });
