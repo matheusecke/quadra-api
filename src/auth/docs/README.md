@@ -34,7 +34,7 @@ interface JwtPayload {
 | `POST` | `/auth/refresh`         | Cookie | Rotates refresh token; new `accessToken`; preserves org context when still valid                                         |
 | `POST` | `/auth/logout`          | Cookie | Revokes current refresh token and clears cookie (no bearer required)                                                     |
 | `GET`  | `/auth/me`              | Bearer | Current user and session context                                                                                         |
-| `GET`  | `/auth/org`             | Bearer | User’s organization affiliations                                                                                         |
+| `GET`  | `/auth/org`             | Bearer | User’s organization affiliations; optional `name` query filters organization names                                        |
 | `POST` | `/auth/org`             | Bearer | Chooses organization; rotates refresh with org context; org-scoped JWT                                                   |
 | `POST` | `/auth/change-password` | Bearer | Changes password; revokes active refresh tokens                                                                          |
 

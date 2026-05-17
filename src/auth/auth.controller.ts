@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Body,
+  Query,
   Req,
   Res,
   HttpCode,
@@ -29,6 +30,7 @@ import { LoginResponseDto } from './dto/login-response.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { MeResponseDto } from './dto/me-response.dto';
 import { OrgAffiliationDto } from './dto/org-affiliation.dto';
+import { ListUserOrgsQueryDto } from './dto/list-user-orgs-query.dto';
 import { ChooseOrgDto } from './dto/choose-org.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ApiException } from '../common/exceptions/api.exception';
@@ -171,8 +173,11 @@ export class AuthController {
   })
   @ApiOkResponse({ type: [OrgAffiliationDto] })
   @ApiUnauthorizedErrorResponse()
-  async getOrgs(@CurrentUser() user: JwtPayload): Promise<OrgAffiliationDto[]> {
-    return this.authService.getUserOrgs(user.sub);
+  async getOrgs(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: ListUserOrgsQueryDto,
+  ): Promise<OrgAffiliationDto[]> {
+    return this.authService.getUserOrgs(user.sub, query);
   }
 
   // Org context switch + refresh rotation: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
