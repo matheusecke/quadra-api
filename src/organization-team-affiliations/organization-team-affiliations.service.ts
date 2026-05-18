@@ -19,6 +19,7 @@ const affiliationSelect = {
   createdByUserId: true,
   createdAt: true,
   updatedAt: true,
+  team: { select: { id: true, name: true } },
 };
 
 @Injectable()

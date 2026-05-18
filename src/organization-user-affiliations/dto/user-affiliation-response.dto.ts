@@ -1,12 +1,34 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AffiliationStatus, OrgRole } from '@prisma/client';
 
+export class AffiliationUserDto {
+  @ApiProperty({ example: 10 })
+  id!: number;
+
+  @ApiProperty({ example: 'João Silva' })
+  name!: string;
+
+  @ApiProperty({ example: 'joao@example.com' })
+  email!: string;
+}
+
+export class AffiliationTeamDto {
+  @ApiProperty({ example: 3 })
+  id!: number;
+
+  @ApiProperty({ example: 'Equipe A' })
+  name!: string;
+}
+
 export class UserAffiliationResponseDto {
   @ApiProperty({ example: 10 })
   id!: number;
 
   @ApiProperty({ example: 2 })
   userId!: number;
+
+  @ApiProperty({ type: () => AffiliationUserDto })
+  user!: AffiliationUserDto;
 
   @ApiProperty({ example: 1 })
   organizationId!: number;
@@ -16,6 +38,9 @@ export class UserAffiliationResponseDto {
 
   @ApiPropertyOptional({ example: 3, nullable: true })
   teamId!: number | null;
+
+  @ApiPropertyOptional({ type: () => AffiliationTeamDto, nullable: true })
+  team!: AffiliationTeamDto | null;
 
   @ApiPropertyOptional({
     example: 10,

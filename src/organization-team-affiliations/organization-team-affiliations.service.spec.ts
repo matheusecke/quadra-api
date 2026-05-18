@@ -82,6 +82,7 @@ describe('OrganizationTeamAffiliationsService', () => {
         createdByUserId: currentUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
+        team: { id: 2, name: 'Equipe A' },
       });
 
       const result = await service.create(orgId, dto, currentUserId);
@@ -114,6 +115,7 @@ describe('OrganizationTeamAffiliationsService', () => {
           createdByUserId: 10,
           createdAt: new Date(),
           updatedAt: new Date(),
+          team: { id: 2, name: 'Equipe A' },
         },
       ]);
       const result = await service.findAll(1, { page: 1, limit: 10 });
@@ -180,6 +182,23 @@ describe('OrganizationTeamAffiliationsService', () => {
         mockPrisma.organizationTeamAffiliation.findMany.mock.calls[0][0].where;
       expect(callWhere.inviteExpiresAt).toBeUndefined();
     });
+
+    it('queries prisma with a select that includes nested team', async () => {
+      mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationTeamAffiliation.findMany.mockResolvedValue([]);
+
+      await service.findAll(1, { page: 1, limit: 20 });
+
+      expect(
+        mockPrisma.organizationTeamAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            team: { select: { id: true, name: true } },
+          }),
+        }),
+      );
+    });
   });
 
   describe('findById()', () => {
@@ -199,6 +218,7 @@ describe('OrganizationTeamAffiliationsService', () => {
         createdByUserId: 10,
         createdAt: new Date(),
         updatedAt: new Date(),
+        team: { id: 2, name: 'Equipe A' },
       };
       mockPrisma.organizationTeamAffiliation.findUnique.mockResolvedValue(aff);
       const result = await service.findById(1, 1);
@@ -394,6 +414,7 @@ describe('OrganizationTeamAffiliationsService', () => {
           createdByUserId: 10,
           createdAt: new Date(),
           updatedAt: new Date(),
+          team: { id: 5, name: 'Equipe A' },
         },
         {
           id: 2,
@@ -403,6 +424,7 @@ describe('OrganizationTeamAffiliationsService', () => {
           createdByUserId: 10,
           createdAt: new Date(),
           updatedAt: new Date(),
+          team: { id: 5, name: 'Equipe A' },
         },
       ]);
       const result = await service.findByTeam(5, { page: 1, limit: 10 });

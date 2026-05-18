@@ -119,6 +119,8 @@ describe('OrganizationUserAffiliationsService', () => {
         createdByUserId: currentUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
+        user: { id: 10, name: 'Test User', email: 'test@example.com' },
+        team: { id: 5, name: 'Equipe A' },
       });
 
       const result = await service.create(
@@ -160,6 +162,8 @@ describe('OrganizationUserAffiliationsService', () => {
         createdByUserId: currentUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
+        user: { id: 10, name: 'Test User', email: 'test@example.com' },
+        team: null,
       });
 
       const result = await service.create(
@@ -186,6 +190,8 @@ describe('OrganizationUserAffiliationsService', () => {
           createdByUserId: 99,
           createdAt: new Date(),
           updatedAt: new Date(),
+          user: { id: 5, name: 'Test User', email: 'test@example.com' },
+          team: { id: 2, name: 'Equipe A' },
         },
       ]);
       const result = await service.findAll(1, { page: 1, limit: 10 });
@@ -233,6 +239,24 @@ describe('OrganizationUserAffiliationsService', () => {
       const where =
         mockPrisma.organizationUserAffiliation.findMany.mock.calls[0][0].where;
       expect(where.inviteExpiresAt).toBeUndefined();
+    });
+
+    it('queries prisma with a select that includes nested user and team', async () => {
+      mockPrisma.organizationUserAffiliation.count.mockResolvedValue(1);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+
+      await service.findAll(1, { page: 1, limit: 20 });
+
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            user: { select: { id: true, name: true, email: true } },
+            team: { select: { id: true, name: true } },
+          }),
+        }),
+      );
     });
   });
 
