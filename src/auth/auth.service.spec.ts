@@ -614,6 +614,29 @@ describe('AuthService', () => {
       );
     });
 
+    it('filters org affiliations by organization name when provided', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 1 });
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+
+      await service.getUserOrgs(1, { name: 'clube' });
+
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            organization: {
+              is: {
+                isDeleted: false,
+                status: 'ACTIVE',
+                name: { contains: 'clube', mode: 'insensitive' },
+              },
+            },
+          }),
+        }),
+      );
+    });
+
     it('returns empty array when user has no affiliations', async () => {
       mockPrisma.user.findFirst.mockResolvedValue({ id: 1 });
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);

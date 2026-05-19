@@ -1,6 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AffiliationStatus } from '@prisma/client';
 
+export class AffiliationTeamDto {
+  @ApiProperty({ example: 3 })
+  id!: number;
+
+  @ApiProperty({ example: 'Equipe A' })
+  name!: string;
+}
+
 export class TeamAffiliationResponseDto {
   @ApiProperty({ example: 5 })
   id!: number;
@@ -10,6 +18,9 @@ export class TeamAffiliationResponseDto {
 
   @ApiProperty({ example: 3 })
   teamId!: number;
+
+  @ApiProperty({ type: () => AffiliationTeamDto })
+  team!: AffiliationTeamDto;
 
   @ApiProperty({
     enum: AffiliationStatus,
