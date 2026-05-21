@@ -19,6 +19,10 @@ What is **not** implemented yet and sensible next increments. Use together with 
 2. **Org-scoped endpoints** — e.g. roster views, team roster under org.
 3. **Sports domain** — reintroduce tournaments, matches, statistics after the tenant and membership layer is stable.
 
+## CI and lint follow-ups
+
+- **Revisit type-aware lint in CI** — the current strict lint setup reports many `@typescript-eslint/no-unsafe-*` issues in unit specs because Jest/Prisma mocks are intentionally partial. For now, keep the pipeline focused on the selected validation steps. Later, evaluate whether to reintroduce lint in CI with strong unsafe rules for production API code and a narrower override for `*.spec.ts` / `test/**/*.ts`.
+
 ## Migrations
 
 Schema evolution and DB-only SQL workflow are defined in [DATABASE.md](./DATABASE.md). Repository policy for agents: never run `prisma migrate *` in automation; see root `CLAUDE.md`.
