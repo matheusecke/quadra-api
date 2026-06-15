@@ -30,6 +30,10 @@ export class OrgRoleGuard implements CanActivate {
       throw ApiException.unauthorized('Authentication required.');
     }
 
+    if (user.organizationId === null) {
+      throw ApiException.forbidden('Active organization context required.');
+    }
+
     if (!user.role || !requiredRoles.includes(user.role)) {
       throw ApiException.forbidden('Insufficient permissions.');
     }

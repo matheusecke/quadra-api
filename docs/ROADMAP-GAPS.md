@@ -16,8 +16,13 @@ What is **not** implemented yet and sensible next increments. Use together with 
 ## Natural next blocks
 
 1. **Platform admin APIs** — e.g. `POST /admin/organizations`, lifecycle for orgs aligned with `TCC.md`.
-2. **Org-scoped endpoints** — e.g. roster views, team roster under org.
-3. **Sports domain** — reintroduce tournaments, matches, statistics after the tenant and membership layer is stable.
+2. **Admin affiliations module** — create a dedicated admin-facing module/controller layer for affiliation exceptions that do not follow the active-org JWT route contract. Endpoints to move there:
+   - `PATCH /organizations/:orgId/user-affiliations/:id/status`
+   - `PATCH /organizations/:orgId/team-affiliations/:id/status`
+   - `GET /teams/:teamId/affiliations`
+   Expected direction: keep JWT-scoped org-admin flows under `OrganizationUserAffiliationsModule` / `OrganizationTeamAffiliationsModule`, and move cross-org/system-admin or global team-affiliation lookup routes to an admin namespace/module with clearer ownership and naming.
+3. **Org-scoped endpoints** — e.g. roster views, team roster under org.
+4. **Sports domain** — reintroduce tournaments, matches, statistics after the tenant and membership layer is stable.
 
 ## CI and lint follow-ups
 

@@ -57,12 +57,24 @@ Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Re
 
 **`OrgRoleGuard`** — org-scoped operations; reads `role` from JWT and checks `@OrgRoles(...)`. Pass **`OrgRole` enum members** from `@prisma/client`, not string literals (TypeScript and the decorator signature require `OrgRole`).
 
+Handlers protected by `@OrgRoles(...)` must run inside an active organization context. `OrgRoleGuard` rejects JWTs with `organizationId: null` with `403 FORBIDDEN` and `Active organization context required.`.
+
 ```typescript
 import { OrgRole } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard, OrgRoleGuard)
 @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
 ```
+
+For org-scoped endpoints, use this contract consistently:
+
+- Guard with `JwtAuthGuard` plus `OrgRoleGuard` and declare the allowed org roles with `@OrgRoles(...)`.
+- Read the full JWT payload in the controller with `@CurrentUser() user: JwtPayload`.
+- Treat `user.organizationId` as the single source of truth for organization scope.
+- Do not accept `orgId` or `organizationId` in route params, query params, or request body only to decide active org scope.
+- Keep resource ids in routes only when they identify the resource itself, such as `/organizations/:id`, system-admin overrides, or global lookup endpoints.
+- Controllers may still pass a numeric `orgId` into services; the controller is responsible for translating JWT session context into that service argument.
+- Do not create shared org-scope helpers unless real duplication emerges beyond straightforward controller usage.
 
 **`SystemAdminGuard`** — platform-level operations; reads `isSystemAdmin` from JWT.
 

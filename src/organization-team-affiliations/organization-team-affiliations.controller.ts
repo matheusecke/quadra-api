@@ -28,6 +28,7 @@ import { OrgRoles } from '../auth/decorators/org-roles.decorator';
 import { SystemAdmin } from '../auth/decorators/system-admin.decorator';
 import { SystemAdminGuard } from '../auth/guards/system-admin.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { PaginationInterceptor } from '../common/interceptors/pagination.interceptor';
 import { OrgRole } from '@prisma/client';
 import { OrganizationTeamAffiliationsService } from './organization-team-affiliations.service';
@@ -49,50 +50,50 @@ import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorat
 export class OrganizationTeamAffiliationsController {
   constructor(private readonly service: OrganizationTeamAffiliationsService) {}
 
-  @Post('organizations/:orgId/team-affiliations')
+  @Post('organization-team-affiliations')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Invite a team to affiliate with an organization (org admin)',
+    summary: 'Invite a team to affiliate with the active JWT organization (org admin)',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiCreatedResponse({ type: TeamAffiliationInviteBundleDto })
   create(
-    @Param('orgId', ParseIntPipe) orgId: number,
     @Body() dto: CreateTeamAffiliationDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.create(orgId, dto, userId);
+    return this.service.create(user.organizationId as number, dto, user.sub);
   }
 
-  @Get('organizations/:orgId/team-affiliations')
+  @Get('organization-team-affiliations')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.ORG_ADMIN)
   @UseInterceptors(PaginationInterceptor)
   @ApiOperation({
-    summary: 'List team affiliations for an organization',
+    summary: 'List team affiliations for the active JWT organization (org admin)',
     description:
-      'Requires authentication; org members may use this per route guards.',
+      'Requires ORG_ADMIN in the active JWT organization.',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiPaginatedOkResponse(TeamAffiliationResponseDto)
   findAll(
-    @Param('orgId', ParseIntPipe) orgId: number,
     @Query() query: ListTeamAffiliationsQueryDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.findAll(orgId, query);
+    return this.service.findAll(user.organizationId as number, query);
   }
 
-  @Get('organizations/:orgId/team-affiliations/:id')
+  @Get('organization-team-affiliations/:id')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Get a team affiliation by id within an organization',
+    summary: 'Get a team affiliation by id within the active JWT organization (org admin)',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
   @ApiOkResponse({ type: TeamAffiliationResponseDto })
   findById(
-    @Param('orgId', ParseIntPipe) orgId: number,
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.findById(orgId, id);
+    return this.service.findById(user.organizationId as number, id);
   }
 
   @Post('organization-team-affiliations/invite-response')
@@ -123,36 +124,31 @@ export class OrganizationTeamAffiliationsController {
   }
 
   // Invite email resend abuse: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
-  @Post('organizations/:orgId/team-affiliations/:id/resend')
+  @Post('organization-team-affiliations/:id/resend')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
-    summary: 'Re-send invite for a pending team affiliation (org admin)',
+    summary:
+      'Re-send invite for a pending team affiliation in the active JWT organization (org admin)',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
   @ApiOkResponse({ type: TeamAffiliationInviteBundleDto })
-  resend(
-    @Param('orgId', ParseIntPipe) orgId: number,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    return this.service.resend(orgId, id);
+  resend(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.service.resend(user.organizationId as number, id);
   }
 
-  @Delete('organizations/:orgId/team-affiliations/:id')
+  @Delete('organization-team-affiliations/:id')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Soft-delete a team affiliation (org admin)' })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
+  @ApiOperation({
+    summary: 'Soft-delete a team affiliation in the active JWT organization (org admin)',
+  })
   @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
   @ApiNoContentResponse({ description: 'Affiliation removed.' })
-  remove(
-    @Param('orgId', ParseIntPipe) orgId: number,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    return this.service.remove(orgId, id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.service.remove(user.organizationId as number, id);
   }
 
   @Get('teams/:teamId/affiliations')
