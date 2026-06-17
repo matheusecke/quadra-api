@@ -1,5 +1,8 @@
+-- DEPRECATED — use cleanup-dev-seed.sql + puc-dev-seed.sql instead.
+-- Run in DBeaver. See docs/superpowers/specs/2026-06-15-puc-dev-seed-design.md
+--
 -- =============================================================================
--- Seed de desenvolvimento — organizações, times e usuários
+-- Seed de desenvolvimento — organizações, times e usuários (LEGADO)
 -- =============================================================================
 --
 -- Execução direta no PostgreSQL (ajuste a conexão):
