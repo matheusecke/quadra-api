@@ -16,6 +16,8 @@ const userSelect = {
   id: true,
   email: true,
   name: true,
+  birthDate: true,
+  heightCm: true,
   status: true,
   isSystemAdmin: true,
   createdAt: true,
@@ -35,13 +37,20 @@ export class UsersService {
   ): Promise<UserResponseDto> {
     const passwordHash = await bcrypt.hash(dto.password, 10);
 
+    const data: Prisma.UserCreateInput = {
+      email: dto.email,
+      name: dto.name,
+      passwordHash,
+      heightCm: dto.height ?? null,
+      isSystemAdmin: dto.isSystemAdmin ?? false,
+    };
+
+    if (dto.birthDate !== undefined) {
+      data.birthDate = dto.birthDate;
+    }
+
     const user = await client.user.create({
-      data: {
-        email: dto.email,
-        name: dto.name,
-        passwordHash,
-        isSystemAdmin: dto.isSystemAdmin ?? false,
-      },
+      data,
       select: userSelect,
     });
 

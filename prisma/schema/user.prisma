@@ -1,10 +1,12 @@
 model User {
-  id           Int      @id @default(autoincrement())
-  email        String
-  name         String
-  passwordHash String   @map("password_hash")
-  status       EntityStatus @default(ACTIVE)
-  isDeleted    Boolean      @default(false) @map("is_deleted")
+  id            Int          @id @default(autoincrement())
+  email         String
+  name          String
+  birthDate     DateTime     @default(dbgenerated("'1970-01-01'::date")) @db.Date @map("birth_date")
+  heightCm      Int?         @map("height_cm")
+  passwordHash  String       @map("password_hash")
+  status        EntityStatus @default(ACTIVE)
+  isDeleted     Boolean      @default(false) @map("is_deleted")
   isSystemAdmin Boolean    @default(false) @map("is_system_admin")
   createdAt    DateTime     @default(now()) @db.Timestamptz(3) @map("created_at")
   updatedAt    DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
@@ -24,5 +26,10 @@ model User {
   // WHERE is_deleted = false AND status <> 'INACTIVE'.
   // Must be added manually in migration SQL.
   // First added in migration: initial_db_structure
+  //
+  // DB-only check constraint:
+  // height_cm IS NULL OR (height_cm >= 50 AND height_cm <= 250).
+  // Must be added manually in migration SQL.
+  // First added in migration: add_user_profile_fields
   @@map("users")
 }

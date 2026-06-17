@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { EntityStatus } from '@prisma/client';
 
 export class UserResponseDto {
@@ -10,6 +10,19 @@ export class UserResponseDto {
 
   @ApiProperty({ example: 'John Doe' })
   name!: string;
+
+  @ApiProperty({
+    example: '1998-04-23',
+    description: 'Birth date persisted as a date-only value.',
+  })
+  birthDate!: Date;
+
+  @ApiPropertyOptional({
+    example: 182,
+    nullable: true,
+    description: 'Height in centimeters.',
+  })
+  heightCm!: number | null;
 
   @ApiProperty({
     enum: EntityStatus,

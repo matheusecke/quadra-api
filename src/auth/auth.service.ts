@@ -48,6 +48,8 @@ export class AuthService {
           email: dto.email,
           name: dto.name,
           password: dto.password,
+          birthDate: this.parseDateOnly(dto.birthDate),
+          height: dto.height ?? null,
           isSystemAdmin: false,
         },
         tx,
@@ -165,6 +167,10 @@ export class AuthService {
     });
 
     return rawToken;
+  }
+
+  private parseDateOnly(value: string): Date {
+    return new Date(`${value}T00:00:00.000Z`);
   }
 
   async logout(rawRefreshToken: string | undefined): Promise<void> {
