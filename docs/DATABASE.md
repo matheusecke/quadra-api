@@ -31,6 +31,8 @@ This document is the source of truth for database naming, Prisma mapping, and mi
 | `OrganizationTeamAffiliation` | `organization_team_affiliations` | Team affiliation lifecycle inside an organization |
 | `RefreshToken` | `refresh_tokens` | Opaque refresh session (hashed token), optional org context, rotation and revocation |
 
+`users.birth_date` stores civil dates as PostgreSQL `DATE`, not `TIMESTAMPTZ`. `users.height_cm` stores nullable integer centimeters.
+
 ## Mapping Examples
 
 ```prisma
@@ -130,6 +132,7 @@ Prisma Migrate is incremental. Each migration contains only the delta from the p
 - partial index on `organization_team_affiliations(team_id)`
 - `CHECK` for role/team consistency in `organization_user_affiliations`
 - `CHECK (jersey_number IS NULL OR (jersey_number >= 0 AND jersey_number < 100))`
+- `CHECK (height_cm IS NULL OR (height_cm >= 50 AND height_cm <= 250))`
 
 ## Future Audit Logging Pattern
 

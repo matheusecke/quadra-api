@@ -29,7 +29,7 @@ interface JwtPayload {
 
 | Method | Path                    | Auth   | Purpose                                                                                                                  |
 | ------ | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `POST` | `/auth/register`        | —      | Creates an `ACTIVE` non–system-admin user; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
+| `POST` | `/auth/register`        | —      | Creates an `ACTIVE` non-system-admin user with `email`, `name`, `password`, required `birth_date`, and optional nullable `height`; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
 | `POST` | `/auth/login`           | —      | Authenticates; returns `accessToken`; refresh cookie                                                                     |
 | `POST` | `/auth/refresh`         | Cookie | Rotates refresh token; new `accessToken`; preserves org context when still valid                                         |
 | `POST` | `/auth/logout`          | Cookie | Revokes current refresh token and clears cookie (no bearer required)                                                     |
@@ -39,6 +39,10 @@ interface JwtPayload {
 | `POST` | `/auth/change-password` | Bearer | Changes password; revokes active refresh tokens                                                                          |
 
 Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Register, login, refresh, choose-org, and change-password use **stricter** `@Throttle` limits than the global default. See [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md#rate-limiting).
+
+## Register profile fields
+
+`POST /auth/register` accepts `birth_date` as a required date-only string (`YYYY-MM-DD`) and `height` as an optional nullable integer in centimeters. `birth_date` is persisted as PostgreSQL `DATE`; `height` is persisted as `users.height_cm`.
 
 ## Session and refresh token
 
