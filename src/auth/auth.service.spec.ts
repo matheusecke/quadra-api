@@ -65,6 +65,7 @@ describe('AuthService', () => {
 
   describe('register', () => {
     it('creates an active non-admin user, signs tokens, and returns no organizations', async () => {
+      const expectedBirthDate = new Date('1998-04-23T00:00:00.000Z');
       mockUsersService.create.mockResolvedValue({
         id: 1,
         email: 'new@example.com',
@@ -78,6 +79,7 @@ describe('AuthService', () => {
         email: 'new@example.com',
         name: 'New User',
         password: 'password123',
+        birthDate: '1998-04-23',
       });
 
       expect(mockUsersService.create).toHaveBeenCalledWith(
@@ -85,6 +87,8 @@ describe('AuthService', () => {
           email: 'new@example.com',
           name: 'New User',
           password: 'password123',
+          birthDate: expectedBirthDate,
+          height: null,
           isSystemAdmin: false,
         },
         mockPrisma,
@@ -111,7 +115,68 @@ describe('AuthService', () => {
       expect(typeof result.rawRefreshToken).toBe('string');
     });
 
+    it('passes birth date and nullable height to user creation', async () => {
+      const expectedBirthDate = new Date('1998-04-23T00:00:00.000Z');
+      mockUsersService.create.mockResolvedValue({
+        id: 4,
+        email: 'profile@example.com',
+        name: 'Profile User',
+        isSystemAdmin: false,
+        status: 'ACTIVE',
+        birthDate: expectedBirthDate,
+        heightCm: null,
+      });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 4 });
+
+      await service.register({
+        email: 'profile@example.com',
+        name: 'Profile User',
+        password: 'password123',
+        birthDate: '1998-04-23',
+        height: null,
+      } as any);
+
+      expect(mockUsersService.create).toHaveBeenCalledWith(
+        {
+          email: 'profile@example.com',
+          name: 'Profile User',
+          password: 'password123',
+          birthDate: expectedBirthDate,
+          height: null,
+          isSystemAdmin: false,
+        },
+        mockPrisma,
+      );
+    });
+
+    it('passes null height when register height is omitted', async () => {
+      const expectedBirthDate = new Date('1998-04-23T00:00:00.000Z');
+      mockUsersService.create.mockResolvedValue({
+        id: 5,
+        email: 'noheight@example.com',
+        name: 'No Height',
+        isSystemAdmin: false,
+        status: 'ACTIVE',
+        birthDate: expectedBirthDate,
+        heightCm: null,
+      });
+      mockPrisma.refreshToken.create.mockResolvedValue({ id: 5 });
+
+      await service.register({
+        email: 'noheight@example.com',
+        name: 'No Height',
+        password: 'password123',
+        birthDate: '1998-04-23',
+      } as any);
+
+      expect(mockUsersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ height: null }),
+        mockPrisma,
+      );
+    });
+
     it('does not allow registration to create a system admin user', async () => {
+      const expectedBirthDate = new Date('1998-04-23T00:00:00.000Z');
       mockUsersService.create.mockResolvedValue({
         id: 2,
         email: 'client@example.com',
@@ -125,6 +190,7 @@ describe('AuthService', () => {
         email: 'client@example.com',
         name: 'Client User',
         password: 'password123',
+        birthDate: '1998-04-23',
         isSystemAdmin: true,
       } as any);
 
@@ -133,6 +199,8 @@ describe('AuthService', () => {
           email: 'client@example.com',
           name: 'Client User',
           password: 'password123',
+          birthDate: expectedBirthDate,
+          height: null,
           isSystemAdmin: false,
         },
         mockPrisma,
@@ -140,6 +208,7 @@ describe('AuthService', () => {
     });
 
     it('rejects the registration transaction when refresh token creation fails', async () => {
+      const expectedBirthDate = new Date('1998-04-23T00:00:00.000Z');
       mockUsersService.create.mockResolvedValue({
         id: 3,
         email: 'rollback@example.com',
@@ -154,6 +223,7 @@ describe('AuthService', () => {
           email: 'rollback@example.com',
           name: 'Rollback User',
           password: 'password123',
+          birthDate: '1998-04-23',
         }),
       ).rejects.toThrow('db error');
 
@@ -163,6 +233,8 @@ describe('AuthService', () => {
           email: 'rollback@example.com',
           name: 'Rollback User',
           password: 'password123',
+          birthDate: expectedBirthDate,
+          height: null,
           isSystemAdmin: false,
         },
         mockPrisma,
@@ -608,6 +680,29 @@ describe('AuthService', () => {
             isDeleted: false,
             organization: {
               is: { isDeleted: false, status: 'ACTIVE' },
+            },
+          }),
+        }),
+      );
+    });
+
+    it('filters org affiliations by organization name when provided', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 1 });
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+
+      await service.getUserOrgs(1, { name: 'clube' });
+
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            organization: {
+              is: {
+                isDeleted: false,
+                status: 'ACTIVE',
+                name: { contains: 'clube', mode: 'insensitive' },
+              },
             },
           }),
         }),

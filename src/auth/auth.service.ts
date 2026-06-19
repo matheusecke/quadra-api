@@ -48,6 +48,8 @@ export class AuthService {
           email: dto.email,
           name: dto.name,
           password: dto.password,
+          birthDate: this.parseDateOnly(dto.birthDate),
+          height: dto.height ?? null,
           isSystemAdmin: false,
         },
         tx,
@@ -167,6 +169,10 @@ export class AuthService {
     return rawToken;
   }
 
+  private parseDateOnly(value: string): Date {
+    return new Date(`${value}T00:00:00.000Z`);
+  }
+
   async logout(rawRefreshToken: string | undefined): Promise<void> {
     if (!rawRefreshToken) return;
 
@@ -195,12 +201,15 @@ export class AuthService {
     return { ...user, organizationId, role };
   }
 
-  async getUserOrgs(userId: number): Promise<OrgAffiliationDto[]> {
+  async getUserOrgs(
+    userId: number,
+    filters: { name?: string } = {},
+  ): Promise<OrgAffiliationDto[]> {
     await this.ensureActiveUser(userId);
 
     const affiliations = await this.prisma.organizationUserAffiliation.findMany(
       {
-        where: this.activeAffiliationWhere(userId),
+        where: this.activeAffiliationWhere(userId, undefined, filters),
         select: {
           organizationId: true,
           role: true,
@@ -353,7 +362,10 @@ export class AuthService {
   private activeAffiliationWhere(
     userId: number,
     organizationId?: number,
+    filters: { name?: string } = {},
   ): Prisma.OrganizationUserAffiliationWhereInput {
+    const name = filters.name?.trim();
+
     return {
       userId,
       ...(organizationId !== undefined ? { organizationId } : {}),
@@ -361,7 +373,13 @@ export class AuthService {
       status: AffiliationStatus.ACTIVE,
       user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
       organization: {
-        is: { isDeleted: false, status: EntityStatus.ACTIVE },
+        is: {
+          isDeleted: false,
+          status: EntityStatus.ACTIVE,
+          ...(name
+            ? { name: { contains: name, mode: Prisma.QueryMode.insensitive } }
+            : {}),
+        },
       },
       OR: [
         { teamId: null },

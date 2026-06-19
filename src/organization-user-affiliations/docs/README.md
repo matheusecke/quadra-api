@@ -6,21 +6,23 @@ Manages the affiliation lifecycle between organizations and users. An organizati
 
 | Method   | Path                                                         | Guards                               | Purpose |
 | -------- | ------------------------------------------------------------ | ------------------------------------ | ------- |
-| `POST`   | `/organizations/:orgId/user-affiliations`                    | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Invite a user; returns affiliation + raw `inviteToken` |
-| `GET`    | `/organizations/:orgId/user-affiliations`                    | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Paginated list; filters: `status`, `role`, `teamId` |
-| `GET`    | `/organizations/:orgId/user-affiliations/:id`                | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Get single affiliation |
+| `POST`   | `/organization-user-affiliations`                            | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Invite a user in the active JWT organization; returns affiliation + raw `inviteToken` |
+| `GET`    | `/organization-user-affiliations`                            | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Paginated list in the active JWT organization; filters: `status`, `role`, `teamId` |
+| `GET`    | `/organization-user-affiliations/:id`                        | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Get single affiliation in the active JWT organization |
 | `POST`   | `/organization-user-affiliations/invite-response`            | `JwtAuthGuard`                       | Accept or reject invite (only the invited user) |
-| `PATCH`  | `/organizations/:orgId/user-affiliations/:id`                | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Update role, teamId, or jerseyNumber (ACTIVE only) |
+| `PATCH`  | `/organization-user-affiliations/:id`                        | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Update role, teamId, or jerseyNumber (ACTIVE only) in the active JWT organization |
 | `PATCH`  | `/organizations/:orgId/user-affiliations/:id/status`         | `JwtAuthGuard`, `SystemAdminGuard`   | Override status (system admin only) |
-| `POST`   | `/organizations/:orgId/user-affiliations/:id/resend`         | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Regenerate and resend invite token |
-| `DELETE` | `/organizations/:orgId/user-affiliations/:id`                | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Soft delete; cannot remove own affiliation |
+| `POST`   | `/organization-user-affiliations/:id/resend`                 | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Regenerate and resend invite token in the active JWT organization |
+| `DELETE` | `/organization-user-affiliations/:id`                        | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Soft delete in the active JWT organization; cannot remove own affiliation |
 
 Paginated routes use `PaginationInterceptor` — see [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md).
+
+For org-admin routes in this module, the active organization comes only from `@CurrentUser().organizationId`. Controllers translate that JWT value into the numeric `orgId` argument expected by the service. The only route that still keeps an explicit `:orgId` is the system-admin status override endpoint.
 
 ## Business Rules
 
 ### Invite flow
-1. ORG_ADMIN calls `POST /organizations/:orgId/user-affiliations` with `{ userId, role, teamId?, jerseyNumber? }`.
+1. ORG_ADMIN calls `POST /organization-user-affiliations` with `{ userId, role, teamId?, jerseyNumber? }` while authenticated in the target organization context.
 2. Service validates the invited user exists and is ACTIVE.
 3. If the user already has a PENDING or ACTIVE affiliation in that org, `409 CONFLICT` is returned.
 4. Role/teamId consistency is enforced:
@@ -34,7 +36,7 @@ Paginated routes use `PaginationInterceptor` — see [HTTP-LAYER.md](../../../do
 ### Ownership check on invite-response
 Only the user whose `userId` matches `aff.userId` may respond. Any other JWT returns `403 FORBIDDEN`.
 
-### Update (`PATCH /organizations/:orgId/user-affiliations/:id`)
+### Update (`PATCH /organization-user-affiliations/:id`)
 - Only ACTIVE affiliations can be updated.
 - Role/teamId consistency is re-validated after applying the change.
 - Switching to `ORG_ADMIN` automatically clears `teamId` and `jerseyNumber`.

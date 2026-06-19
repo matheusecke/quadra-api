@@ -19,6 +19,7 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiParam,
 } from '@nestjs/swagger';
 import { OrganizationsService } from './organizations.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
@@ -32,11 +33,14 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { PaginationInterceptor } from '../common/interceptors/pagination.interceptor';
 import { ParseIntApiPipe } from '../common/pipes/parse-int-api.pipe';
+import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorator';
+import { ApiStandardCrudErrors } from '../common/swagger/api-error-responses.decorators';
 
 @ApiTags('organizations')
 @Controller('organizations')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
+@ApiStandardCrudErrors()
 export class OrganizationsController {
   constructor(private readonly organizationsService: OrganizationsService) {}
 
@@ -52,7 +56,7 @@ export class OrganizationsController {
   @Get()
   @UseInterceptors(PaginationInterceptor)
   @ApiOperation({ summary: 'List organizations' })
-  @ApiOkResponse({ type: [OrganizationResponseDto] })
+  @ApiPaginatedOkResponse(OrganizationResponseDto)
   findAll(
     @Query() query: ListOrganizationsQueryDto,
   ): Promise<{ count: number; data: OrganizationResponseDto[] }> {
@@ -62,6 +66,7 @@ export class OrganizationsController {
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get an organization by ID' })
+  @ApiParam({ name: 'id', example: 1, description: 'Organization id.' })
   @ApiOkResponse({ type: OrganizationResponseDto })
   findById(
     @Param('id', ParseIntApiPipe) id: number,
@@ -73,6 +78,7 @@ export class OrganizationsController {
   @ApiOperation({
     summary: 'Update organization name (system admin or own ORG_ADMIN)',
   })
+  @ApiParam({ name: 'id', example: 1, description: 'Organization id.' })
   @ApiOkResponse({ type: OrganizationResponseDto })
   update(
     @Param('id', ParseIntApiPipe) id: number,
@@ -85,6 +91,7 @@ export class OrganizationsController {
   @Patch(':id/status')
   @UseGuards(SystemAdminGuard)
   @ApiOperation({ summary: 'Update organization status (system admin only)' })
+  @ApiParam({ name: 'id', example: 1, description: 'Organization id.' })
   @ApiOkResponse({ type: OrganizationResponseDto })
   updateStatus(
     @Param('id', ParseIntApiPipe) id: number,
@@ -97,6 +104,7 @@ export class OrganizationsController {
   @UseGuards(SystemAdminGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft delete an organization (system admin only)' })
+  @ApiParam({ name: 'id', example: 1, description: 'Organization id.' })
   @ApiNoContentResponse()
   async softDelete(@Param('id', ParseIntApiPipe) id: number): Promise<void> {
     await this.organizationsService.softDelete(id);

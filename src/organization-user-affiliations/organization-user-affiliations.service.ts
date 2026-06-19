@@ -23,6 +23,8 @@ const affiliationSelect = {
   createdByUserId: true,
   createdAt: true,
   updatedAt: true,
+  user: { select: { id: true, name: true, email: true } },
+  team: { select: { id: true, name: true } },
 };
 
 @Injectable()
@@ -97,8 +99,13 @@ export class OrganizationUserAffiliationsService {
       organizationId: orgId,
       isDeleted: false,
       ...(inviteExpired
-        ? { status: AffiliationStatus.PENDING, inviteExpiresAt: { lt: new Date() } }
-        : status ? { status } : {}),
+        ? {
+            status: AffiliationStatus.PENDING,
+            inviteExpiresAt: { lt: new Date() },
+          }
+        : status
+          ? { status }
+          : {}),
       ...(role ? { role } : {}),
       ...(teamId ? { teamId } : {}),
       ...(q
