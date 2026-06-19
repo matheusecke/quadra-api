@@ -6,21 +6,23 @@ Manages the affiliation lifecycle between organizations and teams. An organizati
 
 | Method   | Path                                                         | Guards                               | Purpose |
 | -------- | ------------------------------------------------------------ | ------------------------------------ | ------- |
-| `POST`   | `/organizations/:orgId/team-affiliations`                    | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Invite a team; returns affiliation + raw `inviteToken` |
-| `GET`    | `/organizations/:orgId/team-affiliations`                    | `JwtAuthGuard`                       | Paginated list; filter by `status` |
-| `GET`    | `/organizations/:orgId/team-affiliations/:id`                | `JwtAuthGuard`                       | Get single affiliation |
+| `POST`   | `/organization-team-affiliations`                            | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Invite a team in the active JWT organization; returns affiliation + raw `inviteToken` |
+| `GET`    | `/organization-team-affiliations`                            | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Paginated list in the active JWT organization; filter by `status` |
+| `GET`    | `/organization-team-affiliations/:id`                        | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Get single affiliation in the active JWT organization |
 | `POST`   | `/organization-team-affiliations/invite-response`            | `JwtAuthGuard`                       | Accept or reject invite via token |
-| `POST`   | `/organizations/:orgId/team-affiliations/:id/resend`         | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Regenerate and resend invite token |
+| `POST`   | `/organization-team-affiliations/:id/resend`                 | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Regenerate and resend invite token in the active JWT organization |
 | `PATCH`  | `/organizations/:orgId/team-affiliations/:id/status`         | `JwtAuthGuard`, `SystemAdminGuard`   | Override status (system admin only) |
-| `DELETE` | `/organizations/:orgId/team-affiliations/:id`                | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Soft delete |
+| `DELETE` | `/organization-team-affiliations/:id`                        | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Soft delete in the active JWT organization |
 | `GET`    | `/teams/:teamId/affiliations`                                | `JwtAuthGuard`                       | Paginated list of org affiliations for a team |
 
 Paginated routes use `PaginationInterceptor` — see [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md).
 
+For org-admin routes in this module, the active organization comes only from `@CurrentUser().organizationId`. Controllers translate that JWT value into the numeric `orgId` argument expected by the service. The explicit `:orgId` route remains only on the system-admin status override endpoint. `GET /teams/:teamId/affiliations` also remains unchanged because it is a global team lookup, not an active-org endpoint.
+
 ## Business Rules
 
 ### Invite flow
-1. ORG_ADMIN calls `POST /organizations/:orgId/team-affiliations` with `{ teamId }`.
+1. ORG_ADMIN calls `POST /organization-team-affiliations` with `{ teamId }` while authenticated in the target organization context.
 2. Service validates the team exists and is not soft-deleted.
 3. If the team already has a PENDING or ACTIVE affiliation with that org, `409 CONFLICT` is returned.
 4. A raw 64-char hex token is returned once. Its SHA-256 hash is stored in `inviteToken`; the raw token is never stored.

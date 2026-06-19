@@ -92,9 +92,15 @@ describe('UsersService', () => {
           email: 'test@example.com',
           name: 'Test User',
           passwordHash: 'hashed_password',
+          heightCm: null,
           isSystemAdmin: false,
         },
-        select: expect.objectContaining({ id: true, isSystemAdmin: true }),
+        select: expect.objectContaining({
+          id: true,
+          birthDate: true,
+          heightCm: true,
+          isSystemAdmin: true,
+        }),
       });
       expect(result).toEqual(baseUser);
     });
@@ -118,6 +124,103 @@ describe('UsersService', () => {
           data: expect.objectContaining({ isSystemAdmin: true }),
         }),
       );
+    });
+
+    it('persists birth date and height in centimeters when creating a user', async () => {
+      const birthDate = new Date('1998-04-23T00:00:00.000Z');
+      (bcrypt.hash as jest.Mock).mockResolvedValue('hashed_password');
+      mockPrisma.user.create.mockResolvedValue({
+        ...baseUser,
+        birthDate,
+        heightCm: 182,
+      });
+
+      const result = await service.create({
+        email: 'profile@example.com',
+        name: 'Profile User',
+        password: 'password123',
+        birthDate,
+        height: 182,
+      } as any);
+
+      expect(mockPrisma.user.create).toHaveBeenCalledWith({
+        data: {
+          email: 'profile@example.com',
+          name: 'Profile User',
+          passwordHash: 'hashed_password',
+          isSystemAdmin: false,
+          birthDate,
+          heightCm: 182,
+        },
+        select: expect.objectContaining({
+          id: true,
+          birthDate: true,
+          heightCm: true,
+        }),
+      });
+      expect(result).toMatchObject({ birthDate, heightCm: 182 });
+    });
+
+    it('persists null height when height is explicitly null', async () => {
+      const birthDate = new Date('1998-04-23T00:00:00.000Z');
+      (bcrypt.hash as jest.Mock).mockResolvedValue('hashed_password');
+      mockPrisma.user.create.mockResolvedValue({
+        ...baseUser,
+        birthDate,
+        heightCm: null,
+      });
+
+      await service.create({
+        email: 'nullable-height@example.com',
+        name: 'Nullable Height',
+        password: 'password123',
+        birthDate,
+        height: null,
+      } as any);
+
+      expect(mockPrisma.user.create).toHaveBeenCalledWith({
+        data: {
+          email: 'nullable-height@example.com',
+          name: 'Nullable Height',
+          passwordHash: 'hashed_password',
+          isSystemAdmin: false,
+          birthDate,
+          heightCm: null,
+        },
+        select: expect.objectContaining({
+          birthDate: true,
+          heightCm: true,
+        }),
+      });
+    });
+
+    it('keeps admin creation compatible when birth date is omitted', async () => {
+      (bcrypt.hash as jest.Mock).mockResolvedValue('hashed_password');
+      mockPrisma.user.create.mockResolvedValue({
+        ...baseUser,
+        birthDate: new Date('1970-01-01T00:00:00.000Z'),
+        heightCm: null,
+      });
+
+      await service.create({
+        email: 'admin-compatible@example.com',
+        name: 'Admin Compatible',
+        password: 'password123',
+      });
+
+      expect(mockPrisma.user.create).toHaveBeenCalledWith({
+        data: {
+          email: 'admin-compatible@example.com',
+          name: 'Admin Compatible',
+          passwordHash: 'hashed_password',
+          isSystemAdmin: false,
+          heightCm: null,
+        },
+        select: expect.objectContaining({
+          birthDate: true,
+          heightCm: true,
+        }),
+      });
     });
   });
 

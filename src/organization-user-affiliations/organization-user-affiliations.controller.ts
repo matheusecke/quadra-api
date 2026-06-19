@@ -28,6 +28,7 @@ import { OrgRoles } from '../auth/decorators/org-roles.decorator';
 import { SystemAdmin } from '../auth/decorators/system-admin.decorator';
 import { SystemAdminGuard } from '../auth/guards/system-admin.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { PaginationInterceptor } from '../common/interceptors/pagination.interceptor';
 import { OrgRole } from '@prisma/client';
 import { OrganizationUserAffiliationsService } from './organization-user-affiliations.service';
@@ -50,52 +51,50 @@ import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorat
 export class OrganizationUserAffiliationsController {
   constructor(private readonly service: OrganizationUserAffiliationsService) {}
 
-  @Post('organizations/:orgId/user-affiliations')
+  @Post('organization-user-affiliations')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
     summary: 'Invite or add a user affiliation (org admin)',
     description:
-      'Creates a PENDING affiliation and returns a raw invite token for non-admin roles. ORG_ADMIN may omit `teamId`.',
+      'Creates a PENDING affiliation in the active JWT organization and returns a raw invite token for non-admin roles. ORG_ADMIN may omit `teamId`.',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiCreatedResponse({ type: UserAffiliationInviteBundleDto })
   create(
-    @Param('orgId', ParseIntPipe) orgId: number,
     @Body() dto: CreateUserAffiliationDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.create(orgId, dto, userId);
+    return this.service.create(user.organizationId as number, dto, user.sub);
   }
 
-  @Get('organizations/:orgId/user-affiliations')
+  @Get('organization-user-affiliations')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @UseInterceptors(PaginationInterceptor)
   @ApiOperation({
-    summary: 'List user affiliations for an organization (org admin)',
+    summary: 'List user affiliations for the active JWT organization (org admin)',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiPaginatedOkResponse(UserAffiliationResponseDto)
   findAll(
-    @Param('orgId', ParseIntPipe) orgId: number,
     @Query() query: ListUserAffiliationsQueryDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.findAll(orgId, query);
+    return this.service.findAll(user.organizationId as number, query);
   }
 
-  @Get('organizations/:orgId/user-affiliations/:id')
+  @Get('organization-user-affiliations/:id')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
-  @ApiOperation({ summary: 'Get a user affiliation by id (org admin)' })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
+  @ApiOperation({
+    summary: 'Get a user affiliation by id in the active JWT organization (org admin)',
+  })
   @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
   @ApiOkResponse({ type: UserAffiliationResponseDto })
   findById(
-    @Param('orgId', ParseIntPipe) orgId: number,
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.findById(orgId, id);
+    return this.service.findById(user.organizationId as number, id);
   }
 
   @Post('organization-user-affiliations/invite-response')
@@ -113,23 +112,22 @@ export class OrganizationUserAffiliationsController {
     return this.service.respondToInvite(dto, userId);
   }
 
-  @Patch('organizations/:orgId/user-affiliations/:id')
+  @Patch('organization-user-affiliations/:id')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Update an active user affiliation (org admin)',
+    summary: 'Update an active user affiliation in the active JWT organization (org admin)',
     description:
       'Role, team, or jersey number updates for ACTIVE affiliations.',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
   @ApiOkResponse({ type: UserAffiliationResponseDto })
   update(
-    @Param('orgId', ParseIntPipe) orgId: number,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateUserAffiliationDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.update(orgId, id, dto);
+    return this.service.update(user.organizationId as number, id, dto);
   }
 
   @Patch('organizations/:orgId/user-affiliations/:id/status')
@@ -151,41 +149,41 @@ export class OrganizationUserAffiliationsController {
   }
 
   // Invite email resend abuse: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
-  @Post('organizations/:orgId/user-affiliations/:id/resend')
+  @Post('organization-user-affiliations/:id/resend')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
-    summary: 'Re-send invite for a pending affiliation (org admin)',
+    summary:
+      'Re-send invite for a pending affiliation in the active JWT organization (org admin)',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
   @ApiOkResponse({ type: UserAffiliationInviteBundleDto })
-  resend(
-    @Param('orgId', ParseIntPipe) orgId: number,
-    @Param('id', ParseIntPipe) id: number,
-  ) {
-    return this.service.resend(orgId, id);
+  resend(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+    return this.service.resend(user.organizationId as number, id);
   }
 
-  @Delete('organizations/:orgId/user-affiliations/:id')
+  @Delete('organization-user-affiliations/:id')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
-    summary: 'Soft-delete a user affiliation (org admin)',
+    summary:
+      'Soft-delete a user affiliation in the active JWT organization (org admin)',
     description:
       'System admins may remove any affiliation; org admins cannot remove their own.',
   })
-  @ApiParam({ name: 'orgId', example: 1, description: 'Organization id.' })
   @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
   @ApiNoContentResponse({ description: 'Affiliation removed.' })
   remove(
-    @Param('orgId', ParseIntPipe) orgId: number,
     @Param('id', ParseIntPipe) id: number,
-    @CurrentUser('sub') userId: number,
-    @CurrentUser('isSystemAdmin') isSystemAdmin: boolean,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.remove(orgId, id, userId, isSystemAdmin);
+    return this.service.remove(
+      user.organizationId as number,
+      id,
+      user.sub,
+      user.isSystemAdmin,
+    );
   }
 }

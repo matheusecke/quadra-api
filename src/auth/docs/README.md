@@ -29,7 +29,7 @@ interface JwtPayload {
 
 | Method | Path                    | Auth   | Purpose                                                                                                                  |
 | ------ | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `POST` | `/auth/register`        | —      | Creates an `ACTIVE` non–system-admin user; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
+| `POST` | `/auth/register`        | —      | Creates an `ACTIVE` non-system-admin user with `email`, `name`, `password`, required `birth_date`, and optional nullable `height`; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
 | `POST` | `/auth/login`           | —      | Authenticates; returns `accessToken`; refresh cookie                                                                     |
 | `POST` | `/auth/refresh`         | Cookie | Rotates refresh token; new `accessToken`; preserves org context when still valid                                         |
 | `POST` | `/auth/logout`          | Cookie | Revokes current refresh token and clears cookie (no bearer required)                                                     |
@@ -39,6 +39,10 @@ interface JwtPayload {
 | `POST` | `/auth/change-password` | Bearer | Changes password; revokes active refresh tokens                                                                          |
 
 Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Register, login, refresh, choose-org, and change-password use **stricter** `@Throttle` limits than the global default. See [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md#rate-limiting).
+
+## Register profile fields
+
+`POST /auth/register` accepts `birth_date` as a required date-only string (`YYYY-MM-DD`) and `height` as an optional nullable integer in centimeters. `birth_date` is persisted as PostgreSQL `DATE`; `height` is persisted as `users.height_cm`.
 
 ## Session and refresh token
 
@@ -57,12 +61,24 @@ Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Re
 
 **`OrgRoleGuard`** — org-scoped operations; reads `role` from JWT and checks `@OrgRoles(...)`. Pass **`OrgRole` enum members** from `@prisma/client`, not string literals (TypeScript and the decorator signature require `OrgRole`).
 
+Handlers protected by `@OrgRoles(...)` must run inside an active organization context. `OrgRoleGuard` rejects JWTs with `organizationId: null` with `403 FORBIDDEN` and `Active organization context required.`.
+
 ```typescript
 import { OrgRole } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard, OrgRoleGuard)
 @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
 ```
+
+For org-scoped endpoints, use this contract consistently:
+
+- Guard with `JwtAuthGuard` plus `OrgRoleGuard` and declare the allowed org roles with `@OrgRoles(...)`.
+- Read the full JWT payload in the controller with `@CurrentUser() user: JwtPayload`.
+- Treat `user.organizationId` as the single source of truth for organization scope.
+- Do not accept `orgId` or `organizationId` in route params, query params, or request body only to decide active org scope.
+- Keep resource ids in routes only when they identify the resource itself, such as `/organizations/:id`, system-admin overrides, or global lookup endpoints.
+- Controllers may still pass a numeric `orgId` into services; the controller is responsible for translating JWT session context into that service argument.
+- Do not create shared org-scope helpers unless real duplication emerges beyond straightforward controller usage.
 
 **`SystemAdminGuard`** — platform-level operations; reads `isSystemAdmin` from JWT.
 
