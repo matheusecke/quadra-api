@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { OrganizationUserAffiliationsService } from './organization-user-affiliations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AffiliationStatus, OrgRole } from '@prisma/client';
+import { EntityStatus } from '@prisma/client';
 
 const mockPrisma = {
   organizationUserAffiliation: {
@@ -11,6 +12,7 @@ const mockPrisma = {
     count: jest.fn(),
     findUnique: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
   },
   user: { findUnique: jest.fn() },
   organizationTeamAffiliation: { findFirst: jest.fn() },
@@ -459,6 +461,111 @@ describe('OrganizationUserAffiliationsService', () => {
           data: expect.objectContaining({ status: 'ACTIVE' }),
         }),
       );
+    });
+  });
+
+  describe('findPendingInvitesForUser()', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('queries only pending non-deleted invites for the current active user with active organization and active-or-null team', async () => {
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+
+      await service.findPendingInvitesForUser(5);
+
+      expect(
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith({
+        where: {
+          userId: 5,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+          user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+          organization: {
+            is: { isDeleted: false, status: EntityStatus.ACTIVE },
+          },
+          OR: [
+            { teamId: null },
+            { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
+          ],
+        },
+        select: expect.any(Object),
+        orderBy: { createdAt: 'desc' },
+      });
+    });
+
+    it('does not select inviteToken for inbox listing', async () => {
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+
+      await service.findPendingInvitesForUser(5);
+
+      const select =
+        mockPrisma.organizationUserAffiliation.findMany.mock.calls[0][0].select;
+      expect(select.inviteToken).toBeUndefined();
+    });
+
+    it('maps organization/team display fields and computes expiration', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-06-19T12:00:00.000Z'));
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        {
+          id: 1,
+          userId: 5,
+          organizationId: 10,
+          role: OrgRole.ATHLETE,
+          teamId: 3,
+          jerseyNumber: 12,
+          status: AffiliationStatus.PENDING,
+          createdAt: new Date('2026-06-18T10:00:00.000Z'),
+          inviteExpiresAt: new Date('2026-06-18T12:00:00.000Z'),
+          organization: { id: 10, name: 'Club A' },
+          team: { id: 3, name: 'U20' },
+        },
+        {
+          id: 2,
+          userId: 5,
+          organizationId: 11,
+          role: OrgRole.ORG_ADMIN,
+          teamId: null,
+          jerseyNumber: null,
+          status: AffiliationStatus.PENDING,
+          createdAt: new Date('2026-06-19T10:00:00.000Z'),
+          inviteExpiresAt: new Date('2026-06-20T12:00:00.000Z'),
+          organization: { id: 11, name: 'Club B' },
+          team: null,
+        },
+      ]);
+
+      const result = await service.findPendingInvitesForUser(5);
+
+      expect(result).toEqual([
+        {
+          id: 1,
+          organizationId: 10,
+          organizationName: 'Club A',
+          role: OrgRole.ATHLETE,
+          teamId: 3,
+          teamName: 'U20',
+          jerseyNumber: 12,
+          status: AffiliationStatus.PENDING,
+          sentAt: '2026-06-18T10:00:00.000Z',
+          expiresAt: '2026-06-18T12:00:00.000Z',
+          isExpired: true,
+        },
+        {
+          id: 2,
+          organizationId: 11,
+          organizationName: 'Club B',
+          role: OrgRole.ORG_ADMIN,
+          teamId: null,
+          teamName: null,
+          jerseyNumber: null,
+          status: AffiliationStatus.PENDING,
+          sentAt: '2026-06-19T10:00:00.000Z',
+          expiresAt: '2026-06-20T12:00:00.000Z',
+          isExpired: false,
+        },
+      ]);
     });
   });
 

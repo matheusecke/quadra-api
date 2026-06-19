@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AffiliationToken } from '../common/utils/affiliation-token.util';
 import { ApiException } from '../common/exceptions/api.exception';
-import { AffiliationStatus, OrgRole } from '@prisma/client';
+import {
+  AffiliationStatus,
+  EntityStatus,
+  OrgRole,
+  Prisma,
+} from '@prisma/client';
 import { CreateUserAffiliationDto } from './dto/create-user-affiliation.dto';
 import {
   UserInviteResponseDto,
@@ -11,6 +16,7 @@ import {
 import { UpdateUserAffiliationDto } from './dto/update-user-affiliation.dto';
 import { UpdateUserAffiliationStatusDto } from './dto/update-user-affiliation-status.dto';
 import { ListUserAffiliationsQueryDto } from './dto/list-user-affiliations-query.dto';
+import type { MyInviteDto } from '../auth/dto/my-invite.dto';
 
 const affiliationSelect = {
   id: true,
@@ -26,6 +32,40 @@ const affiliationSelect = {
   user: { select: { id: true, name: true, email: true } },
   team: { select: { id: true, name: true } },
 };
+
+const myInviteSelect = {
+  id: true,
+  userId: true,
+  organizationId: true,
+  role: true,
+  teamId: true,
+  jerseyNumber: true,
+  status: true,
+  createdAt: true,
+  inviteExpiresAt: true,
+  organization: { select: { id: true, name: true } },
+  team: { select: { id: true, name: true } },
+} satisfies Prisma.OrganizationUserAffiliationSelect;
+
+const inviteTransitionSelect = {
+  id: true,
+  userId: true,
+  organizationId: true,
+  role: true,
+  teamId: true,
+  jerseyNumber: true,
+  status: true,
+  inviteExpiresAt: true,
+  isDeleted: true,
+} satisfies Prisma.OrganizationUserAffiliationSelect;
+
+type PendingInviteRecord = Prisma.OrganizationUserAffiliationGetPayload<{
+  select: typeof myInviteSelect;
+}>;
+
+type InviteTransitionRecord = Prisma.OrganizationUserAffiliationGetPayload<{
+  select: typeof inviteTransitionSelect;
+}>;
 
 @Injectable()
 export class OrganizationUserAffiliationsService {
@@ -276,5 +316,49 @@ export class OrganizationUserAffiliationsService {
       data: { status: dto.status },
       select: affiliationSelect,
     });
+  }
+
+  async findPendingInvitesForUser(userId: number): Promise<MyInviteDto[]> {
+    const affiliations = await this.prisma.organizationUserAffiliation.findMany(
+      {
+        where: {
+          userId,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+          user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+          organization: {
+            is: { isDeleted: false, status: EntityStatus.ACTIVE },
+          },
+          OR: [
+            { teamId: null },
+            { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
+          ],
+        },
+        select: myInviteSelect,
+        orderBy: { createdAt: 'desc' },
+      },
+    );
+
+    return affiliations.map((affiliation) =>
+      this.mapToMyInviteDto(affiliation),
+    );
+  }
+
+  private mapToMyInviteDto(affiliation: PendingInviteRecord): MyInviteDto {
+    return {
+      id: affiliation.id,
+      organizationId: affiliation.organizationId,
+      organizationName: affiliation.organization.name,
+      role: affiliation.role,
+      teamId: affiliation.teamId,
+      teamName: affiliation.team?.name ?? null,
+      jerseyNumber: affiliation.jerseyNumber,
+      status: AffiliationStatus.PENDING,
+      sentAt: affiliation.createdAt.toISOString(),
+      expiresAt: affiliation.inviteExpiresAt?.toISOString() ?? null,
+      isExpired:
+        affiliation.inviteExpiresAt !== null &&
+        affiliation.inviteExpiresAt.getTime() < Date.now(),
+    };
   }
 }
