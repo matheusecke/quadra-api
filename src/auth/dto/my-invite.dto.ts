@@ -31,7 +31,7 @@ export class MyInviteDto {
     enum: [AffiliationStatus.PENDING],
     example: AffiliationStatus.PENDING,
   })
-  status!: AffiliationStatus.PENDING;
+  status!: Extract<AffiliationStatus, 'PENDING'>;
 
   @ApiProperty({ example: '2026-06-19T12:00:00.000Z' })
   sentAt!: string;

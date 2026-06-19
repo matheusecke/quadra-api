@@ -3,6 +3,8 @@ import {
   Post,
   Get,
   Body,
+  Param,
+  ParseIntPipe,
   Query,
   Req,
   Res,
@@ -33,6 +35,8 @@ import { OrgAffiliationDto } from './dto/org-affiliation.dto';
 import { ListUserOrgsQueryDto } from './dto/list-user-orgs-query.dto';
 import { ChooseOrgDto } from './dto/choose-org.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { MyInviteDto } from './dto/my-invite.dto';
+import { RespondToMyInviteDto } from './dto/respond-to-my-invite.dto';
 import { ApiException } from '../common/exceptions/api.exception';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -178,6 +182,41 @@ export class AuthController {
     @Query() query: ListUserOrgsQueryDto,
   ): Promise<OrgAffiliationDto[]> {
     return this.authService.getUserOrgs(user.sub, query);
+  }
+
+  @Get('invites')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'List pending invites for the current user',
+    description:
+      'Uses the Bearer access token and does not require active organization context.',
+  })
+  @ApiOkResponse({ type: [MyInviteDto] })
+  @ApiUnauthorizedErrorResponse()
+  async getInvites(@CurrentUser() user: JwtPayload): Promise<MyInviteDto[]> {
+    return this.authService.getInvites(user.sub);
+  }
+
+  @Post('invites/:id/respond')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Accept or reject a pending invite for the current user',
+    description:
+      'Uses the Bearer access token and scopes the invite by current user id.',
+  })
+  @ApiOkResponse({ type: MyInviteDto })
+  @ApiUnauthorizedErrorResponse()
+  @ApiNotFoundErrorResponse()
+  @ApiUnprocessableEntityErrorResponse()
+  async respondToInvite(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RespondToMyInviteDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<MyInviteDto> {
+    return this.authService.respondToInvite(user.sub, id, dto.decision);
   }
 
   // Org context switch + refresh rotation: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
