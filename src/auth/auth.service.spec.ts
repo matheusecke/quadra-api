@@ -2,10 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { OrgRole } from '@prisma/client';
+import { validate } from 'class-validator';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
 import { UsersService } from '../users/users.service';
+import { InviteDecision } from '../organization-user-affiliations/dto/user-invite-response.dto';
+import { OrganizationUserAffiliationsService } from '../organization-user-affiliations/organization-user-affiliations.service';
+import { RespondToMyInviteDto } from './dto/respond-to-my-invite.dto';
 
 const mockPrisma = {
   user: {
@@ -41,6 +45,11 @@ const mockUsersService = {
   create: jest.fn(),
 };
 
+const mockOrganizationUserAffiliationsService = {
+  findPendingInvitesForUser: jest.fn(),
+  respondToInviteForUser: jest.fn(),
+};
+
 describe('AuthService', () => {
   let service: AuthService;
 
@@ -57,6 +66,10 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: UsersService, useValue: mockUsersService },
+        {
+          provide: OrganizationUserAffiliationsService,
+          useValue: mockOrganizationUserAffiliationsService,
+        },
       ],
     }).compile();
 
@@ -863,6 +876,59 @@ describe('AuthService', () => {
       });
 
       expect(service.getRefreshCookieMaxAgeMs()).toBe(7_200_000);
+    });
+  });
+
+  describe('RespondToMyInviteDto', () => {
+    it('accepts ACCEPT and REJECT decisions', async () => {
+      const acceptDto = Object.assign(new RespondToMyInviteDto(), {
+        decision: InviteDecision.ACCEPT,
+      });
+      const rejectDto = Object.assign(new RespondToMyInviteDto(), {
+        decision: InviteDecision.REJECT,
+      });
+
+      await expect(validate(acceptDto)).resolves.toHaveLength(0);
+      await expect(validate(rejectDto)).resolves.toHaveLength(0);
+    });
+
+    it('rejects unsupported decisions', async () => {
+      const dto = Object.assign(new RespondToMyInviteDto(), {
+        decision: 'MAYBE',
+      });
+
+      const errors = await validate(dto);
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0].constraints).toHaveProperty('isEnum');
+    });
+  });
+
+  describe('invites', () => {
+    it('delegates getInvites to OrganizationUserAffiliationsService', async () => {
+      mockOrganizationUserAffiliationsService.findPendingInvitesForUser.mockResolvedValue(
+        [{ id: 1 }],
+      );
+
+      await expect(service.getInvites(5)).resolves.toEqual([{ id: 1 }]);
+
+      expect(
+        mockOrganizationUserAffiliationsService.findPendingInvitesForUser,
+      ).toHaveBeenCalledWith(5);
+    });
+
+    it('delegates respondToInvite to OrganizationUserAffiliationsService', async () => {
+      mockOrganizationUserAffiliationsService.respondToInviteForUser.mockResolvedValue(
+        { id: 1 },
+      );
+
+      await expect(
+        service.respondToInvite(5, 1, InviteDecision.ACCEPT),
+      ).resolves.toEqual({ id: 1 });
+
+      expect(
+        mockOrganizationUserAffiliationsService.respondToInviteForUser,
+      ).toHaveBeenCalledWith(5, 1, InviteDecision.ACCEPT);
     });
   });
 });
