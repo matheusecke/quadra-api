@@ -773,23 +773,40 @@ describe('OrganizationUserAffiliationsService', () => {
       ).resolves.toBeUndefined();
     });
 
-    it('returns 404 for missing, deleted, or other-user invite', async () => {
+    it('queries with pending status, active user, active organization, and active-or-null team', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+
+      await service
+        .respondToInviteForUser(5, 1, InviteDecision.ACCEPT)
+        .catch(() => {});
+
+      expect(
+        mockPrisma.organizationUserAffiliation.findFirst,
+      ).toHaveBeenCalledWith({
+        where: {
+          id: 1,
+          userId: 5,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+          user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+          organization: {
+            is: { isDeleted: false, status: EntityStatus.ACTIVE },
+          },
+          OR: [
+            { teamId: null },
+            { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
+          ],
+        },
+        select: expect.any(Object),
+      });
+    });
+
+    it('returns 404 for missing, deleted, other-user, or non-pending invite', async () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
 
       await expect(
         service.respondToInviteForUser(5, 99, InviteDecision.ACCEPT),
       ).rejects.toMatchObject({ status: 404 });
-    });
-
-    it('returns 422 for owned already-active invite', async () => {
-      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
-        ...pendingAffiliation,
-        status: AffiliationStatus.ACTIVE,
-      });
-
-      await expect(
-        service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT),
-      ).rejects.toMatchObject({ status: 422 });
     });
 
     it('uses updateMany with id, userId, status PENDING, isDeleted false', async () => {

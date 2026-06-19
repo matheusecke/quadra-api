@@ -352,7 +352,20 @@ export class OrganizationUserAffiliationsService {
   ): Promise<void> {
     const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
       {
-        where: { id: inviteId, userId, isDeleted: false },
+        where: {
+          id: inviteId,
+          userId,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+          user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+          organization: {
+            is: { isDeleted: false, status: EntityStatus.ACTIVE },
+          },
+          OR: [
+            { teamId: null },
+            { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
+          ],
+        },
         select: inviteTransitionSelect,
       },
     );
