@@ -709,9 +709,6 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 1,
       });
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
-        updatedAffiliation,
-      );
 
       await service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT);
 
@@ -734,11 +731,6 @@ describe('OrganizationUserAffiliationsService', () => {
       );
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 1,
-      });
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        ...updatedAffiliation,
-        status: AffiliationStatus.PENDING,
-        isDeleted: true,
       });
 
       await service.respondToInviteForUser(5, 1, InviteDecision.REJECT);
@@ -775,13 +767,10 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 1,
       });
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
-        updatedAffiliation,
-      );
 
       await expect(
         service.respondToInviteForUser(5, 1, InviteDecision.REJECT),
-      ).resolves.toBeDefined();
+      ).resolves.toBeUndefined();
     });
 
     it('returns 404 for missing, deleted, or other-user invite', async () => {
@@ -810,9 +799,6 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 1,
       });
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
-        updatedAffiliation,
-      );
 
       await service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT);
 

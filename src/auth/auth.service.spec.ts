@@ -919,12 +919,12 @@ describe('AuthService', () => {
 
     it('delegates respondToInvite to OrganizationUserAffiliationsService', async () => {
       mockOrganizationUserAffiliationsService.respondToInviteForUser.mockResolvedValue(
-        { id: 1 },
+        undefined,
       );
 
       await expect(
         service.respondToInvite(5, 1, InviteDecision.ACCEPT),
-      ).resolves.toEqual({ id: 1 });
+      ).resolves.toBeUndefined();
 
       expect(
         mockOrganizationUserAffiliationsService.respondToInviteForUser,

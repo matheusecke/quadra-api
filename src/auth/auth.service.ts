@@ -238,8 +238,8 @@ export class AuthService {
     userId: number,
     inviteId: number,
     decision: InviteDecision,
-  ): Promise<MyInviteDto> {
-    return this.organizationUserAffiliationsService.respondToInviteForUser(
+  ): Promise<void> {
+    await this.organizationUserAffiliationsService.respondToInviteForUser(
       userId,
       inviteId,
       decision,

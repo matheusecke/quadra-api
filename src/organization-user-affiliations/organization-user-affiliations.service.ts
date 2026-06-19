@@ -349,7 +349,7 @@ export class OrganizationUserAffiliationsService {
     userId: number,
     inviteId: number,
     decision: InviteDecision,
-  ): Promise<MyInviteDto> {
+  ): Promise<void> {
     const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
       {
         where: { id: inviteId, userId, isDeleted: false },
@@ -364,17 +364,6 @@ export class OrganizationUserAffiliationsService {
     await this.resolveInviteTransition(affiliation, decision, {
       allowExpiredReject: true,
     });
-
-    const updated = await this.prisma.organizationUserAffiliation.findUnique({
-      where: { id: affiliation.id },
-      select: myInviteSelect,
-    });
-
-    if (!updated) {
-      throw ApiException.notFound('Invite not found');
-    }
-
-    return this.mapToMyInviteDto(updated);
   }
 
   private async resolveInviteTransition(

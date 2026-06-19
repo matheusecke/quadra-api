@@ -201,13 +201,13 @@ export class AuthController {
   @Post('invites/:id/respond')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @HttpCode(HttpStatus.OK)
+  @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Accept or reject a pending invite for the current user',
     description:
       'Uses the Bearer access token and scopes the invite by current user id.',
   })
-  @ApiOkResponse({ type: MyInviteDto })
+  @ApiNoContentResponse({ description: 'Invite decision applied.' })
   @ApiUnauthorizedErrorResponse()
   @ApiNotFoundErrorResponse()
   @ApiUnprocessableEntityErrorResponse()
@@ -215,8 +215,8 @@ export class AuthController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: RespondToMyInviteDto,
     @CurrentUser() user: JwtPayload,
-  ): Promise<MyInviteDto> {
-    return this.authService.respondToInvite(user.sub, id, dto.decision);
+  ): Promise<void> {
+    await this.authService.respondToInvite(user.sub, id, dto.decision);
   }
 
   // Org context switch + refresh rotation: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
