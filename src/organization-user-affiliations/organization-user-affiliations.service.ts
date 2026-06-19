@@ -183,34 +183,35 @@ export class OrganizationUserAffiliationsService {
 
   async respondToInvite(dto: UserInviteResponseDto, currentUserId: number) {
     const tokenHash = AffiliationToken.hash(dto.token);
-    const aff = await this.prisma.organizationUserAffiliation.findFirst({
-      where: { inviteToken: tokenHash, isDeleted: false },
-    });
-    if (!aff) throw ApiException.notFound('Invite not found');
-    if (aff.userId !== currentUserId)
-      throw ApiException.forbidden('You can only respond to your own invites');
-    if (aff.status !== AffiliationStatus.PENDING)
-      throw ApiException.unprocessable('Invite is no longer pending');
-    if (aff.inviteExpiresAt && aff.inviteExpiresAt < new Date())
-      throw ApiException.unprocessable('Invite has expired');
+    const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
+      {
+        where: { inviteToken: tokenHash, isDeleted: false },
+        select: inviteTransitionSelect,
+      },
+    );
 
-    if (dto.decision === InviteDecision.ACCEPT) {
-      return this.prisma.organizationUserAffiliation.update({
-        where: { id: aff.id },
-        data: {
-          status: AffiliationStatus.ACTIVE,
-          inviteToken: null,
-          inviteExpiresAt: null,
-        },
-        select: affiliationSelect,
-      });
+    if (!affiliation) {
+      throw ApiException.notFound('Invite not found');
     }
 
-    return this.prisma.organizationUserAffiliation.update({
-      where: { id: aff.id },
-      data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+    if (affiliation.userId !== currentUserId) {
+      throw ApiException.forbidden('You can only respond to your own invites');
+    }
+
+    await this.resolveInviteTransition(affiliation, dto.decision, {
+      allowExpiredReject: false,
+    });
+
+    const updated = await this.prisma.organizationUserAffiliation.findUnique({
+      where: { id: affiliation.id },
       select: affiliationSelect,
     });
+
+    if (!updated) {
+      throw ApiException.notFound('Invite not found');
+    }
+
+    return updated;
   }
 
   async update(orgId: number, id: number, dto: UpdateUserAffiliationDto) {
@@ -342,6 +343,86 @@ export class OrganizationUserAffiliationsService {
     return affiliations.map((affiliation) =>
       this.mapToMyInviteDto(affiliation),
     );
+  }
+
+  async respondToInviteForUser(
+    userId: number,
+    inviteId: number,
+    decision: InviteDecision,
+  ): Promise<MyInviteDto> {
+    const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
+      {
+        where: { id: inviteId, userId, isDeleted: false },
+        select: inviteTransitionSelect,
+      },
+    );
+
+    if (!affiliation) {
+      throw ApiException.notFound('Invite not found');
+    }
+
+    await this.resolveInviteTransition(affiliation, decision, {
+      allowExpiredReject: true,
+    });
+
+    const updated = await this.prisma.organizationUserAffiliation.findUnique({
+      where: { id: affiliation.id },
+      select: myInviteSelect,
+    });
+
+    if (!updated) {
+      throw ApiException.notFound('Invite not found');
+    }
+
+    return this.mapToMyInviteDto(updated);
+  }
+
+  private async resolveInviteTransition(
+    affiliation: InviteTransitionRecord,
+    decision: InviteDecision,
+    options: { allowExpiredReject: boolean },
+  ): Promise<void> {
+    if (affiliation.status !== AffiliationStatus.PENDING) {
+      throw ApiException.unprocessable('Invite is no longer pending');
+    }
+
+    const isExpired =
+      affiliation.inviteExpiresAt !== null &&
+      affiliation.inviteExpiresAt.getTime() < Date.now();
+
+    if (
+      isExpired &&
+      (decision === InviteDecision.ACCEPT || !options.allowExpiredReject)
+    ) {
+      throw ApiException.unprocessable('Invite has expired');
+    }
+
+    const data =
+      decision === InviteDecision.ACCEPT
+        ? {
+            status: AffiliationStatus.ACTIVE,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          }
+        : {
+            isDeleted: true,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          };
+
+    const result = await this.prisma.organizationUserAffiliation.updateMany({
+      where: {
+        id: affiliation.id,
+        userId: affiliation.userId,
+        status: AffiliationStatus.PENDING,
+        isDeleted: false,
+      },
+      data,
+    });
+
+    if (result.count !== 1) {
+      throw ApiException.unprocessable('Invite is no longer pending');
+    }
   }
 
   private mapToMyInviteDto(affiliation: PendingInviteRecord): MyInviteDto {

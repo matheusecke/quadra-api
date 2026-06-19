@@ -1,8 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrganizationUserAffiliationsService } from './organization-user-affiliations.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { AffiliationStatus, OrgRole } from '@prisma/client';
-import { EntityStatus } from '@prisma/client';
+import { AffiliationStatus, EntityStatus, OrgRole } from '@prisma/client';
+import { InviteDecision } from './dto/user-invite-response.dto';
 
 const mockPrisma = {
   organizationUserAffiliation: {
@@ -305,8 +305,12 @@ describe('OrganizationUserAffiliationsService', () => {
         userId: 5,
         status: 'PENDING',
         inviteExpiresAt: new Date(Date.now() + 99999),
+        isDeleted: false,
       });
-      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
         id: 1,
         status: 'ACTIVE',
       });
@@ -315,12 +319,114 @@ describe('OrganizationUserAffiliationsService', () => {
         5,
       );
       expect(
-        mockPrisma.organizationUserAffiliation.update,
+        mockPrisma.organizationUserAffiliation.updateMany,
       ).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ status: 'ACTIVE' }),
         }),
       );
+    });
+
+    it('token accept clears inviteToken and inviteExpiresAt', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 1,
+        userId: 5,
+        status: 'PENDING',
+        inviteExpiresAt: new Date(Date.now() + 99999),
+        isDeleted: false,
+      });
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        id: 1,
+        status: 'ACTIVE',
+      });
+
+      await service.respondToInvite(
+        { token: rawToken, decision: 'ACCEPT' as any },
+        5,
+      );
+
+      expect(
+        mockPrisma.organizationUserAffiliation.updateMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            inviteToken: null,
+            inviteExpiresAt: null,
+          }),
+        }),
+      );
+    });
+
+    it('token reject sets isDeleted true and clears inviteToken and inviteExpiresAt', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 1,
+        userId: 5,
+        status: 'PENDING',
+        inviteExpiresAt: new Date(Date.now() + 99999),
+        isDeleted: false,
+      });
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        id: 1,
+        status: 'PENDING',
+        isDeleted: true,
+      });
+
+      await service.respondToInvite(
+        { token: rawToken, decision: 'REJECT' as any },
+        5,
+      );
+
+      expect(
+        mockPrisma.organizationUserAffiliation.updateMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            isDeleted: true,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          }),
+        }),
+      );
+    });
+
+    it('expired token accept still throws 422', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 1,
+        userId: 5,
+        status: 'PENDING',
+        inviteExpiresAt: new Date(Date.now() - 1000),
+        isDeleted: false,
+      });
+
+      await expect(
+        service.respondToInvite(
+          { token: rawToken, decision: 'ACCEPT' as any },
+          5,
+        ),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('expired token reject still throws 422', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 1,
+        userId: 5,
+        status: 'PENDING',
+        inviteExpiresAt: new Date(Date.now() - 1000),
+        isDeleted: false,
+      });
+
+      await expect(
+        service.respondToInvite(
+          { token: rawToken, decision: 'REJECT' as any },
+          5,
+        ),
+      ).rejects.toMatchObject({ status: 422 });
     });
   });
 
@@ -566,6 +672,175 @@ describe('OrganizationUserAffiliationsService', () => {
           isExpired: false,
         },
       ]);
+    });
+  });
+
+  describe('respondToInviteForUser()', () => {
+    const pendingAffiliation = {
+      id: 1,
+      userId: 5,
+      organizationId: 10,
+      role: OrgRole.ATHLETE,
+      teamId: 3,
+      jerseyNumber: 12,
+      status: AffiliationStatus.PENDING,
+      inviteExpiresAt: new Date(Date.now() + 99999),
+      isDeleted: false,
+    };
+
+    const updatedAffiliation = {
+      id: 1,
+      userId: 5,
+      organizationId: 10,
+      role: OrgRole.ATHLETE,
+      teamId: 3,
+      jerseyNumber: 12,
+      status: AffiliationStatus.ACTIVE,
+      createdAt: new Date('2026-06-19T10:00:00.000Z'),
+      inviteExpiresAt: null,
+      organization: { id: 10, name: 'Club A' },
+      team: { id: 3, name: 'U20' },
+    };
+
+    it('accepts pending valid invite and writes status ACTIVE, inviteToken null, inviteExpiresAt null', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation,
+      );
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        updatedAffiliation,
+      );
+
+      await service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT);
+
+      expect(
+        mockPrisma.organizationUserAffiliation.updateMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: AffiliationStatus.ACTIVE,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          }),
+        }),
+      );
+    });
+
+    it('rejects pending valid invite and writes isDeleted true, inviteToken null, inviteExpiresAt null', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation,
+      );
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        ...updatedAffiliation,
+        status: AffiliationStatus.PENDING,
+        isDeleted: true,
+      });
+
+      await service.respondToInviteForUser(5, 1, InviteDecision.REJECT);
+
+      expect(
+        mockPrisma.organizationUserAffiliation.updateMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            isDeleted: true,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          }),
+        }),
+      );
+    });
+
+    it('blocks accepting expired pending invite with 422', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        ...pendingAffiliation,
+        inviteExpiresAt: new Date(Date.now() - 1000),
+      });
+
+      await expect(
+        service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('allows rejecting expired pending invite', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        ...pendingAffiliation,
+        inviteExpiresAt: new Date(Date.now() - 1000),
+      });
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        updatedAffiliation,
+      );
+
+      await expect(
+        service.respondToInviteForUser(5, 1, InviteDecision.REJECT),
+      ).resolves.toBeDefined();
+    });
+
+    it('returns 404 for missing, deleted, or other-user invite', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.respondToInviteForUser(5, 99, InviteDecision.ACCEPT),
+      ).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('returns 422 for owned already-active invite', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        ...pendingAffiliation,
+        status: AffiliationStatus.ACTIVE,
+      });
+
+      await expect(
+        service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('uses updateMany with id, userId, status PENDING, isDeleted false', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation,
+      );
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        updatedAffiliation,
+      );
+
+      await service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT);
+
+      expect(
+        mockPrisma.organizationUserAffiliation.updateMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: 1,
+            userId: 5,
+            status: AffiliationStatus.PENDING,
+            isDeleted: false,
+          },
+        }),
+      );
+    });
+
+    it('returns 422 when updateMany returns count 0 (double-submit)', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation,
+      );
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 0,
+      });
+
+      await expect(
+        service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT),
+      ).rejects.toMatchObject({ status: 422 });
     });
   });
 
