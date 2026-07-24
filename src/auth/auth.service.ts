@@ -13,6 +13,9 @@ import type { MeResponseDto } from './dto/me-response.dto';
 import type { TokenResponseDto } from './dto/token-response.dto';
 import type { RegisterDto } from './dto/register.dto';
 import { UsersService } from '../users/users.service';
+import { OrganizationUserAffiliationsService } from '../organization-user-affiliations/organization-user-affiliations.service';
+import { InviteDecision } from '../organization-user-affiliations/dto/user-invite-response.dto';
+import type { MyInviteDto } from './dto/my-invite.dto';
 
 export interface LoginResult extends LoginResponseDto {
   rawRefreshToken: string;
@@ -39,6 +42,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    private readonly organizationUserAffiliationsService: OrganizationUserAffiliationsService,
   ) {}
 
   async register(dto: RegisterDto): Promise<LoginResult> {
@@ -222,6 +226,24 @@ export class AuthService {
     );
 
     return this.mapAffiliations(affiliations);
+  }
+
+  async getInvites(userId: number): Promise<MyInviteDto[]> {
+    return this.organizationUserAffiliationsService.findPendingInvitesForUser(
+      userId,
+    );
+  }
+
+  async respondToInvite(
+    userId: number,
+    inviteId: number,
+    decision: InviteDecision,
+  ): Promise<void> {
+    await this.organizationUserAffiliationsService.respondToInviteForUser(
+      userId,
+      inviteId,
+      decision,
+    );
   }
 
   async chooseOrg(

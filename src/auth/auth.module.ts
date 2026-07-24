@@ -11,12 +11,14 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { UsersModule } from '../users/users.module';
+import { OrganizationUserAffiliationsModule } from '../organization-user-affiliations/organization-user-affiliations.module';
 
 @Module({
   imports: [
     ConfigModule,
     PrismaModule,
     UsersModule,
+    OrganizationUserAffiliationsModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

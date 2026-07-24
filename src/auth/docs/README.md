@@ -27,18 +27,24 @@ interface JwtPayload {
 
 ## Endpoints
 
-| Method | Path                    | Auth   | Purpose                                                                                                                  |
-| ------ | ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `POST` | `/auth/register`        | —      | Creates an `ACTIVE` non-system-admin user with `email`, `name`, `password`, required `birth_date`, and optional nullable `height`; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
-| `POST` | `/auth/login`           | —      | Authenticates; returns `accessToken`; refresh cookie                                                                     |
-| `POST` | `/auth/refresh`         | Cookie | Rotates refresh token; new `accessToken`; preserves org context when still valid                                         |
-| `POST` | `/auth/logout`          | Cookie | Revokes current refresh token and clears cookie (no bearer required)                                                     |
-| `GET`  | `/auth/me`              | Bearer | Current user and session context                                                                                         |
-| `GET`  | `/auth/org`             | Bearer | User’s organization affiliations; optional `name` query filters organization names                                        |
-| `POST` | `/auth/org`             | Bearer | Chooses organization; rotates refresh with org context; org-scoped JWT                                                   |
-| `POST` | `/auth/change-password` | Bearer | Changes password; revokes active refresh tokens                                                                          |
+| Method | Path                        | Auth   | Purpose                                                                                                                                                                                                          |
+| ------ | --------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/auth/register`            | —      | Creates an `ACTIVE` non-system-admin user with `email`, `name`, `password`, required `birth_date`, and optional nullable `height`; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
+| `POST` | `/auth/login`               | —      | Authenticates; returns `accessToken`; refresh cookie                                                                                                                                                             |
+| `POST` | `/auth/refresh`             | Cookie | Rotates refresh token; new `accessToken`; preserves org context when still valid                                                                                                                                 |
+| `POST` | `/auth/logout`              | Cookie | Revokes current refresh token and clears cookie (no bearer required)                                                                                                                                             |
+| `GET`  | `/auth/me`                  | Bearer | Current user and session context                                                                                                                                                                                 |
+| `GET`  | `/auth/org`                 | Bearer | User’s organization affiliations; optional `name` query filters organization names                                                                                                                               |
+| `POST` | `/auth/org`                 | Bearer | Chooses organization; rotates refresh with org context; org-scoped JWT                                                                                                                                           |
+| `POST` | `/auth/change-password`     | Bearer | Changes password; revokes active refresh tokens                                                                                                                                                                  |
+| `GET`  | `/auth/invites`             | Bearer | Lists pending invites for the current user; no active org context required                                                                                                                                       |
+| `POST` | `/auth/invites/:id/respond` | Bearer | Accepts or rejects a pending invite for the current user; no active org context required                                                                                                                         |
 
 Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Register, login, refresh, choose-org, and change-password use **stricter** `@Throttle` limits than the global default. See [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md#rate-limiting).
+
+## Current-user invite inbox
+
+`GET /auth/invites` and `POST /auth/invites/:id/respond` require only a Bearer JWT and do not require active organization context. `organizationId` and `role` in the token are ignored for these endpoints. They list and act on `organization_user_affiliations` rows with `status = PENDING` that belong to the current user. Expired invites (`inviteExpiresAt < now`) appear in the listing with `isExpired: true`; accepting an expired invite returns `422`; rejecting one is allowed. These endpoints never expose `inviteToken`.
 
 ## Register profile fields
 
