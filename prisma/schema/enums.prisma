@@ -21,3 +21,141 @@ enum AffiliationStatus {
 
   @@map("affiliation_status")
 }
+
+enum BasketballPosition {
+  PG
+  SG
+  SF
+  PF
+  C
+
+  @@map("basketball_position")
+}
+
+enum BrazilianState {
+  AC
+  AL
+  AP
+  AM
+  BA
+  CE
+  DF
+  ES
+  GO
+  MA
+  MT
+  MS
+  MG
+  PA
+  PB
+  PR
+  PE
+  PI
+  RJ
+  RN
+  RS
+  RO
+  RR
+  SC
+  SP
+  SE
+  TO
+
+  @@map("brazilian_state")
+}
+
+enum SeasonStatus {
+  ACTIVE
+  ARCHIVED
+
+  @@map("season_status")
+}
+
+enum TournamentStatus {
+  DRAFT
+  REGISTRATION
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+
+  @@map("tournament_status")
+}
+
+enum TournamentFormat {
+  LEAGUE
+  GROUP_STAGE
+  KNOCKOUT
+  GROUP_STAGE_KNOCKOUT
+
+  @@map("tournament_format")
+}
+
+enum TournamentTeamStatus {
+  ACTIVE
+  WITHDRAWN
+
+  @@map("tournament_team_status")
+}
+
+enum RosterStatus {
+  ACTIVE
+  INACTIVE
+
+  @@map("roster_status")
+}
+
+enum RosterRole {
+  ATHLETE
+  COACHING_STAFF
+
+  @@map("roster_role")
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  FINISHED
+  POSTPONED
+  CANCELLED
+
+  @@map("match_status")
+}
+
+enum MatchSide {
+  HOME
+  AWAY
+
+  @@map("match_side")
+}
+
+enum MatchResult {
+  WIN
+  LOSS
+
+  @@map("match_result")
+}
+
+// DEFAULT is a PostgreSQL reserved word, but harmless as a quoted enum label
+// and not a reserved word in JavaScript. Verified by prisma:validate and
+// prisma:generate before the migration was written.
+enum LossType {
+  NORMAL
+  DEFAULT
+  FORFEIT
+
+  @@map("loss_type")
+}
+
+enum MatchRosterStatus {
+  AVAILABLE
+  DNP
+
+  @@map("match_roster_status")
+}
+
+enum PeriodType {
+  REGULAR
+  OVERTIME
+
+  @@map("period_type")
+}

@@ -8,6 +8,9 @@ export class TeamResponseDto {
   @ApiProperty({ example: 'São Paulo FC' })
   name!: string;
 
+  @ApiProperty({ example: 'SPF' })
+  shortName!: string;
+
   @ApiProperty({ example: 'sao-paulo-fc' })
   slug!: string;
 

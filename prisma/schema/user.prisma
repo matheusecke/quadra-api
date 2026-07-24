@@ -2,19 +2,25 @@ model User {
   id            Int          @id @default(autoincrement())
   email         String
   name          String
-  birthDate     DateTime     @default(dbgenerated("'1970-01-01'::date")) @db.Date @map("birth_date")
+  birthDate     DateTime     @default(dbgenerated("'1970-01-01'::date")) @map("birth_date") @db.Date
   heightCm      Int?         @map("height_cm")
   passwordHash  String       @map("password_hash")
   status        EntityStatus @default(ACTIVE)
   isDeleted     Boolean      @default(false) @map("is_deleted")
-  isSystemAdmin Boolean    @default(false) @map("is_system_admin")
-  createdAt    DateTime     @default(now()) @db.Timestamptz(3) @map("created_at")
-  updatedAt    DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
+  isSystemAdmin Boolean      @default(false) @map("is_system_admin")
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  organizationAffiliations    OrganizationUserAffiliation[]
-  userAffiliationsCreated     OrganizationUserAffiliation[] @relation("UserAffiliationCreatedBy")
-  teamAffiliationsCreated     OrganizationTeamAffiliation[] @relation("TeamAffiliationCreatedBy")
-  refreshTokens               RefreshToken[]
+  organizationAffiliations OrganizationUserAffiliation[]
+  userAffiliationsCreated  OrganizationUserAffiliation[] @relation("UserAffiliationCreatedBy")
+  teamAffiliationsCreated  OrganizationTeamAffiliation[] @relation("TeamAffiliationCreatedBy")
+  refreshTokens            RefreshToken[]
+
+  tournamentsCreated    Tournament[]           @relation("TournamentCreatedBy")
+  matchesCreated        Match[]                @relation("MatchCreatedBy")
+  tournamentRosters     TournamentRoster[]
+  matchRosters          MatchRoster[]
+  playerMatchStatistics PlayerMatchStatistic[]
 
   // DB-only rule:
   // CHECK (email = lower(email)).

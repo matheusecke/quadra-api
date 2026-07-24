@@ -1,0 +1,33 @@
+model Season {
+  id             Int          @id @default(autoincrement())
+  organizationId Int          @map("organization_id")
+  label          String
+  startDate      DateTime     @map("start_date") @db.Date
+  endDate        DateTime     @map("end_date") @db.Date
+  status         SeasonStatus @default(ACTIVE)
+  isDeleted      Boolean      @default(false) @map("is_deleted")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  tournaments Tournament[]
+
+  // DB-only rule:
+  // Partial unique index on seasons(organization_id, label)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on seasons(organization_id, start_date)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // seasons_date_range_chk: start_date <= end_date
+  // First added in migration: sports_module_constraints
+  //
+  @@map("seasons")
+}

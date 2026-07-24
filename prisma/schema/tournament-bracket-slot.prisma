@@ -1,0 +1,37 @@
+model TournamentBracketSlot {
+  id                     Int      @id @default(autoincrement())
+  organizationId         Int      @map("organization_id")
+  tournamentId           Int      @map("tournament_id")
+  roundId                Int      @map("round_id")
+  position               Int
+  label                  String?
+  homeTournamentTeamId   Int?     @map("home_tournament_team_id")
+  awayTournamentTeamId   Int?     @map("away_tournament_team_id")
+  matchId                Int?     @map("match_id")
+  winnerTournamentTeamId Int?     @map("winner_tournament_team_id")
+  isDeleted              Boolean  @default(false) @map("is_deleted")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization         Organization           @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  tournament           Tournament             @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+  round                TournamentBracketRound @relation(fields: [roundId], references: [id], onDelete: Restrict)
+  homeTournamentTeam   TournamentTeam?        @relation("BracketSlotHome", fields: [homeTournamentTeamId], references: [id], onDelete: SetNull)
+  awayTournamentTeam   TournamentTeam?        @relation("BracketSlotAway", fields: [awayTournamentTeamId], references: [id], onDelete: SetNull)
+  match                Match?                 @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  winnerTournamentTeam TournamentTeam?        @relation("BracketSlotWinner", fields: [winnerTournamentTeamId], references: [id], onDelete: SetNull)
+
+  // DB-only rule:
+  // Partial unique index on tournament_bracket_slots(round_id, position)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial unique index on tournament_bracket_slots(match_id)
+  // WHERE is_deleted = false AND match_id IS NOT NULL.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  @@map("tournament_bracket_slots")
+}

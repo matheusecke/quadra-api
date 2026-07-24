@@ -1,0 +1,77 @@
+model PlayerMatchStatistic {
+  id                 Int      @id @default(autoincrement())
+  organizationId     Int      @map("organization_id")
+  matchId            Int      @map("match_id")
+  matchTeamId        Int      @map("match_team_id")
+  matchRosterId      Int?     @map("match_roster_id")
+  tournamentRosterId Int      @map("tournament_roster_id")
+  userId             Int      @map("user_id")
+  pts                Int?
+  fgm                Int?
+  fga                Int?
+  threeFgm           Int?     @map("three_fgm")
+  threeFga           Int?     @map("three_fga")
+  ftm                Int?
+  fta                Int?
+  reb                Int?
+  ast                Int?
+  stl                Int?
+  blk                Int?
+  tov                Int?
+  pf                 Int?
+  minutesSeconds     Int?     @map("minutes_seconds")
+  isDeleted          Boolean  @default(false) @map("is_deleted")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  match            Match            @relation(fields: [matchId], references: [id], onDelete: Restrict)
+  matchTeam        MatchTeam        @relation(fields: [matchTeamId], references: [id], onDelete: Restrict)
+  matchRoster      MatchRoster?     @relation(fields: [matchRosterId], references: [id], onDelete: SetNull)
+  tournamentRoster TournamentRoster @relation(fields: [tournamentRosterId], references: [id], onDelete: Restrict)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  // DB-only rule:
+  // Partial unique index on player_match_statistics(match_id, user_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on player_match_statistics(organization_id, user_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on player_match_statistics(organization_id, match_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on player_match_statistics(match_team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // player_match_stats_non_negative_chk: pts IS NULL OR pts >= 0,
+  // fgm IS NULL OR fgm >= 0, fga IS NULL OR fga >= 0,
+  // three_fgm IS NULL OR three_fgm >= 0, three_fga IS NULL OR three_fga >= 0,
+  // ftm IS NULL OR ftm >= 0, fta IS NULL OR fta >= 0,
+  // reb IS NULL OR reb >= 0, ast IS NULL OR ast >= 0,
+  // stl IS NULL OR stl >= 0, blk IS NULL OR blk >= 0,
+  // tov IS NULL OR tov >= 0, pf IS NULL OR pf >= 0,
+  // minutes_seconds IS NULL OR minutes_seconds >= 0
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // player_match_stats_made_vs_attempted_chk:
+  // (fgm IS NULL OR fga IS NULL OR fgm <= fga)
+  // AND (three_fgm IS NULL OR three_fga IS NULL OR three_fgm <= three_fga)
+  // AND (ftm IS NULL OR fta IS NULL OR ftm <= fta)
+  // First added in migration: sports_module_constraints
+  //
+  @@map("player_match_statistics")
+}

@@ -9,4 +9,14 @@ export class CreateTeamDto {
   @MaxLength(100)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   name: string;
+
+  @ApiProperty({
+    example: 'SPF',
+    description: 'Short display sigla for the team.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(10)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  shortName: string;
 }

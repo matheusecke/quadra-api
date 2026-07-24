@@ -46,3 +46,6 @@ generated
 
 # Documentation
 /docs/superpowers
+
+# SDD scratch workspace (subagent-driven-development)
+.superpowers/

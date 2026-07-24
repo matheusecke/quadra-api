@@ -6,7 +6,7 @@ Team lifecycle management. Teams are affiliated to organizations through `Organi
 
 | Method  | Path                  | Guards                                     | Purpose |
 | ------- | --------------------- | ------------------------------------------ | ------- |
-| `POST`  | `/teams`              | `JwtAuthGuard`, `SystemAdminGuard`         | Create team; auto-generates slug from name |
+| `POST`  | `/teams`              | `JwtAuthGuard`, `SystemAdminGuard`         | Create team; requires `name` and `shortName`; auto-generates slug from name |
 | `GET`   | `/teams`              | `JwtAuthGuard`                             | Paginated list; filters: `q` (name search), `status` |
 | `GET`   | `/teams/:id`          | `JwtAuthGuard`                             | Get by id |
 | `PATCH` | `/teams/:id`          | `JwtAuthGuard`, `SystemAdminGuard`         | Update name; re-generates slug on rename |

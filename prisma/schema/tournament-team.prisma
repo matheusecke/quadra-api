@@ -1,0 +1,46 @@
+model TournamentTeam {
+  id                            Int                  @id @default(autoincrement())
+  organizationId                Int                  @map("organization_id")
+  tournamentId                  Int                  @map("tournament_id")
+  teamId                        Int                  @map("team_id")
+  organizationTeamAffiliationId Int?                 @map("organization_team_affiliation_id")
+  status                        TournamentTeamStatus @default(ACTIVE)
+  seed                          Int?
+  tiebreakOrder                 Int?                 @map("tiebreak_order")
+  tiebreakBlockKey              String?              @map("tiebreak_block_key")
+  displayNameSnapshot           String               @map("display_name_snapshot")
+  isDeleted                     Boolean              @default(false) @map("is_deleted")
+  createdAt                     DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                     DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization                Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  tournament                  Tournament                   @relation("TournamentTeams", fields: [tournamentId], references: [id], onDelete: Restrict)
+  team                        Team                         @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  organizationTeamAffiliation OrganizationTeamAffiliation? @relation(fields: [organizationTeamAffiliationId], references: [id], onDelete: SetNull)
+
+  championOfTournaments Tournament[]            @relation("TournamentChampion")
+  rosters               TournamentRoster[]
+  groupTeams            TournamentGroupTeam[]
+  bracketSlotsAsHome    TournamentBracketSlot[] @relation("BracketSlotHome")
+  bracketSlotsAsAway    TournamentBracketSlot[] @relation("BracketSlotAway")
+  bracketSlotsAsWinner  TournamentBracketSlot[] @relation("BracketSlotWinner")
+  matchTeams            MatchTeam[]
+
+  // DB-only rule:
+  // Partial unique index on tournament_teams(tournament_id, team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on tournament_teams(organization_id, team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // No unique index on tiebreak_order: the value is only compared inside one tied
+  // block, and blocks from different groups may legitimately repeat 1, 2, 3.
+  // Uniqueness within a block is transactional, in the service. See DB spec 5.5.
+  //
+  @@map("tournament_teams")
+}

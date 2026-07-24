@@ -1,0 +1,48 @@
+model TournamentRoster {
+  id                            Int          @id @default(autoincrement())
+  organizationId                Int          @map("organization_id")
+  tournamentId                  Int          @map("tournament_id")
+  tournamentTeamId              Int          @map("tournament_team_id")
+  userId                        Int          @map("user_id")
+  organizationUserAffiliationId Int?         @map("organization_user_affiliation_id")
+  role                          RosterRole
+  jerseyNumberSnapshot          Int?         @map("jersey_number_snapshot")
+  displayNameSnapshot           String       @map("display_name_snapshot")
+  status                        RosterStatus @default(ACTIVE)
+  joinedAt                      DateTime?    @map("joined_at") @db.Timestamptz(3)
+  leftAt                        DateTime?    @map("left_at") @db.Timestamptz(3)
+  isDeleted                     Boolean      @default(false) @map("is_deleted")
+  createdAt                     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization                Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  tournament                  Tournament                   @relation("TournamentRosters", fields: [tournamentId], references: [id], onDelete: Restrict)
+  tournamentTeam              TournamentTeam               @relation(fields: [tournamentTeamId], references: [id], onDelete: Restrict)
+  user                        User                         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  organizationUserAffiliation OrganizationUserAffiliation? @relation(fields: [organizationUserAffiliationId], references: [id], onDelete: SetNull)
+
+  mvpOfTournaments      Tournament[]           @relation("TournamentMvp")
+  matchRosters          MatchRoster[]
+  playerMatchStatistics PlayerMatchStatistic[]
+
+  // DB-only rule:
+  // Partial unique index on tournament_rosters(tournament_id, user_id)
+  // WHERE is_deleted = false AND role = 'ATHLETE' AND status = 'ACTIVE'.
+  // An athlete does not play the same tournament for two teams.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on tournament_rosters(tournament_team_id, status)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on tournament_rosters(organization_id, user_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  @@map("tournament_rosters")
+}

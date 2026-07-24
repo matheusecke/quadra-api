@@ -1,0 +1,33 @@
+model TournamentCategory {
+  id             Int          @id @default(autoincrement())
+  organizationId Int          @map("organization_id")
+  name           String
+  slug           String?
+  sortOrder      Int?         @map("sort_order")
+  status         EntityStatus @default(ACTIVE)
+  isDeleted      Boolean      @default(false) @map("is_deleted")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  tournaments Tournament[]
+
+  // DB-only rule:
+  // Partial unique index on tournament_categories(organization_id, name)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial unique index on tournament_categories(organization_id, slug)
+  // WHERE is_deleted = false AND slug IS NOT NULL.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // tournament_categories_slug_lowercase_chk: slug IS NULL OR slug = lower(slug)
+  // First added in migration: sports_module_constraints
+  //
+  @@map("tournament_categories")
+}

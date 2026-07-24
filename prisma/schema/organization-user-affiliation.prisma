@@ -1,22 +1,25 @@
 model OrganizationUserAffiliation {
-  id              Int               @id @default(autoincrement())
-  userId          Int               @map("user_id")
-  organizationId  Int               @map("organization_id")
+  id              Int                 @id @default(autoincrement())
+  userId          Int                 @map("user_id")
+  organizationId  Int                 @map("organization_id")
   role            OrgRole
-  teamId          Int?              @map("team_id")
-  jerseyNumber    Int?              @map("jersey_number")
-  status          AffiliationStatus @default(PENDING) @map("status")
-  createdByUserId Int?              @map("created_by_user_id")
-  inviteToken     String?           @unique @map("invite_token")
-  inviteExpiresAt DateTime?         @db.Timestamptz(3) @map("invite_expires_at")
-  isDeleted       Boolean           @default(false) @map("is_deleted")
-  createdAt       DateTime          @default(now()) @db.Timestamptz(3) @map("created_at")
-  updatedAt       DateTime          @updatedAt @db.Timestamptz(3) @map("updated_at")
+  teamId          Int?                @map("team_id")
+  jerseyNumber    Int?                @map("jersey_number")
+  position        BasketballPosition?
+  status          AffiliationStatus   @default(PENDING) @map("status")
+  createdByUserId Int?                @map("created_by_user_id")
+  inviteToken     String?             @unique @map("invite_token")
+  inviteExpiresAt DateTime?           @map("invite_expires_at") @db.Timestamptz(3)
+  isDeleted       Boolean             @default(false) @map("is_deleted")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   team         Team?        @relation(fields: [teamId], references: [id])
   createdBy    User?        @relation("UserAffiliationCreatedBy", fields: [createdByUserId], references: [id])
+
+  tournamentRosters TournamentRoster[]
 
   // DB-only rule:
   // Partial unique index on organization_user_affiliations(user_id, organization_id)
