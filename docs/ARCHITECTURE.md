@@ -17,10 +17,11 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 - NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule` (`src/app.module.ts`).
 - Bootstrap: `ValidationPipe`, global exception filters, `cookie-parser`, CORS with credentials, Swagger at `/api`, port `3001` by default (`src/main.ts`).
 - Prisma multi-file schema under `prisma/schema/` covering multi-tenant core + auth persistence: `User`, `Organization`, `Team`, `OrganizationUserAffiliation`, `OrganizationTeamAffiliation`, `RefreshToken`.
+- Sports domain schema (tables exist; no application module yet — services, controllers, and DTOs are the next phase): `Season`, `TournamentCategory`, `Tournament`, `TournamentTeam`, `TournamentRoster`, `TournamentGroup`, `TournamentGroupTeam`, `TournamentBracketRound`, `TournamentBracketSlot`, `Match`, `MatchTeam`, `MatchPeriod`, `MatchRoster`, `PlayerMatchStatistic`. See [DATABASE.md](./DATABASE.md).
 - Shared utilities:
   - `src/common/utils/slugify.ts` — slug generation used by `OrganizationsModule` and `TeamsModule`.
   - `src/common/utils/affiliation-token.util.ts` — invite token generation (`crypto.randomBytes(32)`) and SHA-256 hashing used by both affiliation modules.
-- **Not in schema yet:** championships, matches, statistics.
+- **Derived, never persisted:** standings/classification (FIBA Appendix D), registration-open state, and the match read model — all computed by query in the next phase, no columns.
 
 ## Document map (by concern)
 

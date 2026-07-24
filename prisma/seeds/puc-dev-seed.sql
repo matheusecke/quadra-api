@@ -23,26 +23,31 @@ SELECT v.name, v.slug, v.status::entity_status, false, NOW(), NOW()
 FROM (VALUES ('PUC Campinas Basquete', 'puc-campinas-basquete', 'ACTIVE')) AS v(name, slug, status)
 WHERE NOT EXISTS (SELECT 1 FROM organizations o WHERE o.slug = v.slug AND o.is_deleted = false);
 
-INSERT INTO teams (name, slug, status, is_deleted, created_at, updated_at)
-SELECT v.name, v.slug, 'ACTIVE'::entity_status, false, NOW(), NOW()
+-- short_name is picked by hand (T01..T16), NOT derived from name: every team is
+-- named "Time N", so the migration's name-based backfill would collapse all
+-- sixteen into "TIM". No unique index on short_name allows it, but it would be
+-- useless on a bracket. Team names and slugs are unchanged — tcc-web's
+-- mock-sports-data.ts traces them (Team N = puc-time-N).
+INSERT INTO teams (name, short_name, slug, status, is_deleted, created_at, updated_at)
+SELECT v.name, v.short_name, v.slug, 'ACTIVE'::entity_status, false, NOW(), NOW()
 FROM (VALUES
-    ('Time 1', 'puc-time-1'),
-    ('Time 2', 'puc-time-2'),
-    ('Time 3', 'puc-time-3'),
-    ('Time 4', 'puc-time-4'),
-    ('Time 5', 'puc-time-5'),
-    ('Time 6', 'puc-time-6'),
-    ('Time 7', 'puc-time-7'),
-    ('Time 8', 'puc-time-8'),
-    ('Time 9', 'puc-time-9'),
-    ('Time 10', 'puc-time-10'),
-    ('Time 11', 'puc-time-11'),
-    ('Time 12', 'puc-time-12'),
-    ('Time 13', 'puc-time-13'),
-    ('Time 14', 'puc-time-14'),
-    ('Time 15', 'puc-time-15'),
-    ('Time 16', 'puc-time-16')
-) AS v(name, slug)
+    ('Time 1', 'T01', 'puc-time-1'),
+    ('Time 2', 'T02', 'puc-time-2'),
+    ('Time 3', 'T03', 'puc-time-3'),
+    ('Time 4', 'T04', 'puc-time-4'),
+    ('Time 5', 'T05', 'puc-time-5'),
+    ('Time 6', 'T06', 'puc-time-6'),
+    ('Time 7', 'T07', 'puc-time-7'),
+    ('Time 8', 'T08', 'puc-time-8'),
+    ('Time 9', 'T09', 'puc-time-9'),
+    ('Time 10', 'T10', 'puc-time-10'),
+    ('Time 11', 'T11', 'puc-time-11'),
+    ('Time 12', 'T12', 'puc-time-12'),
+    ('Time 13', 'T13', 'puc-time-13'),
+    ('Time 14', 'T14', 'puc-time-14'),
+    ('Time 15', 'T15', 'puc-time-15'),
+    ('Time 16', 'T16', 'puc-time-16')
+) AS v(name, short_name, slug)
 WHERE NOT EXISTS (SELECT 1 FROM teams t WHERE t.slug = v.slug AND t.is_deleted = false);
 
 INSERT INTO organization_team_affiliations (organization_id, team_id, status, is_deleted, created_at, updated_at)
