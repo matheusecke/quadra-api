@@ -1,0 +1,35 @@
+model MatchPeriod {
+  id             Int        @id @default(autoincrement())
+  organizationId Int        @map("organization_id")
+  matchId        Int        @map("match_id")
+  periodNumber   Int        @map("period_number")
+  periodType     PeriodType @map("period_type")
+  homePoints     Int        @map("home_points")
+  awayPoints     Int        @map("away_points")
+  startedAt      DateTime?  @map("started_at") @db.Timestamptz(3)
+  endedAt        DateTime?  @map("ended_at") @db.Timestamptz(3)
+  isDeleted      Boolean    @default(false) @map("is_deleted")
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  match        Match        @relation(fields: [matchId], references: [id], onDelete: Restrict)
+
+  // DB-only rule:
+  // Partial unique index on match_periods(match_id, period_number)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on match_periods(organization_id, match_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // match_periods_points_non_negative_chk: home_points >= 0 AND away_points >= 0
+  // First added in migration: sports_module_constraints
+  //
+  @@map("match_periods")
+}

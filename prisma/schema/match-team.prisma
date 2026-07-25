@@ -1,0 +1,51 @@
+model MatchTeam {
+  id               Int          @id @default(autoincrement())
+  organizationId   Int          @map("organization_id")
+  matchId          Int          @map("match_id")
+  tournamentTeamId Int          @map("tournament_team_id")
+  side             MatchSide
+  finalScore       Int?         @map("final_score")
+  result           MatchResult?
+  lossType         LossType?    @map("loss_type")
+  isWinner         Boolean?     @map("is_winner")
+  isDeleted        Boolean      @default(false) @map("is_deleted")
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  match          Match          @relation(fields: [matchId], references: [id], onDelete: Restrict)
+  tournamentTeam TournamentTeam @relation(fields: [tournamentTeamId], references: [id], onDelete: Restrict)
+
+  rosters          MatchRoster[]
+  playerStatistics PlayerMatchStatistic[]
+
+  // DB-only rule:
+  // Partial unique index on match_teams(match_id, side)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial unique index on match_teams(match_id, tournament_team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on match_teams(organization_id, tournament_team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // match_teams_final_score_non_negative_chk: final_score IS NULL OR final_score >= 0
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // match_teams_result_loss_type_chk: (result IS NULL AND loss_type IS NULL)
+  // OR (result = 'LOSS' AND loss_type IS NOT NULL)
+  // OR (result = 'WIN' AND loss_type IS NULL)
+  // First added in migration: sports_module_constraints
+  //
+  @@map("match_teams")
+}

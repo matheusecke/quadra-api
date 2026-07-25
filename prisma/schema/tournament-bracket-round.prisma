@@ -1,0 +1,23 @@
+model TournamentBracketRound {
+  id             Int      @id @default(autoincrement())
+  organizationId Int      @map("organization_id")
+  tournamentId   Int      @map("tournament_id")
+  number         Int
+  label          String?
+  isDeleted      Boolean  @default(false) @map("is_deleted")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  tournament   Tournament   @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+
+  slots TournamentBracketSlot[]
+
+  // DB-only rule:
+  // Partial unique index on tournament_bracket_rounds(tournament_id, number)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  @@map("tournament_bracket_rounds")
+}

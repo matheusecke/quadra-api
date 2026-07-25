@@ -12,6 +12,7 @@ import { TeamResponseDto } from './dto/team-response.dto';
 const teamSelect = {
   id: true,
   name: true,
+  shortName: true,
   slug: true,
   status: true,
   createdAt: true,
@@ -38,7 +39,7 @@ export class TeamsService {
     }
 
     return this.prisma.team.create({
-      data: { name: dto.name, slug },
+      data: { name: dto.name, shortName: dto.shortName, slug },
       select: teamSelect,
     });
   }

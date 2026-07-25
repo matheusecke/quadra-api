@@ -18,6 +18,7 @@ const mockPrisma: any = {
 const baseTeam = {
   id: 1,
   name: 'São Paulo FC',
+  shortName: 'SPF',
   slug: 'sao-paulo-fc',
   status: EntityStatus.ACTIVE,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -45,15 +46,23 @@ describe('TeamsService', () => {
       mockPrisma.team.findFirst.mockResolvedValue(null);
       mockPrisma.team.create.mockResolvedValue(baseTeam);
 
-      const result = await service.create({ name: 'São Paulo FC' });
+      const result = await service.create({
+        name: 'São Paulo FC',
+        shortName: 'SPF',
+      });
 
       expect(mockPrisma.team.findFirst).toHaveBeenCalledWith({
         where: { slug: 'sao-paulo-fc', isDeleted: false },
         select: { id: true },
       });
       expect(mockPrisma.team.create).toHaveBeenCalledWith({
-        data: { name: 'São Paulo FC', slug: 'sao-paulo-fc' },
-        select: expect.objectContaining({ id: true, name: true, slug: true }),
+        data: { name: 'São Paulo FC', shortName: 'SPF', slug: 'sao-paulo-fc' },
+        select: expect.objectContaining({
+          id: true,
+          name: true,
+          shortName: true,
+          slug: true,
+        }),
       });
       expect(result).toEqual(baseTeam);
     });
@@ -62,7 +71,7 @@ describe('TeamsService', () => {
       mockPrisma.team.findFirst.mockResolvedValue({ id: 2 });
 
       const err = await service
-        .create({ name: 'São Paulo FC' })
+        .create({ name: 'São Paulo FC', shortName: 'SPF' })
         .catch((e: unknown) => e);
 
       expect(err).toBeInstanceOf(ApiException);

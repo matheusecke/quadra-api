@@ -1,0 +1,43 @@
+model Match {
+  id                Int         @id @default(autoincrement())
+  organizationId    Int         @map("organization_id")
+  tournamentId      Int         @map("tournament_id")
+  tournamentGroupId Int?        @map("tournament_group_id")
+  matchNumber       Int?        @map("match_number")
+  scheduledAt       DateTime    @map("scheduled_at") @db.Timestamptz(3)
+  startedAt         DateTime?   @map("started_at") @db.Timestamptz(3)
+  endedAt           DateTime?   @map("ended_at") @db.Timestamptz(3)
+  status            MatchStatus @default(SCHEDULED)
+  venueName         String?     @map("venue_name")
+  createdByUserId   Int?        @map("created_by_user_id")
+  mvpMatchRosterId  Int?        @map("mvp_match_roster_id")
+  isDeleted         Boolean     @default(false) @map("is_deleted")
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  tournament      Tournament       @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+  tournamentGroup TournamentGroup? @relation(fields: [tournamentGroupId], references: [id], onDelete: SetNull)
+  createdBy       User?            @relation("MatchCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  mvpMatchRoster  MatchRoster?     @relation("MatchMvp", fields: [mvpMatchRosterId], references: [id], onDelete: SetNull)
+
+  teams            MatchTeam[]
+  periods          MatchPeriod[]
+  rosters          MatchRoster[]           @relation("MatchRosters")
+  playerStatistics PlayerMatchStatistic[]
+  bracketSlots     TournamentBracketSlot[]
+
+  // DB-only rule:
+  // Partial index on matches(organization_id, tournament_id, scheduled_at)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on matches(organization_id, status, scheduled_at)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  @@map("matches")
+}
