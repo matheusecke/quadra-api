@@ -1,7 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { SeasonStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { IsArray, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import { PaginationDefaultsDto } from '../../common/dto/pagination-defaults.dto';
 
 export class ListSeasonsQueryDto extends PaginationDefaultsDto {

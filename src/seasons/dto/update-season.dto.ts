@@ -1,5 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -15,11 +21,15 @@ export class UpdateSeasonDto {
 
   @ApiPropertyOptional({ example: '2025-08-01' })
   @IsOptional()
-  @Matches(DATE_ONLY, { message: 'startDate must be a date in YYYY-MM-DD format' })
+  @Matches(DATE_ONLY, {
+    message: 'startDate must be a date in YYYY-MM-DD format',
+  })
   startDate?: string;
 
   @ApiPropertyOptional({ example: '2026-07-31' })
   @IsOptional()
-  @Matches(DATE_ONLY, { message: 'endDate must be a date in YYYY-MM-DD format' })
+  @Matches(DATE_ONLY, {
+    message: 'endDate must be a date in YYYY-MM-DD format',
+  })
   endDate?: string;
 }
