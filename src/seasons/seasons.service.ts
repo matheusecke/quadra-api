@@ -3,6 +3,9 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
 import { CreateSeasonDto } from './dto/create-season.dto';
+import { UpdateSeasonDto } from './dto/update-season.dto';
+import { UpdateSeasonStatusDto } from './dto/update-season-status.dto';
+import { ListSeasonsQueryDto } from './dto/list-seasons-query.dto';
 import { SeasonResponseDto } from './dto/season-response.dto';
 
 const seasonSelect = {
@@ -43,6 +46,122 @@ export class SeasonsService {
 
     const row = await this.prisma.season.create({
       data: { organizationId, label: dto.label, startDate, endDate },
+      select: seasonSelect,
+    });
+
+    return this.toResponse(row);
+  }
+
+  async findAll(
+    organizationId: number,
+    query: ListSeasonsQueryDto,
+  ): Promise<{ count: number; data: SeasonResponseDto[] }> {
+    const filters: Prisma.SeasonWhereInput[] = [
+      { organizationId, isDeleted: false },
+    ];
+
+    if (query.status) {
+      filters.push({ status: query.status });
+    }
+
+    if (query.ids?.length) {
+      filters.push({ id: { in: query.ids } });
+    }
+
+    if (query.q) {
+      filters.push({ label: { contains: query.q, mode: 'insensitive' } });
+    }
+
+    const where: Prisma.SeasonWhereInput = { AND: filters };
+    const skip = (query.page - 1) * query.limit;
+
+    const [count, rows] = await Promise.all([
+      this.prisma.season.count({ where }),
+      this.prisma.season.findMany({
+        where,
+        skip,
+        take: query.limit,
+        orderBy: [{ startDate: 'desc' }, { id: 'desc' }],
+        select: seasonSelect,
+      }),
+    ]);
+
+    return { count, data: rows.map((row) => this.toResponse(row)) };
+  }
+
+  async update(
+    organizationId: number,
+    id: number,
+    dto: UpdateSeasonDto,
+  ): Promise<SeasonResponseDto> {
+    const existing = await this.prisma.season.findFirst({
+      where: { id, organizationId, isDeleted: false },
+      select: seasonSelect,
+    });
+
+    if (!existing) {
+      throw ApiException.notFound('Season not found');
+    }
+
+    const startDate =
+      dto.startDate === undefined
+        ? existing.startDate
+        : this.parseDateOnly(dto.startDate, 'startDate');
+    const endDate =
+      dto.endDate === undefined
+        ? existing.endDate
+        : this.parseDateOnly(dto.endDate, 'endDate');
+    this.assertDateRange(startDate, endDate);
+
+    if (dto.label !== undefined && dto.label !== existing.label) {
+      const conflict = await this.prisma.season.findFirst({
+        where: {
+          organizationId,
+          label: dto.label,
+          isDeleted: false,
+          id: { not: id },
+        },
+        select: { id: true },
+      });
+
+      if (conflict) {
+        throw ApiException.conflict(
+          'A season with this label already exists.',
+          'DUPLICATE_RECORD',
+        );
+      }
+    }
+
+    const row = await this.prisma.season.update({
+      where: { id },
+      data: {
+        ...(dto.label === undefined ? {} : { label: dto.label }),
+        ...(dto.startDate === undefined ? {} : { startDate }),
+        ...(dto.endDate === undefined ? {} : { endDate }),
+      },
+      select: seasonSelect,
+    });
+
+    return this.toResponse(row);
+  }
+
+  async updateStatus(
+    organizationId: number,
+    id: number,
+    dto: UpdateSeasonStatusDto,
+  ): Promise<SeasonResponseDto> {
+    const existing = await this.prisma.season.findFirst({
+      where: { id, organizationId, isDeleted: false },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      throw ApiException.notFound('Season not found');
+    }
+
+    const row = await this.prisma.season.update({
+      where: { id },
+      data: { status: dto.status },
       select: seasonSelect,
     });
 
