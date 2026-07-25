@@ -34,7 +34,7 @@ const mockJwtService = {
 };
 
 const mockConfigService = {
-  get: jest.fn((key: string) => {
+  get: jest.fn((key: string): string | undefined => {
     if (key === 'JWT_REFRESH_EXPIRES_IN') return '7d';
     return undefined;
   }),
