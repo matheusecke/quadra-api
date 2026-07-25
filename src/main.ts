@@ -102,6 +102,14 @@ async function bootstrap(): Promise<void> {
       'organization-team-affiliations',
       'Team linkage to organizations: invites and affiliation status.',
     )
+    .addTag(
+      'seasons',
+      'Time-bounded grouping of tournaments inside an organization.',
+    )
+    .addTag(
+      'tournament-categories',
+      'Controlled division vocabulary per organization (Sub-19, Adulto Masculino, …).',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig, {
