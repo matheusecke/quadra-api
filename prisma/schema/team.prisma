@@ -1,14 +1,18 @@
 model Team {
-  id        Int          @id @default(autoincrement())
+  id        Int             @id @default(autoincrement())
   name      String
+  shortName String          @map("short_name")
   slug      String
-  status    EntityStatus @default(ACTIVE)
-  isDeleted Boolean      @default(false) @map("is_deleted")
-  createdAt DateTime     @default(now()) @db.Timestamptz(3) @map("created_at")
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3) @map("updated_at")
+  city      String?
+  state     BrazilianState?
+  status    EntityStatus    @default(ACTIVE)
+  isDeleted Boolean         @default(false) @map("is_deleted")
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   userAffiliations         OrganizationUserAffiliation[]
   organizationAffiliations OrganizationTeamAffiliation[]
+  tournamentTeams          TournamentTeam[]
 
   // DB-only rule:
   // CHECK (slug = lower(slug)).
@@ -20,5 +24,10 @@ model Team {
   // WHERE is_deleted = false AND status <> 'INACTIVE'.
   // Must be added manually in migration SQL.
   // First added in migration: initial_db_structure
+  //
+  // NOTE: short_name was backfilled from name once, in migration
+  // sports_module_schema, only so SET NOT NULL could run on populated tables.
+  // It is an editable initial value, never recalculated. There is deliberately
+  // no unique index on it — two teams may share a sigla.
   @@map("teams")
 }

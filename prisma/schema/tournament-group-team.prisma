@@ -1,0 +1,29 @@
+model TournamentGroupTeam {
+  id                Int      @id @default(autoincrement())
+  organizationId    Int      @map("organization_id")
+  tournamentId      Int      @map("tournament_id")
+  tournamentGroupId Int      @map("tournament_group_id")
+  tournamentTeamId  Int      @map("tournament_team_id")
+  isDeleted         Boolean  @default(false) @map("is_deleted")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  tournament      Tournament      @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+  tournamentGroup TournamentGroup @relation(fields: [tournamentGroupId], references: [id], onDelete: Restrict)
+  tournamentTeam  TournamentTeam  @relation(fields: [tournamentTeamId], references: [id], onDelete: Restrict)
+
+  // DB-only rule:
+  // Partial unique index on tournament_group_teams(tournament_group_id, tournament_team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial unique index on tournament_group_teams(tournament_id, tournament_team_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  @@map("tournament_group_teams")
+}

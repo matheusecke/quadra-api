@@ -1,0 +1,77 @@
+model Tournament {
+  id                       Int              @id @default(autoincrement())
+  organizationId           Int              @map("organization_id")
+  seasonId                 Int              @map("season_id")
+  name                     String
+  slug                     String?
+  categoryId               Int?             @map("category_id")
+  regulation               String?
+  format                   TournamentFormat
+  status                   TournamentStatus @default(DRAFT)
+  startsAt                 DateTime?        @map("starts_at") @db.Timestamptz(3)
+  endsAt                   DateTime?        @map("ends_at") @db.Timestamptz(3)
+  registrationStartsAt     DateTime?        @map("registration_starts_at") @db.Timestamptz(3)
+  registrationEndsAt       DateTime?        @map("registration_ends_at") @db.Timestamptz(3)
+  createdByUserId          Int?             @map("created_by_user_id")
+  mvpTournamentRosterId    Int?             @map("mvp_tournament_roster_id")
+  championTournamentTeamId Int?             @map("champion_tournament_team_id")
+  isDeleted                Boolean          @default(false) @map("is_deleted")
+  createdAt                DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization           Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  season                 Season              @relation(fields: [seasonId], references: [id], onDelete: Restrict)
+  category               TournamentCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdBy              User?               @relation("TournamentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  mvpTournamentRoster    TournamentRoster?   @relation("TournamentMvp", fields: [mvpTournamentRosterId], references: [id], onDelete: SetNull)
+  championTournamentTeam TournamentTeam?     @relation("TournamentChampion", fields: [championTournamentTeamId], references: [id], onDelete: SetNull)
+
+  teams         TournamentTeam[]         @relation("TournamentTeams")
+  rosters       TournamentRoster[]       @relation("TournamentRosters")
+  groups        TournamentGroup[]
+  groupTeams    TournamentGroupTeam[]
+  bracketRounds TournamentBracketRound[]
+  bracketSlots  TournamentBracketSlot[]
+  matches       Match[]
+
+  // DB-only rule:
+  // Partial unique index on tournaments(organization_id, slug)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on tournaments(organization_id, season_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on tournaments(organization_id, category_id)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only rule:
+  // Partial index on tournaments(organization_id, status)
+  // WHERE is_deleted = false.
+  // Must be added manually in migration SQL.
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // tournaments_slug_lowercase_chk: slug IS NULL OR slug = lower(slug)
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // tournaments_date_range_chk: starts_at IS NULL OR ends_at IS NULL OR starts_at <= ends_at
+  // First added in migration: sports_module_constraints
+  //
+  // DB-only check constraint:
+  // tournaments_champion_requires_completed_chk:
+  // champion_tournament_team_id IS NULL OR status = 'COMPLETED'
+  // Unidirectional on purpose — a COMPLETED tournament may legitimately have no
+  // champion (GROUP_STAGE without knockout). See DB spec section 5.4.
+  // First added in migration: sports_module_constraints
+  //
+  @@map("tournaments")
+}

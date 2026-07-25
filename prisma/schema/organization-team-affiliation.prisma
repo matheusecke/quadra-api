@@ -5,14 +5,16 @@ model OrganizationTeamAffiliation {
   status          AffiliationStatus @default(PENDING)
   createdByUserId Int?              @map("created_by_user_id")
   inviteToken     String?           @unique @map("invite_token")
-  inviteExpiresAt DateTime?         @db.Timestamptz(3) @map("invite_expires_at")
+  inviteExpiresAt DateTime?         @map("invite_expires_at") @db.Timestamptz(3)
   isDeleted       Boolean           @default(false) @map("is_deleted")
-  createdAt       DateTime          @default(now()) @db.Timestamptz(3) @map("created_at")
-  updatedAt       DateTime          @updatedAt @db.Timestamptz(3) @map("updated_at")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   team         Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
   createdBy    User?        @relation("TeamAffiliationCreatedBy", fields: [createdByUserId], references: [id])
+
+  tournamentTeams TournamentTeam[]
 
   // DB-only rule:
   // Partial unique index on organization_team_affiliations(organization_id, team_id)

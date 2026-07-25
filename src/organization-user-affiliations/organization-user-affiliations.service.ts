@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AffiliationToken } from '../common/utils/affiliation-token.util';
 import { ApiException } from '../common/exceptions/api.exception';
-import { AffiliationStatus, OrgRole } from '@prisma/client';
+import {
+  AffiliationStatus,
+  EntityStatus,
+  OrgRole,
+  Prisma,
+} from '@prisma/client';
 import { CreateUserAffiliationDto } from './dto/create-user-affiliation.dto';
 import {
   UserInviteResponseDto,
@@ -11,6 +16,7 @@ import {
 import { UpdateUserAffiliationDto } from './dto/update-user-affiliation.dto';
 import { UpdateUserAffiliationStatusDto } from './dto/update-user-affiliation-status.dto';
 import { ListUserAffiliationsQueryDto } from './dto/list-user-affiliations-query.dto';
+import type { MyInviteDto } from '../auth/dto/my-invite.dto';
 
 const affiliationSelect = {
   id: true,
@@ -26,6 +32,40 @@ const affiliationSelect = {
   user: { select: { id: true, name: true, email: true } },
   team: { select: { id: true, name: true } },
 };
+
+const myInviteSelect = {
+  id: true,
+  userId: true,
+  organizationId: true,
+  role: true,
+  teamId: true,
+  jerseyNumber: true,
+  status: true,
+  createdAt: true,
+  inviteExpiresAt: true,
+  organization: { select: { id: true, name: true } },
+  team: { select: { id: true, name: true } },
+} satisfies Prisma.OrganizationUserAffiliationSelect;
+
+const inviteTransitionSelect = {
+  id: true,
+  userId: true,
+  organizationId: true,
+  role: true,
+  teamId: true,
+  jerseyNumber: true,
+  status: true,
+  inviteExpiresAt: true,
+  isDeleted: true,
+} satisfies Prisma.OrganizationUserAffiliationSelect;
+
+type PendingInviteRecord = Prisma.OrganizationUserAffiliationGetPayload<{
+  select: typeof myInviteSelect;
+}>;
+
+type InviteTransitionRecord = Prisma.OrganizationUserAffiliationGetPayload<{
+  select: typeof inviteTransitionSelect;
+}>;
 
 @Injectable()
 export class OrganizationUserAffiliationsService {
@@ -143,34 +183,35 @@ export class OrganizationUserAffiliationsService {
 
   async respondToInvite(dto: UserInviteResponseDto, currentUserId: number) {
     const tokenHash = AffiliationToken.hash(dto.token);
-    const aff = await this.prisma.organizationUserAffiliation.findFirst({
-      where: { inviteToken: tokenHash, isDeleted: false },
-    });
-    if (!aff) throw ApiException.notFound('Invite not found');
-    if (aff.userId !== currentUserId)
-      throw ApiException.forbidden('You can only respond to your own invites');
-    if (aff.status !== AffiliationStatus.PENDING)
-      throw ApiException.unprocessable('Invite is no longer pending');
-    if (aff.inviteExpiresAt && aff.inviteExpiresAt < new Date())
-      throw ApiException.unprocessable('Invite has expired');
+    const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
+      {
+        where: { inviteToken: tokenHash, isDeleted: false },
+        select: inviteTransitionSelect,
+      },
+    );
 
-    if (dto.decision === InviteDecision.ACCEPT) {
-      return this.prisma.organizationUserAffiliation.update({
-        where: { id: aff.id },
-        data: {
-          status: AffiliationStatus.ACTIVE,
-          inviteToken: null,
-          inviteExpiresAt: null,
-        },
-        select: affiliationSelect,
-      });
+    if (!affiliation) {
+      throw ApiException.notFound('Invite not found');
     }
 
-    return this.prisma.organizationUserAffiliation.update({
-      where: { id: aff.id },
-      data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+    if (affiliation.userId !== currentUserId) {
+      throw ApiException.forbidden('You can only respond to your own invites');
+    }
+
+    await this.resolveInviteTransition(affiliation, dto.decision, {
+      allowExpiredReject: false,
+    });
+
+    const updated = await this.prisma.organizationUserAffiliation.findUnique({
+      where: { id: affiliation.id },
       select: affiliationSelect,
     });
+
+    if (!updated) {
+      throw ApiException.notFound('Invite not found');
+    }
+
+    return updated;
   }
 
   async update(orgId: number, id: number, dto: UpdateUserAffiliationDto) {
@@ -276,5 +317,131 @@ export class OrganizationUserAffiliationsService {
       data: { status: dto.status },
       select: affiliationSelect,
     });
+  }
+
+  async findPendingInvitesForUser(userId: number): Promise<MyInviteDto[]> {
+    const affiliations = await this.prisma.organizationUserAffiliation.findMany(
+      {
+        where: {
+          userId,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+          user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+          organization: {
+            is: { isDeleted: false, status: EntityStatus.ACTIVE },
+          },
+          OR: [
+            { teamId: null },
+            { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
+          ],
+        },
+        select: myInviteSelect,
+        orderBy: { createdAt: 'desc' },
+      },
+    );
+
+    return affiliations.map((affiliation) =>
+      this.mapToMyInviteDto(affiliation),
+    );
+  }
+
+  async respondToInviteForUser(
+    userId: number,
+    inviteId: number,
+    decision: InviteDecision,
+  ): Promise<void> {
+    const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
+      {
+        where: {
+          id: inviteId,
+          userId,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+          user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+          organization: {
+            is: { isDeleted: false, status: EntityStatus.ACTIVE },
+          },
+          OR: [
+            { teamId: null },
+            { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
+          ],
+        },
+        select: inviteTransitionSelect,
+      },
+    );
+
+    if (!affiliation) {
+      throw ApiException.notFound('Invite not found');
+    }
+
+    await this.resolveInviteTransition(affiliation, decision, {
+      allowExpiredReject: true,
+    });
+  }
+
+  private async resolveInviteTransition(
+    affiliation: InviteTransitionRecord,
+    decision: InviteDecision,
+    options: { allowExpiredReject: boolean },
+  ): Promise<void> {
+    if (affiliation.status !== AffiliationStatus.PENDING) {
+      throw ApiException.unprocessable('Invite is no longer pending');
+    }
+
+    const isExpired =
+      affiliation.inviteExpiresAt !== null &&
+      affiliation.inviteExpiresAt.getTime() < Date.now();
+
+    if (
+      isExpired &&
+      (decision === InviteDecision.ACCEPT || !options.allowExpiredReject)
+    ) {
+      throw ApiException.unprocessable('Invite has expired');
+    }
+
+    const data =
+      decision === InviteDecision.ACCEPT
+        ? {
+            status: AffiliationStatus.ACTIVE,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          }
+        : {
+            isDeleted: true,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          };
+
+    const result = await this.prisma.organizationUserAffiliation.updateMany({
+      where: {
+        id: affiliation.id,
+        userId: affiliation.userId,
+        status: AffiliationStatus.PENDING,
+        isDeleted: false,
+      },
+      data,
+    });
+
+    if (result.count !== 1) {
+      throw ApiException.unprocessable('Invite is no longer pending');
+    }
+  }
+
+  private mapToMyInviteDto(affiliation: PendingInviteRecord): MyInviteDto {
+    return {
+      id: affiliation.id,
+      organizationId: affiliation.organizationId,
+      organizationName: affiliation.organization.name,
+      role: affiliation.role,
+      teamId: affiliation.teamId,
+      teamName: affiliation.team?.name ?? null,
+      jerseyNumber: affiliation.jerseyNumber,
+      status: AffiliationStatus.PENDING,
+      sentAt: affiliation.createdAt.toISOString(),
+      expiresAt: affiliation.inviteExpiresAt?.toISOString() ?? null,
+      isExpired:
+        affiliation.inviteExpiresAt !== null &&
+        affiliation.inviteExpiresAt.getTime() < Date.now(),
+    };
   }
 }
