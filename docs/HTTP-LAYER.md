@@ -2,6 +2,19 @@
 
 Cross-cutting behavior shared by all controllers. Load this doc when changing API response shape, validation errors, or Prisma error mapping. This file is **project-wide** (`docs/`). Per-module API details (routes, guards, domain rules) live next to the module under `src/<domain>/docs/README.md` — see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
+## Route naming
+
+Every resource has exactly one canonical path segment: the kebab-case plural of its entity name (`teams`, `organization-user-affiliations`, `tournament-bracket-slots`). That segment never shortens or gets renamed depending on where it appears.
+
+Two shapes only:
+
+1. **Flat, addressed by the resource's own id** — the default. Every direct CRUD operation and every action on one specific record: `/<resource>/:id[/<action>]`. Use this whenever the record has its own primary key, which is every table in this schema — a child belonging to a parent does not need the parent in the path to be addressed unambiguously.
+2. **Nested, scoped to a parent instance** — only for listing/creating *within* that parent, or a composite read model that only exists in that parent's context: `/<parent-resource>/:parentId/<resource>`. The child segment is mechanical, not a judgment call: if the parent's singular noun is a literal leading prefix of the child's canonical name, drop exactly that prefix (`tournaments/:id/teams`, from `tournament-teams`); otherwise keep the child's full canonical name unchanged (`teams/:teamId/organization-team-affiliations`, not `teams/:teamId/affiliations` — `team-` is not a leading prefix of `organization-team-affiliations`, so nothing gets dropped). Never abbreviate by guessing what reads fine in context — apply the prefix test.
+
+Never put the organization in the path for an operation scoped to the caller's own organization — that scope always comes from the JWT (`user.organizationId`), never the URL. A tenant id in the path is reserved for genuinely cross-tenant operations (`SYSTEM_ADMIN` acting outside its own org), and even then only when the target has no id of its own to address by; if it does, the cross-tenant confirmation belongs in the request body, not the path.
+
+Don't invent a path segment for a resource that has no table. If the schema has no `Bracket` entity, no route gets a `/brackets/` segment — nest directly under the entity that actually exists, and keep a singular segment for a composite read model that isn't itself a collection (`/tournaments/:id/bracket`, not `/tournaments/:id/brackets`).
+
 ## Global filters
 
 Registered in `src/main.ts` (order matters: last registered runs first):
