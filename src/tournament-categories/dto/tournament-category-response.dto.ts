@@ -14,7 +14,11 @@ export class TournamentCategoryResponseDto {
   @ApiProperty({ example: 2, nullable: true })
   sortOrder!: number | null;
 
-  @ApiProperty({ enum: EntityStatus, enumName: 'EntityStatus', example: EntityStatus.ACTIVE })
+  @ApiProperty({
+    enum: EntityStatus,
+    enumName: 'EntityStatus',
+    example: EntityStatus.ACTIVE,
+  })
   status!: EntityStatus;
 
   @ApiProperty({ example: '2026-07-20T14:05:52.771Z' })
