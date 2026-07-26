@@ -939,4 +939,92 @@ describe('TournamentsService', () => {
       );
     });
   });
+
+  describe('championSuggestion', () => {
+    it('raises 404 for a tournament of another organization', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.championSuggestion(ORG_ID, 12),
+      ).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('returns null for a group stage tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        format: TournamentFormat.GROUP_STAGE,
+      });
+
+      const result = await service.championSuggestion(ORG_ID, 12);
+
+      expect(result.championTournamentTeamId).toBeNull();
+    });
+
+    it('returns null for a league tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        format: TournamentFormat.LEAGUE,
+      });
+
+      const result = await service.championSuggestion(ORG_ID, 12);
+
+      expect(result.championTournamentTeamId).toBeNull();
+    });
+
+    it('returns null when the tournament has no bracket slots', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        format: TournamentFormat.KNOCKOUT,
+      });
+      mockPrisma.tournamentBracketSlot.findMany.mockResolvedValue([]);
+
+      const result = await service.championSuggestion(ORG_ID, 12);
+
+      expect(result.championTournamentTeamId).toBeNull();
+    });
+
+    it('returns the winner of the only slot in the highest round', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        format: TournamentFormat.KNOCKOUT,
+      });
+      mockPrisma.tournamentBracketSlot.findMany.mockResolvedValue([
+        { winnerTournamentTeamId: 10, round: { number: 1 } },
+        { winnerTournamentTeamId: 41, round: { number: 2 } },
+      ]);
+
+      const result = await service.championSuggestion(ORG_ID, 12);
+
+      expect(result.championTournamentTeamId).toBe(41);
+    });
+
+    it('returns null when the highest round has two slots', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        format: TournamentFormat.KNOCKOUT,
+      });
+      mockPrisma.tournamentBracketSlot.findMany.mockResolvedValue([
+        { winnerTournamentTeamId: 41, round: { number: 2 } },
+        { winnerTournamentTeamId: 55, round: { number: 2 } },
+      ]);
+
+      const result = await service.championSuggestion(ORG_ID, 12);
+
+      expect(result.championTournamentTeamId).toBeNull();
+    });
+
+    it('returns null when the only slot in the highest round has no winner yet', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        format: TournamentFormat.KNOCKOUT,
+      });
+      mockPrisma.tournamentBracketSlot.findMany.mockResolvedValue([
+        { winnerTournamentTeamId: null, round: { number: 2 } },
+      ]);
+
+      const result = await service.championSuggestion(ORG_ID, 12);
+
+      expect(result.championTournamentTeamId).toBeNull();
+    });
+  });
 });

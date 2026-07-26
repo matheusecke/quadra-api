@@ -14,6 +14,7 @@ import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { CompleteTournamentDto } from './dto/complete-tournament.dto';
 import { ListTournamentsQueryDto } from './dto/list-tournaments-query.dto';
 import { TournamentResponseDto } from './dto/tournament-response.dto';
+import { ChampionSuggestionResponseDto } from './dto/champion-suggestion-response.dto';
 
 const tournamentSelect = {
   id: true,
@@ -285,6 +286,49 @@ export class TournamentsService {
       row,
       matchCounts.get(row.id) ?? { total: 0, finished: 0 },
     );
+  }
+
+  async championSuggestion(
+    organizationId: number,
+    id: number,
+  ): Promise<ChampionSuggestionResponseDto> {
+    const tournament = await this.prisma.tournament.findFirst({
+      where: { id, organizationId, isDeleted: false },
+      select: { id: true, format: true },
+    });
+
+    if (!tournament) throw ApiException.notFound('Tournament not found');
+
+    if (tournament.format === TournamentFormat.GROUP_STAGE) {
+      return { championTournamentTeamId: null };
+    }
+
+    // TODO(matheusecke): suggest position 1 when standingsState is FINAL — needs
+    // StandingsService (roadmap phase 5, docs/sports-domain-rules.md §5).
+    if (tournament.format === TournamentFormat.LEAGUE) {
+      return { championTournamentTeamId: null };
+    }
+
+    const slots = await this.prisma.tournamentBracketSlot.findMany({
+      where: { tournamentId: id, organizationId, isDeleted: false },
+      select: {
+        winnerTournamentTeamId: true,
+        round: { select: { number: true } },
+      },
+    });
+
+    if (slots.length === 0) return { championTournamentTeamId: null };
+
+    const highest = Math.max(...slots.map((slot) => slot.round.number));
+    const finalSlots = slots.filter((slot) => slot.round.number === highest);
+
+    // Exactly one slot in the top round is the only shape that lets the system
+    // assert a final. Two slots means semifinals-in-progress or a third-place
+    // playoff — both legitimate, neither answerable (domain rules §3).
+    return {
+      championTournamentTeamId:
+        finalSlots.length === 1 ? finalSlots[0].winnerTournamentTeamId : null,
+    };
   }
 
   // "Havendo mata-mata" is a property of the format, not of the current structure:
