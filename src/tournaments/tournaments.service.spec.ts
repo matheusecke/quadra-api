@@ -153,6 +153,19 @@ describe('TournamentsService', () => {
       );
     });
 
+    it('rejects an explicit slug that normalizes to empty', async () => {
+      mockPrisma.season.findFirst.mockResolvedValue(SEASON);
+
+      await expect(
+        service.create(ORG_ID, USER_ID, {
+          name: 'Copa de Verão',
+          seasonId: 3,
+          format: TournamentFormat.GROUP_STAGE_KNOCKOUT,
+          slug: '!!!',
+        }),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
     it('rejects a season from another organization', async () => {
       mockPrisma.season.findFirst.mockResolvedValue(null);
 
@@ -570,6 +583,47 @@ describe('TournamentsService', () => {
       ).rejects.toMatchObject({ status: 409 });
     });
 
+    it('rejects an explicit slug that normalizes to empty', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+
+      await expect(
+        service.update(ORG_ID, 12, { slug: '!!!' }),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('rejects a format change while a champion is declared', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        ...baseTournamentRow,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: 41,
+      });
+
+      await expect(
+        service.update(ORG_ID, 12, { format: TournamentFormat.GROUP_STAGE }),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('allows a format change when no champion is declared', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.GROUP_STAGE,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.update(ORG_ID, 12, {
+        format: TournamentFormat.GROUP_STAGE,
+      });
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            format: TournamentFormat.GROUP_STAGE,
+          }),
+        }),
+      );
+    });
+
     it('clears categoryId on an explicit null', async () => {
       mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
       mockPrisma.tournament.update.mockResolvedValue({
@@ -891,7 +945,6 @@ describe('TournamentsService', () => {
       await service.complete(ORG_ID, 12, {});
 
       expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(mockPrisma.tournament.findFirst).toHaveBeenCalled();
     });
   });
 

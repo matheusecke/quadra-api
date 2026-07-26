@@ -123,6 +123,20 @@ export class TournamentsService {
       );
     }
 
+    // A declared champion was validated against the format that produced it: GROUP_STAGE
+    // admits none, and a knockout champion had to win a slot. Editing the format under a
+    // stored champion strands a title /complete would have refused (domain rules §3).
+    if (
+      dto.format !== undefined &&
+      dto.format !== existing.format &&
+      existing.championTournamentTeamId !== null
+    ) {
+      throw ApiException.unprocessable(
+        'A tournament with a declared champion cannot change format. Reopen it first.',
+        'INVALID_CHAMPION',
+      );
+    }
+
     const mergedStartsAt =
       dto.startsAt === undefined
         ? existing.startsAt
@@ -165,7 +179,7 @@ export class TournamentsService {
 
     let slug: string | undefined;
     if (dto.slug !== undefined) {
-      slug = slugify(dto.slug);
+      slug = this.normalizeExplicitSlug(dto.slug);
       const conflict = await this.prisma.tournament.findFirst({
         where: { organizationId, slug, isDeleted: false, id: { not: id } },
         select: { id: true },
@@ -590,6 +604,22 @@ export class TournamentsService {
     return slugify(`${name} ${seasonLabel.replace(/\//g, '-')}`);
   }
 
+  // slugify() drops every character it cannot represent, so an input made only of
+  // punctuation ('!!!') collapses to an empty string the lowercase check constraint
+  // happily stores — and the next one collides with a slug nobody can see.
+  private normalizeExplicitSlug(explicitSlug: string): string {
+    const slug = slugify(explicitSlug);
+
+    if (slug === '') {
+      throw ApiException.unprocessable(
+        'slug must contain at least one letter or digit.',
+        'INVALID_SLUG',
+      );
+    }
+
+    return slug;
+  }
+
   private async isSlugTaken(
     organizationId: number,
     slug: string,
@@ -609,7 +639,7 @@ export class TournamentsService {
     seasonLabel: string,
   ): Promise<string> {
     if (explicitSlug !== undefined) {
-      const slug = slugify(explicitSlug);
+      const slug = this.normalizeExplicitSlug(explicitSlug);
       if (await this.isSlugTaken(organizationId, slug)) {
         throw ApiException.conflict(
           'A tournament with this slug already exists.',
