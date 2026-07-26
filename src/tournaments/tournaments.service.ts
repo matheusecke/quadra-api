@@ -1,9 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { MatchStatus, Prisma, TournamentTeamStatus } from '@prisma/client';
+import {
+  MatchStatus,
+  Prisma,
+  TournamentTeamStatus,
+  TournamentStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
 import { slugify } from '../common/utils/slugify';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
+import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { ListTournamentsQueryDto } from './dto/list-tournaments-query.dto';
 import { TournamentResponseDto } from './dto/tournament-response.dto';
 
@@ -58,10 +64,14 @@ export class TournamentsService {
     }
 
     this.assertDateRanges(
-      dto.startsAt ?? null,
-      dto.endsAt ?? null,
-      dto.registrationStartsAt ?? null,
-      dto.registrationEndsAt ?? null,
+      dto.startsAt === undefined ? null : new Date(dto.startsAt),
+      dto.endsAt === undefined ? null : new Date(dto.endsAt),
+      dto.registrationStartsAt === undefined
+        ? null
+        : new Date(dto.registrationStartsAt),
+      dto.registrationEndsAt === undefined
+        ? null
+        : new Date(dto.registrationEndsAt),
     );
 
     const slug = await this.resolveSlug(
@@ -91,6 +101,107 @@ export class TournamentsService {
     });
 
     return this.toResponse(row, { total: 0, finished: 0 });
+  }
+
+  async update(
+    organizationId: number,
+    id: number,
+    dto: UpdateTournamentDto,
+  ): Promise<TournamentResponseDto> {
+    const existing = await this.findRowOrThrow(organizationId, id);
+
+    if (
+      existing.status === TournamentStatus.COMPLETED &&
+      dto.status !== undefined
+    ) {
+      throw ApiException.conflict(
+        'A completed tournament cannot change status here. Use POST /tournaments/:id/reopen.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+
+    const mergedStartsAt =
+      dto.startsAt === undefined
+        ? existing.startsAt
+        : dto.startsAt === null
+          ? null
+          : new Date(dto.startsAt);
+    const mergedEndsAt =
+      dto.endsAt === undefined
+        ? existing.endsAt
+        : dto.endsAt === null
+          ? null
+          : new Date(dto.endsAt);
+    const mergedRegistrationStartsAt =
+      dto.registrationStartsAt === undefined
+        ? existing.registrationStartsAt
+        : dto.registrationStartsAt === null
+          ? null
+          : new Date(dto.registrationStartsAt);
+    const mergedRegistrationEndsAt =
+      dto.registrationEndsAt === undefined
+        ? existing.registrationEndsAt
+        : dto.registrationEndsAt === null
+          ? null
+          : new Date(dto.registrationEndsAt);
+
+    this.assertDateRanges(
+      mergedStartsAt,
+      mergedEndsAt,
+      mergedRegistrationStartsAt,
+      mergedRegistrationEndsAt,
+    );
+
+    if (dto.seasonId !== undefined) {
+      await this.assertSeason(organizationId, dto.seasonId);
+    }
+
+    if (dto.categoryId !== undefined && dto.categoryId !== null) {
+      await this.assertCategory(organizationId, dto.categoryId);
+    }
+
+    let slug: string | undefined;
+    if (dto.slug !== undefined) {
+      slug = slugify(dto.slug);
+      const conflict = await this.prisma.tournament.findFirst({
+        where: { organizationId, slug, isDeleted: false, id: { not: id } },
+        select: { id: true },
+      });
+      if (conflict) {
+        throw ApiException.conflict(
+          'A tournament with this slug already exists.',
+          'DUPLICATE_RECORD',
+        );
+      }
+    }
+
+    const row = await this.prisma.tournament.update({
+      where: { id },
+      data: {
+        ...(dto.name === undefined ? {} : { name: dto.name }),
+        ...(dto.seasonId === undefined ? {} : { seasonId: dto.seasonId }),
+        ...(dto.format === undefined ? {} : { format: dto.format }),
+        ...(slug === undefined ? {} : { slug }),
+        ...(dto.categoryId === undefined ? {} : { categoryId: dto.categoryId }),
+        ...(dto.regulation === undefined ? {} : { regulation: dto.regulation }),
+        ...(dto.status === undefined ? {} : { status: dto.status }),
+        ...(dto.startsAt === undefined ? {} : { startsAt: mergedStartsAt }),
+        ...(dto.endsAt === undefined ? {} : { endsAt: mergedEndsAt }),
+        ...(dto.registrationStartsAt === undefined
+          ? {}
+          : { registrationStartsAt: mergedRegistrationStartsAt }),
+        ...(dto.registrationEndsAt === undefined
+          ? {}
+          : { registrationEndsAt: mergedRegistrationEndsAt }),
+      },
+      select: tournamentSelect,
+    });
+
+    const matchCounts = await this.loadMatchCounts([row.id]);
+    return this.toResponse(
+      row,
+      matchCounts.get(row.id) ?? { total: 0, finished: 0 },
+    );
   }
 
   async findAll(
@@ -248,15 +359,15 @@ export class TournamentsService {
   }
 
   private assertDateRanges(
-    startsAt: string | null,
-    endsAt: string | null,
-    registrationStartsAt: string | null,
-    registrationEndsAt: string | null,
+    startsAt: Date | null,
+    endsAt: Date | null,
+    registrationStartsAt: Date | null,
+    registrationEndsAt: Date | null,
   ): void {
     if (
       startsAt !== null &&
       endsAt !== null &&
-      new Date(startsAt).getTime() > new Date(endsAt).getTime()
+      startsAt.getTime() > endsAt.getTime()
     ) {
       throw ApiException.unprocessable(
         'startsAt must be on or before endsAt.',
@@ -267,8 +378,7 @@ export class TournamentsService {
     if (
       registrationStartsAt !== null &&
       registrationEndsAt !== null &&
-      new Date(registrationStartsAt).getTime() >
-        new Date(registrationEndsAt).getTime()
+      registrationStartsAt.getTime() > registrationEndsAt.getTime()
     ) {
       throw ApiException.unprocessable(
         'registrationStartsAt must be on or before registrationEndsAt.',

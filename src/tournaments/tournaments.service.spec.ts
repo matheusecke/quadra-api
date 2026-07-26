@@ -516,4 +516,163 @@ describe('TournamentsService', () => {
       });
     });
   });
+
+  describe('update', () => {
+    it('merges a partial payload against the stored row for the date range check', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        ...baseTournamentRow,
+        startsAt: new Date('2026-01-10T00:00:00.000Z'),
+        endsAt: new Date('2026-03-15T00:00:00.000Z'),
+      });
+
+      await expect(
+        service.update(ORG_ID, 12, {
+          endsAt: '2026-01-05T00:00:00.000Z',
+        }),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('leaves the slug untouched when the name changes', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.tournament.update.mockResolvedValue(baseTournamentRow);
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.update(ORG_ID, 12, { name: 'Copa de Verão 2026' });
+
+      const data = mockPrisma.tournament.update.mock.calls[0][0].data;
+      expect(data.slug).toBeUndefined();
+    });
+
+    it('changes the slug when one is sent explicitly', async () => {
+      mockPrisma.tournament.findFirst
+        .mockResolvedValueOnce(baseTournamentRow)
+        .mockResolvedValueOnce(null);
+      mockPrisma.tournament.update.mockResolvedValue(baseTournamentRow);
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.update(ORG_ID, 12, { slug: 'copa-2026' });
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ slug: 'copa-2026' }),
+        }),
+      );
+    });
+
+    it('rejects an explicit slug taken by another tournament', async () => {
+      mockPrisma.tournament.findFirst
+        .mockResolvedValueOnce(baseTournamentRow)
+        .mockResolvedValueOnce({ id: 55 });
+
+      await expect(
+        service.update(ORG_ID, 12, { slug: 'taken-slug' }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+
+    it('clears categoryId on an explicit null', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        categoryId: null,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.update(ORG_ID, 12, { categoryId: null });
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ categoryId: null }),
+        }),
+      );
+    });
+
+    it('clears regulation on an explicit null', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        regulation: null,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.update(ORG_ID, 12, { regulation: null });
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ regulation: null }),
+        }),
+      );
+    });
+
+    it('validates a new seasonId against the caller organization', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.season.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.update(ORG_ID, 12, { seasonId: 99 }),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('rejects a status change on a completed tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        ...baseTournamentRow,
+        status: TournamentStatus.COMPLETED,
+      });
+
+      await expect(
+        service.update(ORG_ID, 12, { status: TournamentStatus.IN_PROGRESS }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+
+    it('allows editing other fields of a completed tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        ...baseTournamentRow,
+        status: TournamentStatus.COMPLETED,
+      });
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        status: TournamentStatus.COMPLETED,
+        name: 'Renamed',
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      const result = await service.update(ORG_ID, 12, { name: 'Renamed' });
+
+      expect(result.name).toBe('Renamed');
+    });
+
+    it('allows a status change on a non-completed tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        status: TournamentStatus.IN_PROGRESS,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      const result = await service.update(ORG_ID, 12, {
+        status: TournamentStatus.IN_PROGRESS,
+      });
+
+      expect(result.status).toBe(TournamentStatus.IN_PROGRESS);
+    });
+
+    it('raises 404 for a tournament of another organization', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.update(ORG_ID, 12, { name: 'Anything' }),
+      ).rejects.toMatchObject({ status: 404 });
+    });
+
+    it('returns the current record for an empty payload', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.tournament.update.mockResolvedValue(baseTournamentRow);
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.update(ORG_ID, 12, {});
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: {} }),
+      );
+    });
+  });
 });
