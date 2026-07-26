@@ -4,21 +4,26 @@ Team lifecycle management. Teams are affiliated to organizations through `Organi
 
 ## Endpoints
 
-| Method  | Path                  | Guards                                     | Purpose |
-| ------- | --------------------- | ------------------------------------------ | ------- |
-| `POST`  | `/teams`              | `JwtAuthGuard`, `SystemAdminGuard`         | Create team; requires `name` and `shortName`; auto-generates slug from name |
-| `GET`   | `/teams`              | `JwtAuthGuard`                             | Paginated list; filters: `q` (name search), `status` |
-| `GET`   | `/teams/:id`          | `JwtAuthGuard`                             | Get by id |
-| `PATCH` | `/teams/:id`          | `JwtAuthGuard`, `SystemAdminGuard`         | Update name; re-generates slug on rename |
-| `PATCH` | `/teams/:id/status`   | `JwtAuthGuard`, `SystemAdminGuard`         | Update status; system admin only |
-| `DELETE`| `/teams/:id`          | `JwtAuthGuard`, `SystemAdminGuard`         | Soft delete; sets `isDeleted: true` + `status: INACTIVE` |
+| Method   | Path                | Guards                                          | Purpose                                                                                              |
+| -------- | ------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST`   | `/teams`            | `JwtAuthGuard`, `SystemAdminGuard`              | Create team; requires `name` and `shortName`; auto-generates slug from name                          |
+| `GET`    | `/teams`            | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Paginated catalog scoped to the active JWT organization; filters: `q` (name search), `ids`, `status` |
+| `GET`    | `/teams/:id`        | `JwtAuthGuard`                                  | Get by id                                                                                            |
+| `PATCH`  | `/teams/:id`        | `JwtAuthGuard`, `SystemAdminGuard`              | Update name; re-generates slug on rename                                                             |
+| `PATCH`  | `/teams/:id/status` | `JwtAuthGuard`, `SystemAdminGuard`              | Update status; system admin only                                                                     |
+| `DELETE` | `/teams/:id`        | `JwtAuthGuard`, `SystemAdminGuard`              | Soft delete; sets `isDeleted: true` + `status: INACTIVE`                                             |
 
 `GET /teams` uses `PaginationInterceptor` — response shape in [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md).
 
 ## Rules
 
-- **Read** (list / get): any authenticated user.
+- **`GET /teams`** (Phase 3): tenant-scoped catalog. A team qualifies when it has a non-deleted, `ACTIVE` `OrganizationTeamAffiliation` in the JWT's active organization. Requires an active org context (`OrgRoleGuard`); a token without one, including a platform-admin token, gets `403`. Ordering: `name ASC`, then `id ASC`. Response includes `city`/`state` (nullable). The old `organizationId` query parameter is removed — organization scope comes only from the JWT.
+- **Get by id** (`GET /teams/:id`): any authenticated user, no tenant scoping (global lookup).
 - **All writes** (create, update, update status, delete): system admin only — no role-based exceptions.
+
+## Known temporary regression
+
+The former cross-tenant admin consumer of `GET /teams` (system-admin listing across all organizations via an explicit `organizationId` query param) is intentionally unsupported until Phase 11 moves platform-admin routes to `/admin/*`.
 
 ## Slug behavior
 

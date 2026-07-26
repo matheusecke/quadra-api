@@ -1,9 +1,9 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { EntityStatus } from '@prisma/client';
-import { Transform, type TransformFnParams } from 'class-transformer';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { OrgRole } from '@prisma/client';
+import { Transform, type TransformFnParams, Type } from 'class-transformer';
 import {
   IsArray,
-  IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -11,8 +11,8 @@ import {
 } from 'class-validator';
 import { PaginationDefaultsDto } from '../../common/dto/pagination-defaults.dto';
 
-export class ListTeamsQueryDto extends PaginationDefaultsDto {
-  @ApiProperty({ example: 'São Paulo', required: false })
+export class ListAthletesQueryDto extends PaginationDefaultsDto {
+  @ApiPropertyOptional({ example: 'rafael' })
   @IsOptional()
   @IsString()
   @Transform((params: TransformFnParams) => {
@@ -25,8 +25,8 @@ export class ListTeamsQueryDto extends PaginationDefaultsDto {
 
   @ApiPropertyOptional({
     type: [Number],
-    example: [8, 9],
-    description: 'Repeat the param: ?ids=8&ids=9',
+    example: [165, 166],
+    description: 'Repeat the param: ?ids=165&ids=166',
   })
   @IsOptional()
   @Transform(({ value }) =>
@@ -37,8 +37,17 @@ export class ListTeamsQueryDto extends PaginationDefaultsDto {
   @Min(1, { each: true })
   ids?: number[];
 
-  @ApiProperty({ enum: EntityStatus, required: false })
+  @ApiPropertyOptional({ example: 8 })
   @IsOptional()
-  @IsEnum(EntityStatus)
-  status?: EntityStatus;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  teamId?: number;
+
+  @ApiPropertyOptional({
+    enum: [OrgRole.ATHLETE, OrgRole.COACHING_STAFF],
+  })
+  @IsOptional()
+  @IsIn([OrgRole.ATHLETE, OrgRole.COACHING_STAFF])
+  role?: typeof OrgRole.ATHLETE | typeof OrgRole.COACHING_STAFF;
 }

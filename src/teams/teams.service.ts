@@ -14,6 +14,8 @@ const teamSelect = {
   name: true,
   shortName: true,
   slug: true,
+  city: true,
+  state: true,
   status: true,
   createdAt: true,
   updatedAt: true,
@@ -45,29 +47,27 @@ export class TeamsService {
   }
 
   async findAll(
+    organizationId: number,
     query: ListTeamsQueryDto,
   ): Promise<{ count: number; data: TeamResponseDto[] }> {
-    const filters: Prisma.TeamWhereInput[] = [{ isDeleted: false }];
-
-    if (query.status) {
-      filters.push({ status: query.status });
-    }
-
-    if (query.q) {
-      filters.push({ name: { contains: query.q, mode: 'insensitive' } });
-    }
-
-    if (query.organizationId) {
-      filters.push({
+    const filters: Prisma.TeamWhereInput[] = [
+      { isDeleted: false },
+      {
         organizationAffiliations: {
           some: {
-            organizationId: query.organizationId,
+            organizationId,
             isDeleted: false,
             status: AffiliationStatus.ACTIVE,
           },
         },
-      });
+      },
+    ];
+
+    if (query.status) filters.push({ status: query.status });
+    if (query.q) {
+      filters.push({ name: { contains: query.q, mode: 'insensitive' } });
     }
+    if (query.ids) filters.push({ id: { in: query.ids } });
 
     const where: Prisma.TeamWhereInput = { AND: filters };
     const skip = (query.page - 1) * query.limit;
@@ -78,7 +78,7 @@ export class TeamsService {
         where,
         skip,
         take: query.limit,
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
         select: teamSelect,
       }),
     ]);

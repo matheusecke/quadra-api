@@ -1,5 +1,5 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { EntityStatus } from '@prisma/client';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { TournamentTeamStatus } from '@prisma/client';
 import { Transform, type TransformFnParams } from 'class-transformer';
 import {
   IsArray,
@@ -11,8 +11,8 @@ import {
 } from 'class-validator';
 import { PaginationDefaultsDto } from '../../common/dto/pagination-defaults.dto';
 
-export class ListTeamsQueryDto extends PaginationDefaultsDto {
-  @ApiProperty({ example: 'São Paulo', required: false })
+export class ListTournamentTeamsQueryDto extends PaginationDefaultsDto {
+  @ApiPropertyOptional({ example: 'engenharia' })
   @IsOptional()
   @IsString()
   @Transform((params: TransformFnParams) => {
@@ -25,8 +25,8 @@ export class ListTeamsQueryDto extends PaginationDefaultsDto {
 
   @ApiPropertyOptional({
     type: [Number],
-    example: [8, 9],
-    description: 'Repeat the param: ?ids=8&ids=9',
+    example: [41, 42],
+    description: 'Repeat the param: ?ids=41&ids=42',
   })
   @IsOptional()
   @Transform(({ value }) =>
@@ -37,8 +37,11 @@ export class ListTeamsQueryDto extends PaginationDefaultsDto {
   @Min(1, { each: true })
   ids?: number[];
 
-  @ApiProperty({ enum: EntityStatus, required: false })
+  @ApiPropertyOptional({
+    enum: TournamentTeamStatus,
+    enumName: 'TournamentTeamStatus',
+  })
   @IsOptional()
-  @IsEnum(EntityStatus)
-  status?: EntityStatus;
+  @IsEnum(TournamentTeamStatus)
+  status?: TournamentTeamStatus;
 }
