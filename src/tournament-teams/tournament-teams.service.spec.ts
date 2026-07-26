@@ -43,6 +43,21 @@ const activeRegistration = {
 describe('TournamentTeamsService', () => {
   let service: TournamentTeamsService;
 
+  function arrangeActiveRegistration(tournamentStatus: TournamentStatus) {
+    mockPrisma.tournamentTeam.findFirst.mockResolvedValue({
+      ...activeRegistration,
+      tournament: { status: tournamentStatus },
+    });
+  }
+
+  function arrangeWithdrawnRegistration(tournamentStatus: TournamentStatus) {
+    mockPrisma.tournamentTeam.findFirst.mockResolvedValue({
+      ...activeRegistration,
+      status: TournamentTeamStatus.WITHDRAWN,
+      tournament: { status: tournamentStatus },
+    });
+  }
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -291,6 +306,134 @@ describe('TournamentTeamsService', () => {
       const err = await service
         .create(42, 999, { teamId: 8 })
         .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+    });
+  });
+
+  describe('update', () => {
+    it.each([1, null])('updates seed to %s', async (seed) => {
+      arrangeActiveRegistration(TournamentStatus.IN_PROGRESS);
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValue(null);
+      mockPrisma.tournamentTeam.update.mockResolvedValue({
+        ...activeRegistration,
+        seed,
+      });
+
+      await service.update(42, 41, { seed });
+
+      expect(mockPrisma.tournamentTeam.update).toHaveBeenCalledWith({
+        where: { id: 41 },
+        data: { seed },
+        select: expect.any(Object),
+      });
+    });
+
+    it('returns the current row for an empty patch without writing', async () => {
+      arrangeActiveRegistration(TournamentStatus.REGISTRATION);
+
+      const result = await service.update(42, 41, {});
+
+      expect(result).toEqual(activeRegistration);
+      expect(mockPrisma.tournamentTeam.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a seed edit when any bracket slot references the registration', async () => {
+      arrangeActiveRegistration(TournamentStatus.IN_PROGRESS);
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValue({ id: 99 });
+
+      const error = await service
+        .update(42, 41, { seed: 2 })
+        .catch((e) => e);
+
+      expect(error.getResponse().error.code).toBe('REGISTRATION_IN_USE');
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(mockPrisma.tournamentBracketSlot.findFirst).toHaveBeenCalledWith({
+        where: {
+          isDeleted: false,
+          OR: [
+            { homeTournamentTeamId: 41 },
+            { awayTournamentTeamId: 41 },
+            { winnerTournamentTeamId: 41 },
+          ],
+        },
+      });
+    });
+
+    it('throws 404 for a missing/cross-tenant registration', async () => {
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue(null);
+
+      const err = await service
+        .update(42, 999, { seed: 1 })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+    });
+
+    it('rejects a seed edit on a withdrawn registration with 422 INACTIVE_REGISTRATION', async () => {
+      arrangeWithdrawnRegistration(TournamentStatus.REGISTRATION);
+
+      const error = await service
+        .update(42, 41, { seed: 1 })
+        .catch((e) => e);
+
+      expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(error.getResponse().error.code).toBe('INACTIVE_REGISTRATION');
+    });
+
+    it.each([TournamentStatus.COMPLETED, TournamentStatus.CANCELLED])(
+      'rejects seed edits when tournament is %s',
+      async (status) => {
+        arrangeActiveRegistration(status);
+
+        const error = await service
+          .update(42, 41, { seed: 1 })
+          .catch((e) => e);
+
+        expect(error.getResponse().error.code).toBe('TOURNAMENT_NOT_MUTABLE');
+      },
+    );
+  });
+
+  describe('remove', () => {
+    it('withdraws without soft deleting or touching dependent rows', async () => {
+      arrangeActiveRegistration(TournamentStatus.IN_PROGRESS);
+      mockPrisma.tournamentTeam.update.mockResolvedValue({
+        ...activeRegistration,
+        status: TournamentTeamStatus.WITHDRAWN,
+      });
+
+      await service.remove(42, 41);
+
+      expect(mockPrisma.tournamentTeam.update).toHaveBeenCalledWith({
+        where: { id: 41 },
+        data: { status: TournamentTeamStatus.WITHDRAWN },
+      });
+    });
+
+    it('makes repeated withdrawal a successful no-op after lifecycle checks', async () => {
+      arrangeWithdrawnRegistration(TournamentStatus.REGISTRATION);
+
+      await service.remove(42, 41);
+
+      expect(mockPrisma.tournamentTeam.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects withdrawal of an already-withdrawn row in a terminal tournament', async () => {
+      arrangeWithdrawnRegistration(TournamentStatus.COMPLETED);
+
+      const error = await service.remove(42, 41).catch((e) => e);
+
+      expect(error.getResponse().error.code).toBe('TOURNAMENT_NOT_MUTABLE');
+      expect(mockPrisma.tournamentTeam.update).not.toHaveBeenCalled();
+    });
+
+    it('throws 404 for a missing/cross-tenant registration', async () => {
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue(null);
+
+      const err = await service.remove(42, 999).catch((e: unknown) => e);
 
       expect(err).toBeInstanceOf(ApiException);
       expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);

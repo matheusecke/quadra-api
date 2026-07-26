@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
 import { CreateTournamentTeamDto } from './dto/create-tournament-team.dto';
+import { UpdateTournamentTeamDto } from './dto/update-tournament-team.dto';
 import { ListTournamentTeamsQueryDto } from './dto/list-tournament-teams-query.dto';
 import { TournamentTeamResponseDto } from './dto/tournament-team-response.dto';
 
@@ -136,6 +137,86 @@ export class TournamentTeamsService {
       },
       select: tournamentTeamSelect,
     });
+  }
+
+  async update(
+    organizationId: number,
+    id: number,
+    dto: UpdateTournamentTeamDto,
+  ): Promise<TournamentTeamResponseDto> {
+    const registration = await this.findRegistrationOrThrow(
+      organizationId,
+      id,
+    );
+    this.assertMutable(registration.tournament.status);
+
+    const { tournament: _tournament, ...currentResponse } = registration;
+
+    if (registration.status !== TournamentTeamStatus.ACTIVE) {
+      throw ApiException.unprocessable(
+        'The registration is not active.',
+        'INACTIVE_REGISTRATION',
+      );
+    }
+
+    if (dto.seed === undefined) return currentResponse;
+
+    const blockingSlot = await this.prisma.tournamentBracketSlot.findFirst({
+      where: {
+        isDeleted: false,
+        OR: [
+          { homeTournamentTeamId: id },
+          { awayTournamentTeamId: id },
+          { winnerTournamentTeamId: id },
+        ],
+      },
+    });
+    if (blockingSlot) {
+      throw ApiException.conflict(
+        'The registration is referenced by the bracket and its seed can no longer be edited.',
+        'REGISTRATION_IN_USE',
+      );
+    }
+
+    return this.prisma.tournamentTeam.update({
+      where: { id },
+      data: { seed: dto.seed },
+      select: tournamentTeamSelect,
+    });
+  }
+
+  async remove(organizationId: number, id: number): Promise<void> {
+    const registration = await this.findRegistrationOrThrow(
+      organizationId,
+      id,
+    );
+    this.assertMutable(registration.tournament.status);
+
+    if (registration.status === TournamentTeamStatus.WITHDRAWN) return;
+
+    await this.prisma.tournamentTeam.update({
+      where: { id },
+      data: { status: TournamentTeamStatus.WITHDRAWN },
+    });
+  }
+
+  private async findRegistrationOrThrow(
+    organizationId: number,
+    id: number,
+  ): Promise<
+    TournamentTeamResponseDto & { tournament: { status: TournamentStatus } }
+  > {
+    const registration = await this.prisma.tournamentTeam.findFirst({
+      where: { id, organizationId, isDeleted: false },
+      select: {
+        ...tournamentTeamSelect,
+        tournament: { select: { status: true } },
+      },
+    });
+    if (!registration) {
+      throw ApiException.notFound('Tournament team not found');
+    }
+    return registration;
   }
 
   private async findTournamentOrThrow(
