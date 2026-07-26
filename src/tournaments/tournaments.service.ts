@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   MatchStatus,
   Prisma,
+  TournamentFormat,
   TournamentTeamStatus,
   TournamentStatus,
 } from '@prisma/client';
@@ -10,6 +11,7 @@ import { ApiException } from '../common/exceptions/api.exception';
 import { slugify } from '../common/utils/slugify';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
+import { CompleteTournamentDto } from './dto/complete-tournament.dto';
 import { ListTournamentsQueryDto } from './dto/list-tournaments-query.dto';
 import { TournamentResponseDto } from './dto/tournament-response.dto';
 
@@ -202,6 +204,155 @@ export class TournamentsService {
       row,
       matchCounts.get(row.id) ?? { total: 0, finished: 0 },
     );
+  }
+
+  async complete(
+    organizationId: number,
+    id: number,
+    dto: CompleteTournamentDto,
+  ): Promise<TournamentResponseDto> {
+    const row = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.tournament.findFirst({
+        where: { id, organizationId, isDeleted: false },
+        select: { id: true, status: true, format: true },
+      });
+
+      if (!existing) throw ApiException.notFound('Tournament not found');
+
+      if (existing.status !== TournamentStatus.IN_PROGRESS) {
+        throw ApiException.conflict(
+          'Only a tournament in progress can be completed.',
+          'INVALID_STATUS_TRANSITION',
+        );
+      }
+
+      const champion = dto.championTournamentTeamId ?? null;
+      await this.assertChampionForFormat(
+        tx,
+        organizationId,
+        id,
+        existing.format,
+        champion,
+      );
+
+      return tx.tournament.update({
+        where: { id },
+        data: {
+          status: TournamentStatus.COMPLETED,
+          championTournamentTeamId: champion,
+        },
+        select: tournamentSelect,
+      });
+    });
+
+    const matchCounts = await this.loadMatchCounts([row.id]);
+    return this.toResponse(
+      row,
+      matchCounts.get(row.id) ?? { total: 0, finished: 0 },
+    );
+  }
+
+  async reopen(
+    organizationId: number,
+    id: number,
+  ): Promise<TournamentResponseDto> {
+    const existing = await this.prisma.tournament.findFirst({
+      where: { id, organizationId, isDeleted: false },
+      select: { id: true, status: true },
+    });
+
+    if (!existing) throw ApiException.notFound('Tournament not found');
+
+    if (existing.status !== TournamentStatus.COMPLETED) {
+      throw ApiException.conflict(
+        'Only a completed tournament can be reopened.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+
+    // A concurrent second reopen would rewrite the same values, which is harmless.
+    const row = await this.prisma.tournament.update({
+      where: { id },
+      data: {
+        status: TournamentStatus.IN_PROGRESS,
+        championTournamentTeamId: null,
+      },
+      select: tournamentSelect,
+    });
+
+    const matchCounts = await this.loadMatchCounts([row.id]);
+    return this.toResponse(
+      row,
+      matchCounts.get(row.id) ?? { total: 0, finished: 0 },
+    );
+  }
+
+  // "Havendo mata-mata" is a property of the format, not of the current structure:
+  // a KNOCKOUT tournament with no decided slot has no champion to declare yet.
+  private async assertChampionForFormat(
+    tx: Prisma.TransactionClient,
+    organizationId: number,
+    tournamentId: number,
+    format: TournamentFormat,
+    championTournamentTeamId: number | null,
+  ): Promise<void> {
+    if (format === TournamentFormat.GROUP_STAGE) {
+      if (championTournamentTeamId !== null) {
+        throw ApiException.unprocessable(
+          'A group stage tournament has no champion.',
+          'CHAMPION_NOT_ALLOWED',
+        );
+      }
+      return;
+    }
+
+    if (championTournamentTeamId === null) {
+      throw ApiException.unprocessable(
+        'championTournamentTeamId is required for this format.',
+        'CHAMPION_REQUIRED',
+      );
+    }
+
+    const team = await tx.tournamentTeam.findFirst({
+      where: {
+        id: championTournamentTeamId,
+        tournamentId,
+        organizationId,
+        status: TournamentTeamStatus.ACTIVE,
+        isDeleted: false,
+      },
+      select: { id: true },
+    });
+
+    if (!team) {
+      throw ApiException.unprocessable(
+        'The champion must be a team actively enrolled in this tournament.',
+        'INVALID_CHAMPION',
+      );
+    }
+
+    const requiresBracketWin =
+      format === TournamentFormat.KNOCKOUT ||
+      format === TournamentFormat.GROUP_STAGE_KNOCKOUT;
+
+    if (requiresBracketWin) {
+      // Winning any slot qualifies (domain rules §3) — not necessarily the highest round.
+      const slot = await tx.tournamentBracketSlot.findFirst({
+        where: {
+          tournamentId,
+          winnerTournamentTeamId: championTournamentTeamId,
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+
+      if (!slot) {
+        throw ApiException.unprocessable(
+          'The champion must have won a bracket slot.',
+          'INVALID_CHAMPION',
+        );
+      }
+    }
   }
 
   async findAll(

@@ -3,6 +3,7 @@ import {
   MatchStatus,
   TournamentFormat,
   TournamentStatus,
+  TournamentTeamStatus,
 } from '@prisma/client';
 import { TournamentsService } from './tournaments.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -672,6 +673,269 @@ describe('TournamentsService', () => {
 
       expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: {} }),
+      );
+    });
+  });
+
+  describe('complete', () => {
+    it('raises 404 for a tournament of another organization', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(null);
+
+      await expect(service.complete(ORG_ID, 12, {})).rejects.toMatchObject({
+        status: 404,
+      });
+    });
+
+    it('rejects a tournament that is not in progress', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.DRAFT,
+        format: TournamentFormat.GROUP_STAGE_KNOCKOUT,
+      });
+
+      await expect(service.complete(ORG_ID, 12, {})).rejects.toMatchObject({
+        status: 409,
+      });
+    });
+
+    it('rejects a champion on a group stage tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.GROUP_STAGE,
+      });
+
+      await expect(
+        service.complete(ORG_ID, 12, { championTournamentTeamId: 41 }),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('completes a group stage tournament with no champion', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.GROUP_STAGE,
+      });
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.GROUP_STAGE,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: null,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      const result = await service.complete(ORG_ID, 12, {});
+
+      expect(result).toMatchObject({
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: null,
+      });
+    });
+
+    it('requires a champion for a league tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.LEAGUE,
+      });
+
+      await expect(service.complete(ORG_ID, 12, {})).rejects.toMatchObject({
+        status: 422,
+      });
+    });
+
+    it('requires a champion for a knockout tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.KNOCKOUT,
+      });
+
+      await expect(service.complete(ORG_ID, 12, {})).rejects.toMatchObject({
+        status: 422,
+      });
+    });
+
+    it('rejects a champion that is not enrolled in this tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.LEAGUE,
+      });
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.complete(ORG_ID, 12, { championTournamentTeamId: 41 }),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('rejects a withdrawn team as champion', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.LEAGUE,
+      });
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.complete(ORG_ID, 12, { championTournamentTeamId: 41 }),
+      ).rejects.toMatchObject({ status: 422 });
+
+      expect(mockPrisma.tournamentTeam.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: TournamentTeamStatus.ACTIVE,
+          }),
+        }),
+      );
+    });
+
+    it('rejects a knockout champion that won no bracket slot', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.KNOCKOUT,
+      });
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.complete(ORG_ID, 12, { championTournamentTeamId: 41 }),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('accepts a knockout champion that won any bracket slot', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.KNOCKOUT,
+      });
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValue({ id: 5 });
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.KNOCKOUT,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: 41,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      const result = await service.complete(ORG_ID, 12, {
+        championTournamentTeamId: 41,
+      });
+
+      expect(result.championTournamentTeamId).toBe(41);
+    });
+
+    it('does not require a bracket slot for a league champion', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.LEAGUE,
+      });
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.LEAGUE,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: 41,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.complete(ORG_ID, 12, { championTournamentTeamId: 41 });
+
+      expect(mockPrisma.tournamentBracketSlot.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('writes status and champion in the same update', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.LEAGUE,
+      });
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.LEAGUE,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: 41,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.complete(ORG_ID, 12, { championTournamentTeamId: 41 });
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: TournamentStatus.COMPLETED,
+            championTournamentTeamId: 41,
+          }),
+        }),
+      );
+    });
+
+    it('runs the validations and the write inside one transaction', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.GROUP_STAGE,
+      });
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.GROUP_STAGE,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: null,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.complete(ORG_ID, 12, {});
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.tournament.findFirst).toHaveBeenCalled();
+    });
+  });
+
+  describe('reopen', () => {
+    it('raises 404 for a tournament of another organization', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(null);
+
+      await expect(service.reopen(ORG_ID, 12)).rejects.toMatchObject({
+        status: 404,
+      });
+    });
+
+    it('rejects a tournament that is not completed', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+      });
+
+      await expect(service.reopen(ORG_ID, 12)).rejects.toMatchObject({
+        status: 409,
+      });
+    });
+
+    it('writes IN_PROGRESS and clears the champion in the same update', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.COMPLETED,
+      });
+      mockPrisma.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        status: TournamentStatus.IN_PROGRESS,
+        championTournamentTeamId: null,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.reopen(ORG_ID, 12);
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            status: TournamentStatus.IN_PROGRESS,
+            championTournamentTeamId: null,
+          },
+        }),
       );
     });
   });
