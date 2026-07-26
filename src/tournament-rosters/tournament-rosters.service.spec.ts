@@ -103,6 +103,18 @@ describe('TournamentRostersService', () => {
     });
   }
 
+  function arrangeRosterTarget(
+    tournamentStatus: TournamentStatus,
+    rosterStatus: RosterStatus = RosterStatus.ACTIVE,
+  ) {
+    mockPrisma.tournamentRoster.findFirst.mockResolvedValue({
+      ...activeRosterRow,
+      status: rosterStatus,
+      tournament: { status: tournamentStatus },
+      tournamentTeam: { teamId: 8 },
+    });
+  }
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -431,6 +443,191 @@ describe('TournamentRostersService', () => {
         select: expect.any(Object),
       });
       expect(mockPrisma.tournamentRoster.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    it('updates only jersey and role while preserving historical fields', async () => {
+      mockPrisma.tournamentRoster.findFirst
+        .mockResolvedValueOnce({
+          ...activeRosterRow,
+          tournament: { status: TournamentStatus.IN_PROGRESS },
+          tournamentTeam: { teamId: 8 },
+        }) // target lookup
+        .mockResolvedValueOnce(null); // no athlete on another team
+      arrangeEligibleMember(OrgRole.ATHLETE, 7);
+      mockPrisma.tournamentRoster.update.mockResolvedValue({
+        ...activeRosterRow,
+        jerseyNumberSnapshot: 23,
+      });
+
+      await service.update(orgAdmin, 88, {
+        jerseyNumber: 23,
+        role: RosterRole.ATHLETE,
+      });
+
+      expect(mockPrisma.tournamentRoster.update).toHaveBeenCalledWith({
+        where: { id: 88 },
+        data: {
+          jerseyNumberSnapshot: 23,
+          role: RosterRole.ATHLETE,
+        },
+        select: expect.any(Object),
+      });
+    });
+
+    it('returns the current read model for an empty body without writing', async () => {
+      arrangeRosterTarget(TournamentStatus.REGISTRATION);
+
+      const result = await service.update(orgAdmin, 88, {});
+
+      expect(result.jerseyNumber).toBe(7);
+      expect(mockPrisma.tournamentRoster.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a role patch when the affiliation role no longer matches with 422 INVALID_ROSTER_ROLE', async () => {
+      arrangeRosterTarget(TournamentStatus.REGISTRATION);
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 77,
+        role: OrgRole.COACHING_STAFF,
+      });
+
+      const error = await service
+        .update(orgAdmin, 88, { role: RosterRole.ATHLETE })
+        .catch((e) => e);
+
+      expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(error.getResponse().error.code).toBe('INVALID_ROSTER_ROLE');
+      expect(mockPrisma.tournamentRoster.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects changing to ATHLETE when active on another team in the tournament', async () => {
+      mockPrisma.tournamentRoster.findFirst
+        .mockResolvedValueOnce({
+          ...activeRosterRow,
+          tournament: { status: TournamentStatus.REGISTRATION },
+          tournamentTeam: { teamId: 8 },
+        }) // target lookup
+        .mockResolvedValueOnce({ id: 91 }); // other active athlete team
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 77,
+        role: OrgRole.ATHLETE,
+      });
+
+      const error = await service
+        .update(orgAdmin, 88, { role: RosterRole.ATHLETE })
+        .catch((e) => e);
+
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(error.getResponse().error.code).toBe(
+        'ATHLETE_ALREADY_REGISTERED',
+      );
+      expect(mockPrisma.tournamentRoster.update).not.toHaveBeenCalled();
+    });
+
+    it('returns FORBIDDEN when a team-scoped actor targets another team', async () => {
+      arrangeRosterTarget(TournamentStatus.IN_PROGRESS);
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+
+      const error = await service
+        .update(teamActor, 88, { jerseyNumber: 23 })
+        .catch((e) => e);
+
+      expect(error.getStatus()).toBe(HttpStatus.FORBIDDEN);
+      expect(error.getResponse().error.code).toBe('FORBIDDEN');
+    });
+
+    it('rejects a patch on an inactive roster entry with 422 INACTIVE_REGISTRATION', async () => {
+      arrangeRosterTarget(TournamentStatus.REGISTRATION, RosterStatus.INACTIVE);
+
+      const error = await service
+        .update(orgAdmin, 88, { jerseyNumber: 23 })
+        .catch((e) => e);
+
+      expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(error.getResponse().error.code).toBe('INACTIVE_REGISTRATION');
+    });
+
+    it('throws 404 for a missing/cross-tenant roster entry', async () => {
+      mockPrisma.tournamentRoster.findFirst.mockResolvedValue(null);
+
+      const err = await service
+        .update(orgAdmin, 999, { jerseyNumber: 23 })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+    });
+
+    it.each([TournamentStatus.COMPLETED, TournamentStatus.CANCELLED])(
+      'rejects roster patches when tournament is %s',
+      async (status) => {
+        arrangeRosterTarget(status);
+
+        const error = await service
+          .update(orgAdmin, 88, { jerseyNumber: 23 })
+          .catch((e) => e);
+
+        expect(error.getResponse().error.code).toBe('TOURNAMENT_NOT_MUTABLE');
+      },
+    );
+  });
+
+  describe('remove', () => {
+    afterEach(() => jest.useRealTimers());
+
+    it('deactivates with leftAt and keeps the historical row', async () => {
+      arrangeRosterTarget(TournamentStatus.IN_PROGRESS);
+      jest
+        .useFakeTimers()
+        .setSystemTime(new Date('2026-07-26T18:45:00.000Z'));
+
+      await service.remove(orgAdmin, 88);
+
+      expect(mockPrisma.tournamentRoster.update).toHaveBeenCalledWith({
+        where: { id: 88 },
+        data: {
+          status: RosterStatus.INACTIVE,
+          leftAt: new Date('2026-07-26T18:45:00.000Z'),
+        },
+      });
+    });
+
+    it('makes repeated deactivation a successful no-op after authorization and lifecycle checks', async () => {
+      arrangeRosterTarget(TournamentStatus.REGISTRATION, RosterStatus.INACTIVE);
+
+      await service.remove(orgAdmin, 88);
+
+      expect(mockPrisma.tournamentRoster.update).not.toHaveBeenCalled();
+    });
+
+    it('returns FORBIDDEN when a team-scoped actor targets another team', async () => {
+      arrangeRosterTarget(TournamentStatus.IN_PROGRESS);
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+
+      const error = await service.remove(teamActor, 88).catch((e) => e);
+
+      expect(error.getStatus()).toBe(HttpStatus.FORBIDDEN);
+      expect(error.getResponse().error.code).toBe('FORBIDDEN');
+      expect(mockPrisma.tournamentRoster.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects withdrawal of an already-inactive row in a terminal tournament', async () => {
+      arrangeRosterTarget(TournamentStatus.COMPLETED, RosterStatus.INACTIVE);
+
+      const error = await service.remove(orgAdmin, 88).catch((e) => e);
+
+      expect(error.getResponse().error.code).toBe('TOURNAMENT_NOT_MUTABLE');
+      expect(mockPrisma.tournamentRoster.update).not.toHaveBeenCalled();
+    });
+
+    it('throws 404 for a missing/cross-tenant roster entry', async () => {
+      mockPrisma.tournamentRoster.findFirst.mockResolvedValue(null);
+
+      const err = await service.remove(orgAdmin, 999).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
     });
   });
 });

@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { CreateTournamentRosterDto } from './dto/create-tournament-roster.dto';
+import { UpdateTournamentRosterDto } from './dto/update-tournament-roster.dto';
 import { TournamentRosterResponseDto } from './dto/tournament-roster-response.dto';
 
 export const tournamentRosterSelect = {
@@ -172,6 +173,130 @@ export class TournamentRostersService {
         select: tournamentRosterSelect,
       }),
     );
+  }
+
+  async update(
+    actor: JwtPayload,
+    id: number,
+    dto: UpdateTournamentRosterDto,
+  ): Promise<TournamentRosterResponseDto> {
+    const target = await this.findTargetOrThrow(
+      actor.organizationId as number,
+      id,
+    );
+    this.assertMutable(target.tournament.status);
+
+    if (target.status !== RosterStatus.ACTIVE) {
+      throw ApiException.unprocessable(
+        'The roster entry is not active.',
+        'INACTIVE_REGISTRATION',
+      );
+    }
+
+    await this.assertActorTeamAccess(actor, target.tournamentTeam.teamId);
+
+    if (dto.role !== undefined) {
+      const affiliation =
+        await this.prisma.organizationUserAffiliation.findFirst({
+          where: {
+            userId: target.userId,
+            organizationId: actor.organizationId as number,
+            teamId: target.tournamentTeam.teamId,
+            status: AffiliationStatus.ACTIVE,
+            isDeleted: false,
+          },
+          select: { id: true, role: true },
+        });
+      if (!affiliation) {
+        throw ApiException.unprocessable(
+          'The user does not have an active affiliation with this team.',
+          'INVALID_ROSTER_MEMBER',
+        );
+      }
+      if ((affiliation.role as string) !== (dto.role as string)) {
+        throw ApiException.unprocessable(
+          "The user's active affiliation role does not match the roster role.",
+          'INVALID_ROSTER_ROLE',
+        );
+      }
+
+      if (dto.role === RosterRole.ATHLETE) {
+        const otherTeamActive = await this.prisma.tournamentRoster.findFirst({
+          where: {
+            tournamentId: target.tournamentId,
+            userId: target.userId,
+            role: RosterRole.ATHLETE,
+            status: RosterStatus.ACTIVE,
+            isDeleted: false,
+            tournamentTeamId: { not: target.tournamentTeamId },
+          },
+          select: { id: true },
+        });
+        if (otherTeamActive) {
+          throw ApiException.conflict(
+            'This athlete is already active for another team in the tournament.',
+            'ATHLETE_ALREADY_REGISTERED',
+          );
+        }
+      }
+    }
+
+    const data: Prisma.TournamentRosterUpdateInput = {
+      ...(dto.role === undefined ? {} : { role: dto.role }),
+      ...(dto.jerseyNumber === undefined
+        ? {}
+        : { jerseyNumberSnapshot: dto.jerseyNumber }),
+    };
+
+    const { tournament: _tournament, tournamentTeam: _tournamentTeam, ...currentRow } = target;
+    if (Object.keys(data).length === 0) return this.toResponse(currentRow);
+
+    return this.toResponse(
+      await this.prisma.tournamentRoster.update({
+        where: { id },
+        data,
+        select: tournamentRosterSelect,
+      }),
+    );
+  }
+
+  async remove(actor: JwtPayload, id: number): Promise<void> {
+    const target = await this.findTargetOrThrow(
+      actor.organizationId as number,
+      id,
+    );
+    this.assertMutable(target.tournament.status);
+    await this.assertActorTeamAccess(actor, target.tournamentTeam.teamId);
+
+    if (target.status === RosterStatus.INACTIVE) return;
+
+    await this.prisma.tournamentRoster.update({
+      where: { id },
+      data: { status: RosterStatus.INACTIVE, leftAt: new Date() },
+    });
+  }
+
+  private async findTargetOrThrow(
+    organizationId: number,
+    id: number,
+  ): Promise<
+    TournamentRosterRow & {
+      tournament: { status: TournamentStatus };
+      tournamentTeam: { teamId: number };
+    }
+  > {
+    const target = await this.prisma.tournamentRoster.findFirst({
+      where: { id, organizationId, isDeleted: false },
+      select: {
+        ...tournamentRosterSelect,
+        tournament: { select: { status: true } },
+        tournamentTeam: { select: { teamId: true } },
+      },
+    });
+    if (!target) {
+      throw ApiException.notFound('Tournament roster not found');
+    }
+    return target;
   }
 
   private async assertActorTeamAccess(
