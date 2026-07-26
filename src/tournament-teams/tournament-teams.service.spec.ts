@@ -246,9 +246,7 @@ describe('TournamentTeamsService', () => {
       });
       mockPrisma.team.findFirst.mockResolvedValue(null);
 
-      const error = await service
-        .create(42, 12, { teamId: 8 })
-        .catch((e) => e);
+      const error = await service.create(42, 12, { teamId: 8 }).catch((e) => e);
 
       expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
       expect(error.getResponse().error.code).toBe('INVALID_TEAM');
@@ -265,9 +263,7 @@ describe('TournamentTeamsService', () => {
       });
       mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(null);
 
-      const error = await service
-        .create(42, 12, { teamId: 8 })
-        .catch((e) => e);
+      const error = await service.create(42, 12, { teamId: 8 }).catch((e) => e);
 
       expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
       expect(error.getResponse().error.code).toBe('INVALID_TEAM');
@@ -290,9 +286,7 @@ describe('TournamentTeamsService', () => {
         status: TournamentTeamStatus.ACTIVE,
       });
 
-      const error = await service
-        .create(42, 12, { teamId: 8 })
-        .catch((e) => e);
+      const error = await service.create(42, 12, { teamId: 8 }).catch((e) => e);
 
       expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
       expect(error.getResponse().error.code).toBe('DUPLICATE_RECORD');
@@ -343,9 +337,7 @@ describe('TournamentTeamsService', () => {
       arrangeActiveRegistration(TournamentStatus.IN_PROGRESS);
       mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValue({ id: 99 });
 
-      const error = await service
-        .update(42, 41, { seed: 2 })
-        .catch((e) => e);
+      const error = await service.update(42, 41, { seed: 2 }).catch((e) => e);
 
       expect(error.getResponse().error.code).toBe('REGISTRATION_IN_USE');
       expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
@@ -375,9 +367,7 @@ describe('TournamentTeamsService', () => {
     it('rejects a seed edit on a withdrawn registration with 422 INACTIVE_REGISTRATION', async () => {
       arrangeWithdrawnRegistration(TournamentStatus.REGISTRATION);
 
-      const error = await service
-        .update(42, 41, { seed: 1 })
-        .catch((e) => e);
+      const error = await service.update(42, 41, { seed: 1 }).catch((e) => e);
 
       expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
       expect(error.getResponse().error.code).toBe('INACTIVE_REGISTRATION');
@@ -388,9 +378,7 @@ describe('TournamentTeamsService', () => {
       async (status) => {
         arrangeActiveRegistration(status);
 
-        const error = await service
-          .update(42, 41, { seed: 1 })
-          .catch((e) => e);
+        const error = await service.update(42, 41, { seed: 1 }).catch((e) => e);
 
         expect(error.getResponse().error.code).toBe('TOURNAMENT_NOT_MUTABLE');
       },

@@ -88,15 +88,17 @@ export class TournamentTeamsService {
       );
     }
 
-    const affiliation = await this.prisma.organizationTeamAffiliation.findFirst({
-      where: {
-        organizationId,
-        teamId: dto.teamId,
-        status: AffiliationStatus.ACTIVE,
-        isDeleted: false,
+    const affiliation = await this.prisma.organizationTeamAffiliation.findFirst(
+      {
+        where: {
+          organizationId,
+          teamId: dto.teamId,
+          status: AffiliationStatus.ACTIVE,
+          isDeleted: false,
+        },
+        select: { id: true },
       },
-      select: { id: true },
-    });
+    );
     if (!affiliation) {
       throw ApiException.unprocessable(
         'The team is not actively affiliated with this organization.',
@@ -144,13 +146,11 @@ export class TournamentTeamsService {
     id: number,
     dto: UpdateTournamentTeamDto,
   ): Promise<TournamentTeamResponseDto> {
-    const registration = await this.findRegistrationOrThrow(
-      organizationId,
-      id,
-    );
+    const registration = await this.findRegistrationOrThrow(organizationId, id);
     this.assertMutable(registration.tournament.status);
 
-    const { tournament: _tournament, ...currentResponse } = registration;
+    const { tournament, ...currentResponse } = registration;
+    void tournament;
 
     if (registration.status !== TournamentTeamStatus.ACTIVE) {
       throw ApiException.unprocessable(
@@ -186,10 +186,7 @@ export class TournamentTeamsService {
   }
 
   async remove(organizationId: number, id: number): Promise<void> {
-    const registration = await this.findRegistrationOrThrow(
-      organizationId,
-      id,
-    );
+    const registration = await this.findRegistrationOrThrow(organizationId, id);
     this.assertMutable(registration.tournament.status);
 
     if (registration.status === TournamentTeamStatus.WITHDRAWN) return;

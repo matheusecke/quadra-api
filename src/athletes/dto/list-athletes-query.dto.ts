@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { OrgRole } from '@prisma/client';
-import { Transform, Type } from 'class-transformer';
+import { Transform, type TransformFnParams, Type } from 'class-transformer';
 import {
   IsArray,
   IsIn,
@@ -15,7 +15,8 @@ export class ListAthletesQueryDto extends PaginationDefaultsDto {
   @ApiPropertyOptional({ example: 'rafael' })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => {
+  @Transform((params: TransformFnParams) => {
+    const value: unknown = params.value;
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;

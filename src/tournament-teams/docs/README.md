@@ -4,12 +4,12 @@ Registration lifecycle of a global `Team` into a specific `Tournament`. `Tournam
 
 ## Endpoints
 
-| Method   | Path                        | Guards                                              | Purpose |
-| -------- | --------------------------- | ---------------------------------------------------- | ------- |
-| `GET`    | `/tournaments/:id/teams`    | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`)       | Paginated list of registrations for a tournament; filters: `q`, `ids`, `status` |
-| `POST`   | `/tournaments/:id/teams`    | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`)          | Register a team, or reactivate its withdrawn registration |
-| `PATCH`  | `/tournament-teams/:id`     | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`)          | Update the bracket seed only |
-| `DELETE` | `/tournament-teams/:id`     | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`)          | Withdraw the registration (status only, no hard delete) |
+| Method   | Path                     | Guards                                          | Purpose                                                                         |
+| -------- | ------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `GET`    | `/tournaments/:id/teams` | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Paginated list of registrations for a tournament; filters: `q`, `ids`, `status` |
+| `POST`   | `/tournaments/:id/teams` | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`)    | Register a team, or reactivate its withdrawn registration                       |
+| `PATCH`  | `/tournament-teams/:id`  | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`)    | Update the bracket seed only                                                    |
+| `DELETE` | `/tournament-teams/:id`  | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`)    | Withdraw the registration (status only, no hard delete)                         |
 
 `GET /tournaments/:id/teams` uses `PaginationInterceptor` — response shape in [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md).
 

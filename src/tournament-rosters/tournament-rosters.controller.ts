@@ -73,7 +73,8 @@ export class TournamentRostersController {
   @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN, OrgRole.COACHING_STAFF)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Add a member to a tournament roster, or reactivate an inactive entry',
+    summary:
+      'Add a member to a tournament roster, or reactivate an inactive entry',
   })
   @ApiOkResponse({ type: TournamentRosterResponseDto })
   create(
@@ -85,7 +86,9 @@ export class TournamentRostersController {
 
   @Patch(':id')
   @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN, OrgRole.COACHING_STAFF)
-  @ApiOperation({ summary: 'Update the jersey number or role of a roster entry' })
+  @ApiOperation({
+    summary: 'Update the jersey number or role of a roster entry',
+  })
   @ApiParam({ name: 'id', example: 88, description: 'TournamentRoster id.' })
   @ApiOkResponse({ type: TournamentRosterResponseDto })
   update(

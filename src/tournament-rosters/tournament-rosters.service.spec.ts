@@ -131,9 +131,7 @@ describe('TournamentRostersService', () => {
   describe('findAll', () => {
     it('returns active roster rows for a tenant registration without pagination', async () => {
       mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
-      mockPrisma.tournamentRoster.findMany.mockResolvedValue([
-        activeRosterRow,
-      ]);
+      mockPrisma.tournamentRoster.findMany.mockResolvedValue([activeRosterRow]);
 
       const result = await service.findAll(42, 41);
 
@@ -160,9 +158,7 @@ describe('TournamentRostersService', () => {
 
     it('reads the roster of a withdrawn tournament team without a status filter', async () => {
       mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
-      mockPrisma.tournamentRoster.findMany.mockResolvedValue([
-        activeRosterRow,
-      ]);
+      mockPrisma.tournamentRoster.findMany.mockResolvedValue([activeRosterRow]);
 
       const result = await service.findAll(42, 41);
 
@@ -346,9 +342,7 @@ describe('TournamentRostersService', () => {
         .catch((e) => e);
 
       expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
-      expect(error.getResponse().error.code).toBe(
-        'ATHLETE_ALREADY_REGISTERED',
-      );
+      expect(error.getResponse().error.code).toBe('ATHLETE_ALREADY_REGISTERED');
       expect(mockPrisma.tournamentRoster.create).not.toHaveBeenCalled();
     });
 
@@ -519,9 +513,7 @@ describe('TournamentRostersService', () => {
         .catch((e) => e);
 
       expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
-      expect(error.getResponse().error.code).toBe(
-        'ATHLETE_ALREADY_REGISTERED',
-      );
+      expect(error.getResponse().error.code).toBe('ATHLETE_ALREADY_REGISTERED');
       expect(mockPrisma.tournamentRoster.update).not.toHaveBeenCalled();
     });
 
@@ -578,9 +570,7 @@ describe('TournamentRostersService', () => {
 
     it('deactivates with leftAt and keeps the historical row', async () => {
       arrangeRosterTarget(TournamentStatus.IN_PROGRESS);
-      jest
-        .useFakeTimers()
-        .setSystemTime(new Date('2026-07-26T18:45:00.000Z'));
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-26T18:45:00.000Z'));
 
       await service.remove(orgAdmin, 88);
 

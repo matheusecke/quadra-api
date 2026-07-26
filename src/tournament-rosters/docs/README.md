@@ -4,12 +4,12 @@ Membership of a global `User` in a specific `TournamentTeam` registration. `Tour
 
 ## Endpoints
 
-| Method   | Path                                            | Guards                                                                     | Purpose |
-| -------- | ------------------------------------------------ | --------------------------------------------------------------------------- | ------- |
-| `GET`    | `/tournament-teams/:id/tournament-rosters`      | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`)                            | Full active roster for a registration; not paginated, no query parameters |
-| `POST`   | `/tournament-rosters`                           | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`, `TEAM_ADMIN`, `COACHING_STAFF`) | Add a member, or reactivate an inactive roster entry |
-| `PATCH`  | `/tournament-rosters/:id`                       | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`, `TEAM_ADMIN`, `COACHING_STAFF`) | Update `jerseyNumber` and/or `role` |
-| `DELETE` | `/tournament-rosters/:id`                       | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`, `TEAM_ADMIN`, `COACHING_STAFF`) | Deactivate a roster entry (status only, no hard delete) |
+| Method   | Path                                       | Guards                                                                       | Purpose                                                                   |
+| -------- | ------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `GET`    | `/tournament-teams/:id/tournament-rosters` | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`)                              | Full active roster for a registration; not paginated, no query parameters |
+| `POST`   | `/tournament-rosters`                      | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`, `TEAM_ADMIN`, `COACHING_STAFF`) | Add a member, or reactivate an inactive roster entry                      |
+| `PATCH`  | `/tournament-rosters/:id`                  | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`, `TEAM_ADMIN`, `COACHING_STAFF`) | Update `jerseyNumber` and/or `role`                                       |
+| `DELETE` | `/tournament-rosters/:id`                  | `JwtAuthGuard`, `OrgRoleGuard` (`ORG_ADMIN`, `TEAM_ADMIN`, `COACHING_STAFF`) | Deactivate a roster entry (status only, no hard delete)                   |
 
 `GET` returns a plain `{ data: [...] }` array — no `PaginationInterceptor`, no `page`/`limit`. The empty `ListTournamentRostersQueryDto` makes the global `ValidationPipe` (`whitelist: true`, `forbidNonWhitelisted: true`) reject any query parameter with `400 VALIDATION_ERROR`.
 

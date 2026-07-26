@@ -4,9 +4,9 @@ Roster-eligible user catalog. Despite the route name, this is a selector over `O
 
 ## Endpoints
 
-| Method | Path        | Guards                                          | Purpose |
-| ------ | ----------- | ------------------------------------------------ | ------- |
-| `GET`  | `/athletes` | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`)   | Paginated catalog of active, roster-eligible users in the active JWT organization; filters: `q`, `ids`, `teamId`, `role` |
+| Method | Path        | Guards                                          | Purpose                                                                                                                  |
+| ------ | ----------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/athletes` | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Paginated catalog of active, roster-eligible users in the active JWT organization; filters: `q`, `ids`, `teamId`, `role` |
 
 `GET /athletes` uses `PaginationInterceptor` — response shape in [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md).
 

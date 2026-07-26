@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { AffiliationStatus, EntityStatus, OrgRole, Prisma, RosterRole } from '@prisma/client';
+import {
+  AffiliationStatus,
+  EntityStatus,
+  OrgRole,
+  Prisma,
+  RosterRole,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListAthletesQueryDto } from './dto/list-athletes-query.dto';
 import { AthleteCatalogResponseDto } from './dto/athlete-catalog-response.dto';
@@ -26,9 +32,7 @@ export class AthletesService {
       isDeleted: false,
       status: EntityStatus.ACTIVE,
       ...(query.ids ? { id: { in: query.ids } } : {}),
-      ...(query.q
-        ? { name: { contains: query.q, mode: 'insensitive' } }
-        : {}),
+      ...(query.q ? { name: { contains: query.q, mode: 'insensitive' } } : {}),
     };
     const where: Prisma.OrganizationUserAffiliationWhereInput = {
       organizationId,

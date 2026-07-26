@@ -4,14 +4,14 @@ Team lifecycle management. Teams are affiliated to organizations through `Organi
 
 ## Endpoints
 
-| Method  | Path                  | Guards                                                    | Purpose |
-| ------- | --------------------- | ---------------------------------------------------------- | ------- |
-| `POST`  | `/teams`              | `JwtAuthGuard`, `SystemAdminGuard`                          | Create team; requires `name` and `shortName`; auto-generates slug from name |
-| `GET`   | `/teams`              | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`)              | Paginated catalog scoped to the active JWT organization; filters: `q` (name search), `ids`, `status` |
-| `GET`   | `/teams/:id`          | `JwtAuthGuard`                                              | Get by id |
-| `PATCH` | `/teams/:id`          | `JwtAuthGuard`, `SystemAdminGuard`                          | Update name; re-generates slug on rename |
-| `PATCH` | `/teams/:id/status`   | `JwtAuthGuard`, `SystemAdminGuard`                          | Update status; system admin only |
-| `DELETE`| `/teams/:id`          | `JwtAuthGuard`, `SystemAdminGuard`                          | Soft delete; sets `isDeleted: true` + `status: INACTIVE` |
+| Method   | Path                | Guards                                          | Purpose                                                                                              |
+| -------- | ------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST`   | `/teams`            | `JwtAuthGuard`, `SystemAdminGuard`              | Create team; requires `name` and `shortName`; auto-generates slug from name                          |
+| `GET`    | `/teams`            | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Paginated catalog scoped to the active JWT organization; filters: `q` (name search), `ids`, `status` |
+| `GET`    | `/teams/:id`        | `JwtAuthGuard`                                  | Get by id                                                                                            |
+| `PATCH`  | `/teams/:id`        | `JwtAuthGuard`, `SystemAdminGuard`              | Update name; re-generates slug on rename                                                             |
+| `PATCH`  | `/teams/:id/status` | `JwtAuthGuard`, `SystemAdminGuard`              | Update status; system admin only                                                                     |
+| `DELETE` | `/teams/:id`        | `JwtAuthGuard`, `SystemAdminGuard`              | Soft delete; sets `isDeleted: true` + `status: INACTIVE`                                             |
 
 `GET /teams` uses `PaginationInterceptor` — response shape in [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md).
 

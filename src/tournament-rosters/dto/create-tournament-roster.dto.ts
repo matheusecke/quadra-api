@@ -1,6 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min, ValidateIf } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 import { RosterRole } from '@prisma/client';
 
 export class CreateTournamentRosterDto {

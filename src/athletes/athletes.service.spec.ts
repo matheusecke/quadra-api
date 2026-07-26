@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { AffiliationStatus, BasketballPosition, EntityStatus, OrgRole } from '@prisma/client';
+import {
+  AffiliationStatus,
+  BasketballPosition,
+  EntityStatus,
+  OrgRole,
+} from '@prisma/client';
 import { AthletesService } from './athletes.service';
 import { PrismaService } from '../prisma/prisma.service';
 

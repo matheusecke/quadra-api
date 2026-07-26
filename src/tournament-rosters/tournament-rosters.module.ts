@@ -6,10 +6,7 @@ import {
 import { TournamentRostersService } from './tournament-rosters.service';
 
 @Module({
-  controllers: [
-    TournamentRostersByTeamController,
-    TournamentRostersController,
-  ],
+  controllers: [TournamentRostersByTeamController, TournamentRostersController],
   providers: [TournamentRostersService],
   exports: [TournamentRostersService],
 })

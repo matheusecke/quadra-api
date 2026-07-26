@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { EntityStatus } from '@prisma/client';
-import { Transform } from 'class-transformer';
+import { Transform, type TransformFnParams } from 'class-transformer';
 import {
   IsArray,
   IsEnum,
@@ -15,7 +15,8 @@ export class ListTeamsQueryDto extends PaginationDefaultsDto {
   @ApiProperty({ example: 'São Paulo', required: false })
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => {
+  @Transform((params: TransformFnParams) => {
+    const value: unknown = params.value;
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;

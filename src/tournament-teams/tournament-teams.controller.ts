@@ -48,7 +48,7 @@ export class TournamentTeamsByTournamentController {
   @Get(':id/teams')
   @OrgRoles(...ANY_ORG_ROLE)
   @UseInterceptors(PaginationInterceptor)
-  @ApiOperation({ summary: 'List a tournament\'s team registrations' })
+  @ApiOperation({ summary: "List a tournament's team registrations" })
   @ApiParam({ name: 'id', example: 12, description: 'Tournament id.' })
   @ApiPaginatedOkResponse(TournamentTeamResponseDto)
   findAll(
@@ -67,7 +67,8 @@ export class TournamentTeamsByTournamentController {
   @OrgRoles(OrgRole.ORG_ADMIN)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Register a team in the tournament, or reactivate a withdrawn registration',
+    summary:
+      'Register a team in the tournament, or reactivate a withdrawn registration',
   })
   @ApiParam({ name: 'id', example: 12, description: 'Tournament id.' })
   @ApiOkResponse({ type: TournamentTeamResponseDto })
@@ -96,7 +97,9 @@ export class TournamentTeamsController {
 
   @Patch(':id')
   @OrgRoles(OrgRole.ORG_ADMIN)
-  @ApiOperation({ summary: 'Update the seed of a tournament team registration' })
+  @ApiOperation({
+    summary: 'Update the seed of a tournament team registration',
+  })
   @ApiParam({ name: 'id', example: 41, description: 'TournamentTeam id.' })
   @ApiOkResponse({ type: TournamentTeamResponseDto })
   update(
@@ -120,9 +123,6 @@ export class TournamentTeamsController {
     @Param('id', ParseIntApiPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
-    await this.tournamentTeamsService.remove(
-      user.organizationId as number,
-      id,
-    );
+    await this.tournamentTeamsService.remove(user.organizationId as number, id);
   }
 }

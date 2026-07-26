@@ -51,11 +51,7 @@ export class TournamentRostersService {
         status: RosterStatus.ACTIVE,
         isDeleted: false,
       },
-      orderBy: [
-        { role: 'asc' },
-        { displayNameSnapshot: 'asc' },
-        { id: 'asc' },
-      ],
+      orderBy: [{ role: 'asc' }, { displayNameSnapshot: 'asc' }, { id: 'asc' }],
       select: tournamentRosterSelect,
     });
 
@@ -248,7 +244,9 @@ export class TournamentRostersService {
         : { jerseyNumberSnapshot: dto.jerseyNumber }),
     };
 
-    const { tournament: _tournament, tournamentTeam: _tournamentTeam, ...currentRow } = target;
+    const { tournament, tournamentTeam, ...currentRow } = target;
+    void tournament;
+    void tournamentTeam;
     if (Object.keys(data).length === 0) return this.toResponse(currentRow);
 
     return this.toResponse(
@@ -304,17 +302,19 @@ export class TournamentRostersService {
     teamId: number,
   ): Promise<void> {
     if (actor.role === OrgRole.ORG_ADMIN) return;
-    const affiliation = await this.prisma.organizationUserAffiliation.findFirst({
-      where: {
-        userId: actor.sub,
-        organizationId: actor.organizationId as number,
-        teamId,
-        role: actor.role as OrgRole,
-        status: AffiliationStatus.ACTIVE,
-        isDeleted: false,
+    const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
+      {
+        where: {
+          userId: actor.sub,
+          organizationId: actor.organizationId as number,
+          teamId,
+          role: actor.role as OrgRole,
+          status: AffiliationStatus.ACTIVE,
+          isDeleted: false,
+        },
+        select: { id: true },
       },
-      select: { id: true },
-    });
+    );
     if (!affiliation) {
       throw ApiException.forbidden(
         'You can only manage the roster of your current team.',
@@ -343,8 +343,8 @@ export class TournamentRostersService {
       );
     }
 
-    const affiliation =
-      await this.prisma.organizationUserAffiliation.findFirst({
+    const affiliation = await this.prisma.organizationUserAffiliation.findFirst(
+      {
         where: {
           userId,
           organizationId,
@@ -353,7 +353,8 @@ export class TournamentRostersService {
           isDeleted: false,
         },
         select: { id: true, role: true, jerseyNumber: true },
-      });
+      },
+    );
     if (!affiliation) {
       throw ApiException.unprocessable(
         'The user does not have an active affiliation with this team.',

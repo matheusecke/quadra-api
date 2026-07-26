@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpStatus } from '@nestjs/common';
-import { AffiliationStatus, BrazilianState, EntityStatus } from '@prisma/client';
+import {
+  AffiliationStatus,
+  BrazilianState,
+  EntityStatus,
+} from '@prisma/client';
 import { TeamsService } from './teams.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';

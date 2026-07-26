@@ -36,20 +36,20 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 
 ### Co-located with modules (`src/<domain>/docs/README.md`)
 
-| Module                         | File                                                                                                        | When to load                                                |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Prisma client                  | [`src/prisma/docs/README.md`](../src/prisma/docs/README.md)                                                 | DB access, lifecycle, schema location                       |
-| Auth                           | [`src/auth/docs/README.md`](../src/auth/docs/README.md)                                                     | Login, session, org context, authorization                  |
-| Users                          | [`src/users/docs/README.md`](../src/users/docs/README.md)                                                   | User CRUD, admin rules                                      |
-| Organizations                  | [`src/organizations/docs/README.md`](../src/organizations/docs/README.md)                                   | Org CRUD, slug, soft delete, token revocation               |
-| Teams                          | [`src/teams/docs/README.md`](../src/teams/docs/README.md)                                                   | Team CRUD, slug, soft delete                                |
-| Organization–Team Affiliations | [`src/organization-team-affiliations/docs/README.md`](../src/organization-team-affiliations/docs/README.md) | Invite flow, token lifecycle, status transitions            |
-| Organization–User Affiliations | [`src/organization-user-affiliations/docs/README.md`](../src/organization-user-affiliations/docs/README.md) | Invite flow, role/team constraints, self-removal prevention |
-| Seasons                        | [`src/seasons/docs/README.md`](../src/seasons/docs/README.md)                                               | Season CRUD, date-only contract, archiving                  |
-| Tournament Categories          | [`src/tournament-categories/docs/README.md`](../src/tournament-categories/docs/README.md)                   | Category CRUD, slug derivation, sort order                  |
-| Tournaments                    | [`src/tournaments/docs/README.md`](../src/tournaments/docs/README.md)                                       | Tournament CRUD, completion/reopen, champion rules           |
-| Athletes                       | [`src/athletes/docs/README.md`](../src/athletes/docs/README.md)                                             | Roster-eligible user catalog for team selectors              |
-| Tournament Teams               | [`src/tournament-teams/docs/README.md`](../src/tournament-teams/docs/README.md)                             | Registration, reactivation, seed, withdrawal                 |
+| Module                         | File                                                                                                        | When to load                                                     |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Prisma client                  | [`src/prisma/docs/README.md`](../src/prisma/docs/README.md)                                                 | DB access, lifecycle, schema location                            |
+| Auth                           | [`src/auth/docs/README.md`](../src/auth/docs/README.md)                                                     | Login, session, org context, authorization                       |
+| Users                          | [`src/users/docs/README.md`](../src/users/docs/README.md)                                                   | User CRUD, admin rules                                           |
+| Organizations                  | [`src/organizations/docs/README.md`](../src/organizations/docs/README.md)                                   | Org CRUD, slug, soft delete, token revocation                    |
+| Teams                          | [`src/teams/docs/README.md`](../src/teams/docs/README.md)                                                   | Team CRUD, slug, soft delete                                     |
+| Organization–Team Affiliations | [`src/organization-team-affiliations/docs/README.md`](../src/organization-team-affiliations/docs/README.md) | Invite flow, token lifecycle, status transitions                 |
+| Organization–User Affiliations | [`src/organization-user-affiliations/docs/README.md`](../src/organization-user-affiliations/docs/README.md) | Invite flow, role/team constraints, self-removal prevention      |
+| Seasons                        | [`src/seasons/docs/README.md`](../src/seasons/docs/README.md)                                               | Season CRUD, date-only contract, archiving                       |
+| Tournament Categories          | [`src/tournament-categories/docs/README.md`](../src/tournament-categories/docs/README.md)                   | Category CRUD, slug derivation, sort order                       |
+| Tournaments                    | [`src/tournaments/docs/README.md`](../src/tournaments/docs/README.md)                                       | Tournament CRUD, completion/reopen, champion rules               |
+| Athletes                       | [`src/athletes/docs/README.md`](../src/athletes/docs/README.md)                                             | Roster-eligible user catalog for team selectors                  |
+| Tournament Teams               | [`src/tournament-teams/docs/README.md`](../src/tournament-teams/docs/README.md)                             | Registration, reactivation, seed, withdrawal                     |
 | Tournament Rosters             | [`src/tournament-rosters/docs/README.md`](../src/tournament-rosters/docs/README.md)                         | Roster membership, role/jersey, team-scoped writes, deactivation |
 
 ## Conventions (high level)
