@@ -14,14 +14,14 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 
 ## Implemented today (snapshot)
 
-- NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`, `SeasonsModule`, `TournamentCategoriesModule` (`src/app.module.ts`).
+- NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`, `SeasonsModule`, `TournamentCategoriesModule`, `TournamentsModule` (`src/app.module.ts`).
 - Bootstrap: `ValidationPipe`, global exception filters, `cookie-parser`, CORS with credentials, Swagger at `/api`, port `3001` by default (`src/main.ts`).
 - Prisma multi-file schema under `prisma/schema/` covering multi-tenant core + auth persistence: `User`, `Organization`, `Team`, `OrganizationUserAffiliation`, `OrganizationTeamAffiliation`, `RefreshToken`.
-- Sports domain schema: `Season` and `TournamentCategory` now have an application module (CRUD, slug derivation, archiving); the remaining twelve models are tables only — no application module yet: `Tournament`, `TournamentTeam`, `TournamentRoster`, `TournamentGroup`, `TournamentGroupTeam`, `TournamentBracketRound`, `TournamentBracketSlot`, `Match`, `MatchTeam`, `MatchPeriod`, `MatchRoster`, `PlayerMatchStatistic`. See [DATABASE.md](./DATABASE.md).
+- Sports domain schema: `Season`, `TournamentCategory` and `Tournament` now have an application module (CRUD, slug derivation, completion/reopen, champion suggestion); the remaining eleven models are tables only — no application module yet: `TournamentTeam`, `TournamentRoster`, `TournamentGroup`, `TournamentGroupTeam`, `TournamentBracketRound`, `TournamentBracketSlot`, `Match`, `MatchTeam`, `MatchPeriod`, `MatchRoster`, `PlayerMatchStatistic`. See [DATABASE.md](./DATABASE.md).
 - Shared utilities:
   - `src/common/utils/slugify.ts` — slug generation used by `OrganizationsModule` and `TeamsModule`.
   - `src/common/utils/affiliation-token.util.ts` — invite token generation (`crypto.randomBytes(32)`) and SHA-256 hashing used by both affiliation modules.
-- **Derived, never persisted:** standings/classification (FIBA Appendix D), registration-open state, and the match read model — all computed by query in the next phase, no columns.
+- **Derived, never persisted:** `isRegistrationOpen` and the tournament match counters (`TournamentsService`, implemented) — plus standings/classification (FIBA Appendix D) and the match read model, computed by query in a later phase, no columns.
 
 ## Document map (by concern)
 
@@ -47,6 +47,7 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 | Organization–User Affiliations | [`src/organization-user-affiliations/docs/README.md`](../src/organization-user-affiliations/docs/README.md) | Invite flow, role/team constraints, self-removal prevention |
 | Seasons                        | [`src/seasons/docs/README.md`](../src/seasons/docs/README.md)                                               | Season CRUD, date-only contract, archiving                  |
 | Tournament Categories          | [`src/tournament-categories/docs/README.md`](../src/tournament-categories/docs/README.md)                   | Category CRUD, slug derivation, sort order                  |
+| Tournaments                    | [`src/tournaments/docs/README.md`](../src/tournaments/docs/README.md)                                       | Tournament CRUD, completion/reopen, champion rules           |
 
 ## Conventions (high level)
 
