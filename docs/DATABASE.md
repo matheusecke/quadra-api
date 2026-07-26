@@ -37,7 +37,7 @@ This document is the source of truth for database naming, Prisma mapping, and mi
 
 ## Sports Domain Tables
 
-Added by the `sports_module_schema` migration. No application module exists for them yet — the tables are physically present and reflected in Prisma Client, and their services/controllers are a later phase.
+Added by the `sports_module_schema` migration. `Season`, `TournamentCategory` and `Tournament` now have an application module; the rest are physically present and reflected in Prisma Client, with services/controllers arriving in a later phase.
 
 | Prisma model | Database table | Purpose |
 | --- | --- | --- |
