@@ -11,6 +11,7 @@ import { OrganizationTeamAffiliationsModule } from './organization-team-affiliat
 import { OrganizationUserAffiliationsModule } from './organization-user-affiliations/organization-user-affiliations.module';
 import { SeasonsModule } from './seasons/seasons.module';
 import { TournamentCategoriesModule } from './tournament-categories/tournament-categories.module';
+import { TournamentsModule } from './tournaments/tournaments.module';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 
 /**
@@ -50,6 +51,7 @@ function skipThrottlerForSwaggerPath(context: ExecutionContext): boolean {
     OrganizationUserAffiliationsModule,
     SeasonsModule,
     TournamentCategoriesModule,
+    TournamentsModule,
   ],
   providers: [
     {

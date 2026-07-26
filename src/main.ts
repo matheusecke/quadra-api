@@ -110,6 +110,10 @@ async function bootstrap(): Promise<void> {
       'tournament-categories',
       'Controlled division vocabulary per organization (Sub-19, Adulto Masculino, …).',
     )
+    .addTag(
+      'tournaments',
+      'Tournament CRUD, completion/reopen transitions, and champion suggestion.',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig, {
