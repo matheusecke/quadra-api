@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { EntityStatus } from '@prisma/client';
+import { BrazilianState, EntityStatus } from '@prisma/client';
 
 export class TeamResponseDto {
   @ApiProperty({ example: 1 })
@@ -13,6 +13,16 @@ export class TeamResponseDto {
 
   @ApiProperty({ example: 'sao-paulo-fc' })
   slug!: string;
+
+  @ApiProperty({ example: 'Campinas', nullable: true })
+  city!: string | null;
+
+  @ApiProperty({
+    enum: BrazilianState,
+    enumName: 'BrazilianState',
+    nullable: true,
+  })
+  state!: BrazilianState | null;
 
   @ApiProperty({
     enum: EntityStatus,

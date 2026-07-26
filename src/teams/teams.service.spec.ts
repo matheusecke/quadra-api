@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpStatus } from '@nestjs/common';
-import { AffiliationStatus, EntityStatus } from '@prisma/client';
+import { AffiliationStatus, BrazilianState, EntityStatus } from '@prisma/client';
 import { TeamsService } from './teams.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
@@ -20,6 +20,8 @@ const baseTeam = {
   name: 'São Paulo FC',
   shortName: 'SPF',
   slug: 'sao-paulo-fc',
+  city: 'São Paulo',
+  state: BrazilianState.SP,
   status: EntityStatus.ACTIVE,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   updatedAt: new Date('2026-01-02T00:00:00.000Z'),
@@ -81,70 +83,51 @@ describe('TeamsService', () => {
   });
 
   describe('findAll', () => {
-    it('returns paginated count and data', async () => {
-      mockPrisma.team.count.mockResolvedValue(2);
-      mockPrisma.team.findMany.mockResolvedValue([baseTeam]);
-
-      const result = await service.findAll({
-        page: 1,
-        limit: 10,
-        q: 'São',
-        status: EntityStatus.ACTIVE,
-      });
-
-      expect(mockPrisma.team.count).toHaveBeenCalledWith({
-        where: {
-          AND: [
-            { isDeleted: false },
-            { status: EntityStatus.ACTIVE },
-            { name: { contains: 'São', mode: 'insensitive' } },
-          ],
-        },
-      });
-      expect(mockPrisma.team.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          skip: 0,
-          take: 10,
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        }),
-      );
-      expect(result).toEqual({ count: 2, data: [baseTeam] });
-    });
-
-    it('includes organizationAffiliations filter when organizationId is provided', async () => {
+    it('scopes and filters the catalog through an active organization affiliation', async () => {
       mockPrisma.team.count.mockResolvedValue(1);
       mockPrisma.team.findMany.mockResolvedValue([baseTeam]);
 
-      await service.findAll({ page: 1, limit: 10, organizationId: 42 });
+      await service.findAll(42, {
+        page: 2,
+        limit: 5,
+        q: 'São',
+        ids: [1, 7],
+        status: EntityStatus.ACTIVE,
+      });
 
-      expect(mockPrisma.team.count).toHaveBeenCalledWith({
-        where: {
-          AND: expect.arrayContaining([
-            {
-              organizationAffiliations: {
-                some: {
-                  organizationId: 42,
-                  isDeleted: false,
-                  status: AffiliationStatus.ACTIVE,
-                },
+      const where = {
+        AND: [
+          { isDeleted: false },
+          {
+            organizationAffiliations: {
+              some: {
+                organizationId: 42,
+                isDeleted: false,
+                status: AffiliationStatus.ACTIVE,
               },
             },
-          ]),
-        },
+          },
+          { status: EntityStatus.ACTIVE },
+          { name: { contains: 'São', mode: 'insensitive' } },
+          { id: { in: [1, 7] } },
+        ],
+      };
+      expect(mockPrisma.team.count).toHaveBeenCalledWith({ where });
+      expect(mockPrisma.team.findMany).toHaveBeenCalledWith({
+        where,
+        skip: 5,
+        take: 5,
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        select: expect.objectContaining({ city: true, state: true }),
       });
     });
 
-    it('does not include organizationAffiliations filter when organizationId is absent', async () => {
+    it('returns both entity statuses when status is omitted', async () => {
       mockPrisma.team.count.mockResolvedValue(2);
       mockPrisma.team.findMany.mockResolvedValue([baseTeam]);
-
-      await service.findAll({ page: 1, limit: 10 });
-
-      const andFilters: object[] =
-        mockPrisma.team.count.mock.calls[0][0].where.AND;
-      expect(andFilters.some((f) => 'organizationAffiliations' in f)).toBe(
-        false,
-      );
+      await service.findAll(42, { page: 1, limit: 10 });
+      const filters = mockPrisma.team.count.mock.calls[0][0].where.AND;
+      expect(filters).not.toContainEqual({ status: expect.anything() });
     });
   });
 
