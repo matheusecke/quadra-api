@@ -324,7 +324,7 @@ export class TournamentsService {
     }
 
     const slots = await this.prisma.tournamentBracketSlot.findMany({
-      where: { tournamentId: id, organizationId, isDeleted: false },
+      where: { tournamentId: id, isDeleted: false },
       select: {
         winnerTournamentTeamId: true,
         round: { select: { number: true } },

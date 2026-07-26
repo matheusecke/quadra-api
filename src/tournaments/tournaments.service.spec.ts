@@ -1036,6 +1036,22 @@ describe('TournamentsService', () => {
       expect(result.championTournamentTeamId).toBeNull();
     });
 
+    it('scopes bracket slots by tournament alone, without repeating organizationId', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        format: TournamentFormat.KNOCKOUT,
+      });
+      mockPrisma.tournamentBracketSlot.findMany.mockResolvedValue([]);
+
+      await service.championSuggestion(ORG_ID, 12);
+
+      expect(mockPrisma.tournamentBracketSlot.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { tournamentId: 12, isDeleted: false },
+        }),
+      );
+    });
+
     it('returns the winner of the only slot in the highest round', async () => {
       mockPrisma.tournament.findFirst.mockResolvedValue({
         id: 12,
