@@ -15,6 +15,7 @@ import { TournamentsModule } from './tournaments/tournaments.module';
 import { AthletesModule } from './athletes/athletes.module';
 import { TournamentTeamsModule } from './tournament-teams/tournament-teams.module';
 import { TournamentRostersModule } from './tournament-rosters/tournament-rosters.module';
+import { TournamentGroupsModule } from './tournament-groups/tournament-groups.module';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 
 /**
@@ -58,6 +59,7 @@ function skipThrottlerForSwaggerPath(context: ExecutionContext): boolean {
     AthletesModule,
     TournamentTeamsModule,
     TournamentRostersModule,
+    TournamentGroupsModule,
   ],
   providers: [
     {

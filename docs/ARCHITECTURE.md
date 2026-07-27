@@ -14,10 +14,10 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 
 ## Implemented today (snapshot)
 
-- NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`, `SeasonsModule`, `TournamentCategoriesModule`, `TournamentsModule`, `AthletesModule`, `TournamentTeamsModule`, `TournamentRostersModule` (`src/app.module.ts`).
+- NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`, `SeasonsModule`, `TournamentCategoriesModule`, `TournamentsModule`, `AthletesModule`, `TournamentTeamsModule`, `TournamentRostersModule`, `TournamentGroupsModule` (`src/app.module.ts`).
 - Bootstrap: `ValidationPipe`, global exception filters, `cookie-parser`, CORS with credentials, Swagger at `/api`, port `3001` by default (`src/main.ts`).
 - Prisma multi-file schema under `prisma/schema/` covering multi-tenant core + auth persistence: `User`, `Organization`, `Team`, `OrganizationUserAffiliation`, `OrganizationTeamAffiliation`, `RefreshToken`.
-- Sports domain schema: `Season`, `TournamentCategory`, `Tournament`, `TournamentTeam`, and `TournamentRoster` now have an application module (CRUD, slug derivation, completion/reopen, champion suggestion, registration/roster lifecycle); the remaining nine models are tables only — no application module yet: `TournamentGroup`, `TournamentGroupTeam`, `TournamentBracketRound`, `TournamentBracketSlot`, `Match`, `MatchTeam`, `MatchPeriod`, `MatchRoster`, `PlayerMatchStatistic`. See [DATABASE.md](./DATABASE.md).
+- Sports domain schema: `Season`, `TournamentCategory`, `Tournament`, `TournamentTeam`, `TournamentRoster`, `TournamentGroup`, and `TournamentGroupTeam` now have application modules (CRUD, slug derivation, completion/reopen, champion suggestion, registration/roster lifecycle, group structure, and assignments); the remaining seven models are tables only — no application module yet: `TournamentBracketRound`, `TournamentBracketSlot`, `Match`, `MatchTeam`, `MatchPeriod`, `MatchRoster`, `PlayerMatchStatistic`. See [DATABASE.md](./DATABASE.md).
 - Shared utilities:
   - `src/common/utils/slugify.ts` — slug generation used by `OrganizationsModule` and `TeamsModule`.
   - `src/common/utils/affiliation-token.util.ts` — invite token generation (`crypto.randomBytes(32)`) and SHA-256 hashing used by both affiliation modules.
@@ -51,6 +51,7 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 | Athletes                       | [`src/athletes/docs/README.md`](../src/athletes/docs/README.md)                                             | Roster-eligible user catalog for team selectors                  |
 | Tournament Teams               | [`src/tournament-teams/docs/README.md`](../src/tournament-teams/docs/README.md)                             | Registration, reactivation, seed, withdrawal                     |
 | Tournament Rosters             | [`src/tournament-rosters/docs/README.md`](../src/tournament-rosters/docs/README.md)                         | Roster membership, role/jersey, team-scoped writes, deactivation |
+| Tournament Groups              | [`src/tournament-groups/docs/README.md`](../src/tournament-groups/docs/README.md)                           | Group structure, ordering, assignments, and soft deletion        |
 
 ## Conventions (high level)
 

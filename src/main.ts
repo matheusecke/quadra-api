@@ -104,6 +104,10 @@ async function bootstrap(): Promise<void> {
       'Tournament roster membership, role, jersey, and deactivation.',
     )
     .addTag(
+      'tournament-groups',
+      'Tournament group structure and registered-team assignments.',
+    )
+    .addTag(
       'organization-user-affiliations',
       'User membership in organizations: invites, roles, jersey numbers, and status.',
     )
