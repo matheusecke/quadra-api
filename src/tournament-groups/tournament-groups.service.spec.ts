@@ -1,6 +1,10 @@
 import { HttpStatus } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { TournamentFormat, TournamentStatus } from '@prisma/client';
+import {
+  TournamentFormat,
+  TournamentStatus,
+  TournamentTeamStatus,
+} from '@prisma/client';
 import { ApiException } from '../common/exceptions/api.exception';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -76,6 +80,28 @@ describe('TournamentGroupsService', () => {
   ): void {
     mockPrisma.tournamentGroup.findFirst.mockResolvedValue({
       ...groupRow,
+      tournament: { status, format },
+    });
+  }
+
+  function arrangeAssignableGroup(
+    status: TournamentStatus = TournamentStatus.REGISTRATION,
+  ): void {
+    mockPrisma.tournamentGroup.findFirst.mockResolvedValue({
+      ...groupRow,
+      tournament: {
+        status,
+        format: TournamentFormat.GROUP_STAGE,
+      },
+    });
+  }
+
+  function arrangeMembershipTarget(
+    status: TournamentStatus = TournamentStatus.IN_PROGRESS,
+    format: TournamentFormat = TournamentFormat.GROUP_STAGE_KNOCKOUT,
+  ): void {
+    mockPrisma.tournamentGroupTeam.findFirst.mockResolvedValue({
+      ...membershipRow,
       tournament: { status, format },
     });
   }
@@ -240,9 +266,9 @@ describe('TournamentGroupsService', () => {
       where: { tournamentId: 12, organizationId: 42, isDeleted: false },
       _max: { sortOrder: true },
     });
-    expect(mockPrisma.tournamentGroup.create.mock.calls[0][0].data.sortOrder).toBe(
-      1,
-    );
+    expect(
+      mockPrisma.tournamentGroup.create.mock.calls[0][0].data.sortOrder,
+    ).toBe(1);
   });
 
   it('returns DUPLICATE_RECORD for an active exact-name conflict', async () => {
@@ -350,10 +376,7 @@ describe('TournamentGroupsService', () => {
       'update',
       (target: TournamentGroupsService) => target.updateGroup(42, 7, {}),
     ],
-    [
-      'delete',
-      (target: TournamentGroupsService) => target.removeGroup(42, 7),
-    ],
+    ['delete', (target: TournamentGroupsService) => target.removeGroup(42, 7)],
   ])('enforces lifecycle and format on group %s', async (_label, call) => {
     for (const status of [
       TournamentStatus.COMPLETED,
@@ -367,10 +390,7 @@ describe('TournamentGroupsService', () => {
       );
     }
 
-    for (const format of [
-      TournamentFormat.LEAGUE,
-      TournamentFormat.KNOCKOUT,
-    ]) {
+    for (const format of [TournamentFormat.LEAGUE, TournamentFormat.KNOCKOUT]) {
       jest.clearAllMocks();
       arrangeGroupTarget(TournamentStatus.DRAFT, format);
       const error = await captureApiException(call(service));
@@ -417,4 +437,261 @@ describe('TournamentGroupsService', () => {
     expect((error.getResponse() as any).error.code).toBe('DUPLICATE_RECORD');
     expect(mockPrisma.tournamentGroup.update).not.toHaveBeenCalled();
   });
+
+  it.each([
+    TournamentStatus.DRAFT,
+    TournamentStatus.REGISTRATION,
+    TournamentStatus.IN_PROGRESS,
+  ])(
+    'assigns an active same-tournament registration while %s',
+    async (status) => {
+      arrangeAssignableGroup(status);
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({
+        id: 41,
+        tournamentId: 12,
+        status: TournamentTeamStatus.ACTIVE,
+      });
+      mockPrisma.tournamentGroupTeam.findFirst.mockResolvedValue(null);
+      mockPrisma.tournamentGroupTeam.create.mockResolvedValue(membershipRow);
+
+      await service.assignTeam(42, {
+        tournamentGroupId: 7,
+        tournamentTeamId: 41,
+      });
+
+      expect(mockPrisma.tournamentTeam.findFirst).toHaveBeenCalledWith({
+        where: { id: 41, organizationId: 42, isDeleted: false },
+        select: { id: true, tournamentId: true, status: true },
+      });
+      expect(mockPrisma.tournamentGroupTeam.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: 42,
+          tournamentId: 12,
+          tournamentGroupId: 7,
+          tournamentTeamId: 41,
+        },
+        select: tournamentGroupTeamSelect,
+      });
+    },
+  );
+
+  it.each([
+    [
+      'group',
+      null,
+      { id: 41, tournamentId: 12, status: TournamentTeamStatus.ACTIVE },
+    ],
+    [
+      'registration',
+      {
+        ...groupRow,
+        tournament: {
+          status: TournamentStatus.DRAFT,
+          format: TournamentFormat.GROUP_STAGE,
+        },
+      },
+      null,
+    ],
+  ])(
+    'returns 404 for a missing or cross-tenant %s',
+    async (_label, group, team) => {
+      mockPrisma.tournamentGroup.findFirst.mockResolvedValue(group);
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue(team);
+
+      const error = await captureApiException(
+        service.assignTeam(42, {
+          tournamentGroupId: 7,
+          tournamentTeamId: 41,
+        }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(mockPrisma.tournamentGroupTeam.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a withdrawn registration', async () => {
+    arrangeAssignableGroup();
+    mockPrisma.tournamentTeam.findFirst.mockResolvedValue({
+      id: 41,
+      tournamentId: 12,
+      status: TournamentTeamStatus.WITHDRAWN,
+    });
+
+    const error = await captureApiException(
+      service.assignTeam(42, {
+        tournamentGroupId: 7,
+        tournamentTeamId: 41,
+      }),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect((error.getResponse() as any).error.code).toBe(
+      'INACTIVE_REGISTRATION',
+    );
+  });
+
+  it('rejects a registration from another tournament', async () => {
+    arrangeAssignableGroup();
+    mockPrisma.tournamentTeam.findFirst.mockResolvedValue({
+      id: 41,
+      tournamentId: 99,
+      status: TournamentTeamStatus.ACTIVE,
+    });
+
+    const error = await captureApiException(
+      service.assignTeam(42, {
+        tournamentGroupId: 7,
+        tournamentTeamId: 41,
+      }),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+    expect((error.getResponse() as any).error.code).toBe(
+      'INVALID_GROUP_ASSIGNMENT',
+    );
+  });
+
+  it('rejects an active membership in any group of the tournament', async () => {
+    arrangeAssignableGroup();
+    mockPrisma.tournamentTeam.findFirst.mockResolvedValue({
+      id: 41,
+      tournamentId: 12,
+      status: TournamentTeamStatus.ACTIVE,
+    });
+    mockPrisma.tournamentGroupTeam.findFirst.mockResolvedValue({ id: 31 });
+
+    const error = await captureApiException(
+      service.assignTeam(42, {
+        tournamentGroupId: 7,
+        tournamentTeamId: 41,
+      }),
+    );
+
+    expect(mockPrisma.tournamentGroupTeam.findFirst).toHaveBeenCalledWith({
+      where: {
+        tournamentId: 12,
+        tournamentTeamId: 41,
+        organizationId: 42,
+        isDeleted: false,
+      },
+      select: { id: true },
+    });
+    expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+    expect((error.getResponse() as any).error.code).toBe(
+      'TEAM_ALREADY_ASSIGNED',
+    );
+  });
+
+  it.each([TournamentStatus.COMPLETED, TournamentStatus.CANCELLED])(
+    'rejects assignment while the tournament is %s',
+    async (status) => {
+      arrangeAssignableGroup(status);
+      const error = await captureApiException(
+        service.assignTeam(42, {
+          tournamentGroupId: 7,
+          tournamentTeamId: 41,
+        }),
+      );
+
+      expect((error.getResponse() as any).error.code).toBe(
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+      expect(mockPrisma.tournamentGroupTeam.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([TournamentFormat.LEAGUE, TournamentFormat.KNOCKOUT])(
+    'rejects assignment for %s tournaments',
+    async (format) => {
+      mockPrisma.tournamentGroup.findFirst.mockResolvedValue({
+        ...groupRow,
+        tournament: {
+          status: TournamentStatus.DRAFT,
+          format,
+        },
+      });
+      const error = await captureApiException(
+        service.assignTeam(42, {
+          tournamentGroupId: 7,
+          tournamentTeamId: 41,
+        }),
+      );
+
+      expect((error.getResponse() as any).error.code).toBe(
+        'INVALID_TOURNAMENT_FORMAT',
+      );
+      expect(mockPrisma.tournamentGroupTeam.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('soft-deletes a tenant membership during IN_PROGRESS', async () => {
+    arrangeMembershipTarget();
+
+    await service.removeTeam(42, 31);
+
+    expect(mockPrisma.tournamentGroupTeam.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 31,
+        organizationId: 42,
+        isDeleted: false,
+        tournament: { organizationId: 42, isDeleted: false },
+      },
+      select: {
+        ...tournamentGroupTeamSelect,
+        tournament: { select: { status: true, format: true } },
+      },
+    });
+    expect(mockPrisma.tournamentGroupTeam.update).toHaveBeenCalledWith({
+      where: { id: 31 },
+      data: { isDeleted: true },
+    });
+  });
+
+  it('returns 404 for a deleted, missing, or cross-tenant membership', async () => {
+    mockPrisma.tournamentGroupTeam.findFirst.mockResolvedValue(null);
+
+    const error = await captureApiException(service.removeTeam(42, 31));
+
+    expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+    expect(mockPrisma.tournamentGroupTeam.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    TournamentStatus.DRAFT,
+    TournamentStatus.REGISTRATION,
+    TournamentStatus.IN_PROGRESS,
+  ])('removes a membership while the tournament is %s', async (status) => {
+    arrangeMembershipTarget(status);
+
+    await expect(service.removeTeam(42, 31)).resolves.toBeUndefined();
+  });
+
+  it.each([TournamentStatus.COMPLETED, TournamentStatus.CANCELLED])(
+    'rejects membership removal while the tournament is %s',
+    async (status) => {
+      arrangeMembershipTarget(status);
+
+      const error = await captureApiException(service.removeTeam(42, 31));
+
+      expect((error.getResponse() as any).error.code).toBe(
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+      expect(mockPrisma.tournamentGroupTeam.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([TournamentFormat.LEAGUE, TournamentFormat.KNOCKOUT])(
+    'rejects membership removal for %s tournaments',
+    async (format) => {
+      arrangeMembershipTarget(TournamentStatus.DRAFT, format);
+
+      const error = await captureApiException(service.removeTeam(42, 31));
+
+      expect((error.getResponse() as any).error.code).toBe(
+        'INVALID_TOURNAMENT_FORMAT',
+      );
+      expect(mockPrisma.tournamentGroupTeam.update).not.toHaveBeenCalled();
+    },
+  );
 });
