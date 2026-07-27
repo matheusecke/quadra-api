@@ -514,4 +514,176 @@ describe('StandingsService', () => {
       1,
     );
   });
+
+  // Points: Charlie 5, Alpha 3, Bravo 3, Delta 1.
+  // Block {Alpha, Bravo}: head-to-head is the Alpha-Bravo game, won by Alpha.
+  it('breaks a tie on head-to-head classification points', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [
+        finished(1, 80, 2, 70),
+        finished(3, 80, 1, 70),
+        finished(2, 80, 3, 70),
+        finished(3, 80, 4, 70),
+      ],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.map((row) => row.tournamentTeamId)).toEqual([3, 1, 2, 4]);
+  });
+
+  // Alpha and Bravo split their two meetings (3 head-to-head points each),
+  // so criterion 1 ties and criterion 2 decides: Alpha +15, Bravo -15.
+  it('breaks a tie on head-to-head point difference', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [
+        finished(1, 90, 2, 70),
+        finished(2, 80, 1, 75),
+        finished(1, 70, 3, 60),
+        finished(2, 70, 3, 60),
+        finished(3, 70, 4, 60),
+      ],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.map((row) => row.tournamentTeamId)).toEqual([1, 2, 3, 4]);
+  });
+
+  // Circular results: 3 head-to-head points each, every head-to-head diff 0.
+  // Criterion 3 decides on head-to-head points scored: 165, 160, 155.
+  it('breaks a tie on head-to-head points scored', async () => {
+    arrangeLeague(
+      [team(1, 'Alpha'), team(2, 'Bravo'), team(3, 'Charlie')],
+      [finished(1, 80, 2, 70), finished(2, 90, 3, 80), finished(3, 85, 1, 75)],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.map((row) => row.tournamentTeamId)).toEqual([3, 2, 1]);
+  });
+
+  // Alpha and Bravo never met, so criteria 1-3 are all zero for both.
+  // Criterion 4 decides on group-wide difference: Alpha +20, Bravo +5.
+  it('breaks a tie on group-wide point difference', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [finished(1, 90, 3, 70), finished(2, 80, 4, 75)],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.map((row) => row.tournamentTeamId)).toEqual([1, 2, 4, 3]);
+  });
+
+  // Same shape, but both differences are +20; criterion 5 decides on
+  // group-wide points scored: Bravo 100, Alpha 90.
+  it('breaks a tie on group-wide points scored', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [finished(1, 90, 3, 70), finished(2, 100, 4, 80)],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.map((row) => row.tournamentTeamId)).toEqual([2, 1, 4, 3]);
+  });
+
+  // Every team on 6 points. Criterion 1 (whole-table head-to-head) ties;
+  // criterion 2 splits into [Alpha +60], [Bravo +50], [Charlie, Delta -55].
+  // The surviving pair restarts at criterion 1: their two meetings tie at 3
+  // points each, and the recomputed head-to-head difference puts Delta (+5)
+  // ahead of Charlie (-5) — the opposite of what the parent block's
+  // criterion 3 would have said (Charlie 345 points scored, Delta 340).
+  it('restarts the procedure for a sub-block that survives a split', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [
+        finished(1, 90, 3, 70),
+        finished(1, 80, 3, 60),
+        finished(1, 80, 4, 60),
+        finished(2, 80, 4, 60),
+        finished(2, 80, 4, 60),
+        finished(2, 70, 3, 60),
+        finished(3, 90, 4, 75),
+        finished(4, 85, 3, 65),
+      ],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.map((row) => row.tournamentTeamId)).toEqual([1, 2, 4, 3]);
+  });
+
+  // Delta 6, then the block {Alpha, Zulu, Bravo} on 4 each.
+  // Criterion 1 splits off Alpha (4 head-to-head points vs 1 and 1); the
+  // remaining pair never met, so its restart falls through to criterion 4:
+  // Zulu 0, Bravo -25. The names are deliberately out of order — an
+  // implementation that drops the restart and falls back to the alphabetical
+  // order returns [4, 1, 3, 2] and fails here.
+  it('splits a block partially and resolves the remainder on its own', async () => {
+    arrangeLeague(
+      [team(1, 'Alpha'), team(2, 'Zulu'), team(3, 'Bravo'), team(4, 'Delta')],
+      [
+        finished(1, 80, 2, 70),
+        finished(1, 80, 3, 70),
+        finished(2, 90, 4, 70),
+        finished(4, 80, 2, 70),
+        finished(3, 85, 4, 80),
+        finished(4, 90, 3, 70),
+      ],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.map((row) => row.tournamentTeamId)).toEqual([4, 1, 2, 3]);
+  });
+
+  it('leaves a block resolved by a sporting criterion unflagged', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [
+        finished(1, 80, 2, 70),
+        finished(3, 80, 1, 70),
+        finished(2, 80, 3, 70),
+        finished(3, 80, 4, 70),
+      ],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.every((row) => row.tieBlockKey === null)).toBe(true);
+  });
 });

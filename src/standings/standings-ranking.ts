@@ -166,7 +166,16 @@ export function rankTable(
   };
 
   const breakTie = (tied: readonly number[]): number[] => {
-    const criteria: ((id: number) => number)[] = [];
+    // Criteria 1-3 use only the games played inside this block; 4-5 stay
+    // group-wide at every depth (FIBA D.1.3).
+    const headToHead = tally(new Set(tied), matches);
+    const criteria: ((id: number) => number)[] = [
+      (id) => headToHead.get(id)!.classificationPoints,
+      (id) => diff(headToHead.get(id)!),
+      (id) => headToHead.get(id)!.pointsFor,
+      (id) => diff(overall.get(id)!),
+      (id) => overall.get(id)!.pointsFor,
+    ];
     for (const criterion of criteria) {
       const blocks = partition(tied, criterion);
       if (blocks.length === 1) continue;
