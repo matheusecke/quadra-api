@@ -92,7 +92,7 @@ async function bootstrap(): Promise<void> {
     )
     .addTag(
       'teams',
-      'Global team registry. `GET /teams` is an organization-scoped catalog open to any active role; writes remain system-admin only until Phase 11.',
+      'Global team registry. `GET /teams` is an organization-scoped catalog open to any active role; writes remain system-admin only until platform-admin routes move to `/admin/*`.',
     )
     .addTag('athletes', 'Organization roster-eligible user catalog.')
     .addTag(

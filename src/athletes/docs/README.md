@@ -1,6 +1,6 @@
 # Module: Athletes (`AthletesModule`)
 
-Roster-eligible user catalog. Despite the route name, this is a selector over `OrganizationUserAffiliation` for the two tournament-roster roles (`ATHLETE`, `COACHING_STAFF`) — not a second person identity and not a Phase 10 athlete profile.
+Roster-eligible user catalog. Despite the route name, this is a selector over `OrganizationUserAffiliation` for the two tournament-roster roles (`ATHLETE`, `COACHING_STAFF`) — not a second person identity and not the standalone athlete profile that is still to be built.
 
 ## Endpoints
 

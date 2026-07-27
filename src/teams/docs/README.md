@@ -17,13 +17,13 @@ Team lifecycle management. Teams are affiliated to organizations through `Organi
 
 ## Rules
 
-- **`GET /teams`** (Phase 3): tenant-scoped catalog. A team qualifies when it has a non-deleted, `ACTIVE` `OrganizationTeamAffiliation` in the JWT's active organization. Requires an active org context (`OrgRoleGuard`); a token without one, including a platform-admin token, gets `403`. Ordering: `name ASC`, then `id ASC`. Response includes `city`/`state` (nullable). The old `organizationId` query parameter is removed — organization scope comes only from the JWT.
+- **`GET /teams`**: tenant-scoped catalog. A team qualifies when it has a non-deleted, `ACTIVE` `OrganizationTeamAffiliation` in the JWT's active organization. Requires an active org context (`OrgRoleGuard`); a token without one, including a platform-admin token, gets `403`. Ordering: `name ASC`, then `id ASC`. Response includes `city`/`state` (nullable). The old `organizationId` query parameter is removed — organization scope comes only from the JWT.
 - **Get by id** (`GET /teams/:id`): any authenticated user, no tenant scoping (global lookup).
 - **All writes** (create, update, update status, delete): system admin only — no role-based exceptions.
 
 ## Known temporary regression
 
-The former cross-tenant admin consumer of `GET /teams` (system-admin listing across all organizations via an explicit `organizationId` query param) is intentionally unsupported until Phase 11 moves platform-admin routes to `/admin/*`.
+The former cross-tenant admin consumer of `GET /teams` (system-admin listing across all organizations via an explicit `organizationId` query param) is intentionally unsupported until platform-admin routes move to `/admin/*`.
 
 ## Slug behavior
 

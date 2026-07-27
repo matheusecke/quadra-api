@@ -29,7 +29,8 @@ Omitting `status` returns both `ACTIVE` and `WITHDRAWN` rows — the frontend mu
 
 ## Seed update
 
-`PATCH /tournament-teams/:id` accepts only `seed` (`null` or an integer ≥ 1). Tiebreak fields (`tiebreakOrder`, `tiebreakBlockKey`) are not accepted here — they are read-only until Phase 5's `PUT /tournaments/:id/tiebreaks`. The target registration must be `ACTIVE` (`422 INACTIVE_REGISTRATION` otherwise). An empty body is a no-op that returns the current read model without a write. The update is rejected with `409 REGISTRATION_IN_USE` when any non-deleted `TournamentBracketSlot` references this registration as home, away, or winner.
+`PATCH /tournament-teams/:id` accepts only `seed` (`null` or an integer ≥ 1). Tiebreak fields (`tiebreakOrder`, `tiebreakBlockKey`) are not accepted here — they are written only by `PUT /tournaments/:id/tiebreaks` (see
+[`src/standings/docs/README.md`](../../standings/docs/README.md)). The target registration must be `ACTIVE` (`422 INACTIVE_REGISTRATION` otherwise). An empty body is a no-op that returns the current read model without a write. The update is rejected with `409 REGISTRATION_IN_USE` when any non-deleted `TournamentBracketSlot` references this registration as home, away, or winner.
 
 ## Withdrawal
 
