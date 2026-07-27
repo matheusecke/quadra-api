@@ -156,13 +156,23 @@ export function rankTable(
   const blockKeys = new Map<number, string>();
   const unresolved = new Set<number>();
 
+  // FIBA D.1.3 (6): the server persists a draw made by people; it never
+  // generates one. A draw recorded for another block stays written but inert.
   const draw = (tied: readonly number[]): number[] => {
     const key = [...tied].sort((left, right) => left - right).join('-');
+    const isHonoured = tied.every((id) => {
+      const team = byId.get(id)!;
+      return team.tiebreakOrder !== null && team.tiebreakBlockKey === key;
+    });
     for (const id of tied) {
       blockKeys.set(id, key);
-      unresolved.add(id);
+      if (!isHonoured) unresolved.add(id);
     }
-    return stableOrder(tied);
+    if (!isHonoured) return stableOrder(tied);
+    return [...tied].sort(
+      (left, right) =>
+        byId.get(left)!.tiebreakOrder! - byId.get(right)!.tiebreakOrder!,
+    );
   };
 
   const breakTie = (tied: readonly number[]): number[] => {

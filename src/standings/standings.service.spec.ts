@@ -686,4 +686,171 @@ describe('StandingsService', () => {
 
     expect(table.rows.every((row) => row.tieBlockKey === null)).toBe(true);
   });
+
+  const drawFixtureMatches = () => [
+    finished(1, 90, 3, 70),
+    finished(2, 90, 4, 70),
+  ];
+
+  it('flags a block that exhausts every sporting criterion', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      drawFixtureMatches(),
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(
+      table.rows.find((row) => row.tournamentTeamId === 1)?.isTiedUnresolved,
+    ).toBe(true);
+  });
+
+  it('keys an unresolved block by its ascending team ids', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      drawFixtureMatches(),
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(
+      table.rows.find((row) => row.tournamentTeamId === 2)?.tieBlockKey,
+    ).toBe('1-2');
+  });
+
+  it('orders an unresolved block by team name', async () => {
+    arrangeLeague(
+      [
+        team(2, 'Alpha'),
+        team(1, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [finished(2, 90, 3, 70), finished(1, 90, 4, 70)],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.slice(0, 2).map((row) => row.tournamentTeamId)).toEqual([
+      2, 1,
+    ]);
+  });
+
+  it('honours a draw recorded for the current block', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha', { tiebreakOrder: 2, tiebreakBlockKey: '1-2' }),
+        team(2, 'Bravo', { tiebreakOrder: 1, tiebreakBlockKey: '1-2' }),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      drawFixtureMatches(),
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.slice(0, 2).map((row) => row.tournamentTeamId)).toEqual([
+      2, 1,
+    ]);
+  });
+
+  it('clears the unresolved flag once a draw is honoured', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha', { tiebreakOrder: 2, tiebreakBlockKey: '1-2' }),
+        team(2, 'Bravo', { tiebreakOrder: 1, tiebreakBlockKey: '1-2' }),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      drawFixtureMatches(),
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(
+      table.rows.find((row) => row.tournamentTeamId === 1)?.isTiedUnresolved,
+    ).toBe(false);
+  });
+
+  it('keeps the tie block key on a resolved block so DELETE can address it', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha', { tiebreakOrder: 2, tiebreakBlockKey: '1-2' }),
+        team(2, 'Bravo', { tiebreakOrder: 1, tiebreakBlockKey: '1-2' }),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      drawFixtureMatches(),
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(
+      table.rows.find((row) => row.tournamentTeamId === 1)?.tieBlockKey,
+    ).toBe('1-2');
+  });
+
+  it('ignores a draw recorded for a different block', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha', { tiebreakOrder: 2, tiebreakBlockKey: '1-2-9' }),
+        team(2, 'Bravo', { tiebreakOrder: 1, tiebreakBlockKey: '1-2-9' }),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      drawFixtureMatches(),
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(
+      table.rows.find((row) => row.tournamentTeamId === 1)?.isTiedUnresolved,
+    ).toBe(true);
+  });
+
+  it('ignores a draw recorded for only part of the block', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha', { tiebreakOrder: 1, tiebreakBlockKey: '1-2' }),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      drawFixtureMatches(),
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(
+      table.rows.find((row) => row.tournamentTeamId === 2)?.isTiedUnresolved,
+    ).toBe(true);
+  });
+
+  it('resolves each tie block independently', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie', { tiebreakOrder: 2, tiebreakBlockKey: '3-4' }),
+        team(4, 'Delta', { tiebreakOrder: 1, tiebreakBlockKey: '3-4' }),
+      ],
+      drawFixtureMatches(),
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.slice(2).map((row) => row.tournamentTeamId)).toEqual([
+      4, 3,
+    ]);
+  });
 });
