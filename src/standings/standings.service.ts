@@ -141,6 +141,33 @@ export class StandingsService {
     return this.findStandings(organizationId, tournamentId);
   }
 
+  async clearTiebreaks(
+    organizationId: number,
+    tournamentId: number,
+    blockKey: string,
+  ): Promise<void> {
+    const tournament = await this.findTournamentOrThrow(
+      organizationId,
+      tournamentId,
+    );
+    this.assertMutable(tournament.status);
+
+    const tables = await this.findStandings(organizationId, tournamentId);
+    this.assertCurrentBlock(tables, blockKey);
+
+    // Keys from older blocks stay written but inert; they are addressed by
+    // their own key, never by this one.
+    await this.prisma.tournamentTeam.updateMany({
+      where: {
+        tournamentId,
+        organizationId,
+        isDeleted: false,
+        tiebreakBlockKey: blockKey,
+      },
+      data: { tiebreakOrder: null, tiebreakBlockKey: null },
+    });
+  }
+
   private async resolveScopes(
     organizationId: number,
     tournamentId: number,

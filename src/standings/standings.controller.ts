@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Put,
   Query,
@@ -66,6 +69,28 @@ export class StandingsController {
       user.organizationId as number,
       id,
       dto,
+    );
+  }
+
+  @Delete(':id/tiebreaks/:blockKey')
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: "Clear one tied block's recorded draw" })
+  @ApiParam({ name: 'id', example: 12, description: 'Tournament id.' })
+  @ApiParam({
+    name: 'blockKey',
+    example: '58-63',
+    description: 'Ascending tournamentTeamIds joined by "-".',
+  })
+  async clearTiebreaks(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Param('blockKey') blockKey: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    await this.standingsService.clearTiebreaks(
+      user.organizationId as number,
+      id,
+      blockKey,
     );
   }
 }

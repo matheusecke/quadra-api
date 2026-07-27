@@ -1056,4 +1056,94 @@ describe('StandingsService', () => {
 
     expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
   });
+
+  function arrangeResolvedBlock(
+    status: TournamentStatus = TournamentStatus.IN_PROGRESS,
+  ): void {
+    arrangeLeague(
+      [
+        team(1, 'Alpha', { tiebreakOrder: 2, tiebreakBlockKey: '1-2' }),
+        team(2, 'Bravo', { tiebreakOrder: 1, tiebreakBlockKey: '1-2' }),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [finished(1, 90, 3, 70), finished(2, 90, 4, 70)],
+      status,
+    );
+  }
+
+  it('clears the draw of the addressed block only', async () => {
+    arrangeResolvedBlock();
+
+    await service.clearTiebreaks(42, 12, '1-2');
+
+    expect(mockPrisma.tournamentTeam.updateMany).toHaveBeenCalledWith({
+      where: {
+        tournamentId: 12,
+        organizationId: 42,
+        isDeleted: false,
+        tiebreakBlockKey: '1-2',
+      },
+      data: { tiebreakOrder: null, tiebreakBlockKey: null },
+    });
+  });
+
+  it('returns nothing after clearing a block', async () => {
+    arrangeResolvedBlock();
+
+    await expect(
+      service.clearTiebreaks(42, 12, '1-2'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects a block key that is not current', async () => {
+    arrangeResolvedBlock();
+
+    const error = await captureApiException(
+      service.clearTiebreaks(42, 12, '1-2-9'),
+    );
+
+    expect(getApiErrorCode(error)).toBe('TIE_BLOCK_MISMATCH');
+  });
+
+  it('rejects a malformed block key the same way', async () => {
+    arrangeResolvedBlock();
+
+    const error = await captureApiException(
+      service.clearTiebreaks(42, 12, 'not-a-key'),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+  });
+
+  it('does not write when the block key is not current', async () => {
+    arrangeResolvedBlock();
+
+    await captureApiException(service.clearTiebreaks(42, 12, '1-2-9'));
+
+    expect(mockPrisma.tournamentTeam.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([TournamentStatus.COMPLETED, TournamentStatus.CANCELLED])(
+    'rejects clearing a block while the tournament is %s',
+    async (status) => {
+      arrangeResolvedBlock(status);
+
+      const error = await captureApiException(
+        service.clearTiebreaks(42, 12, '1-2'),
+      );
+
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
+    },
+  );
+
+  it('returns 404 before clearing a block in a cross-tenant tournament', async () => {
+    mockPrisma.tournament.findFirst.mockResolvedValue(null);
+
+    const error = await captureApiException(
+      service.clearTiebreaks(42, 999, '1-2'),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+  });
 });
