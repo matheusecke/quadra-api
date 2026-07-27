@@ -52,6 +52,7 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 | Tournament Teams               | [`src/tournament-teams/docs/README.md`](../src/tournament-teams/docs/README.md)                             | Registration, reactivation, seed, withdrawal                     |
 | Tournament Rosters             | [`src/tournament-rosters/docs/README.md`](../src/tournament-rosters/docs/README.md)                         | Roster membership, role/jersey, team-scoped writes, deactivation |
 | Tournament Groups              | [`src/tournament-groups/docs/README.md`](../src/tournament-groups/docs/README.md)                           | Group structure, ordering, assignments, and soft deletion        |
+| Standings                      | [`src/standings/docs/README.md`](../src/standings/docs/README.md)                                           | FIBA classification, tiebreak criteria, recorded draws           |
 
 ## Conventions (high level)
 
