@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Put,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOkResponse,
@@ -6,8 +14,10 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
+import { OrgRole } from '@prisma/client';
 import { StandingsService } from './standings.service';
 import { ListStandingsQueryDto } from './dto/list-standings-query.dto';
+import { SetTiebreaksDto } from './dto/set-tiebreaks.dto';
 import { StandingsTableResponseDto } from './dto/standings-response.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ANY_ORG_ROLE, OrgRoles } from '../auth/decorators/org-roles.decorator';
@@ -39,6 +49,23 @@ export class StandingsController {
       user.organizationId as number,
       id,
       query.groupId,
+    );
+  }
+
+  @Put(':id/tiebreaks')
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @ApiOperation({ summary: 'Record or correct the draw for one tied block' })
+  @ApiParam({ name: 'id', example: 12, description: 'Tournament id.' })
+  @ApiOkResponse({ type: StandingsTableResponseDto, isArray: true })
+  setTiebreaks(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Body() dto: SetTiebreaksDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<StandingsTableResponseDto[]> {
+    return this.standingsService.setTiebreaks(
+      user.organizationId as number,
+      id,
+      dto,
     );
   }
 }

@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import { ApiException } from '../common/exceptions/api.exception';
 import { PrismaService } from '../prisma/prisma.service';
+import { SetTiebreaksDto } from './dto/set-tiebreaks.dto';
 import {
   StandingsState,
   StandingsTableResponseDto,
@@ -96,6 +97,48 @@ export class StandingsService {
       groupId,
     );
     return scopes.map((scope) => this.buildTable(scope, teams, matches));
+  }
+
+  async setTiebreaks(
+    organizationId: number,
+    tournamentId: number,
+    dto: SetTiebreaksDto,
+  ): Promise<StandingsTableResponseDto[]> {
+    const tournament = await this.findTournamentOrThrow(
+      organizationId,
+      tournamentId,
+    );
+    this.assertMutable(tournament.status);
+
+    const blockKey = dto.entries
+      .map((entry) => entry.tournamentTeamId)
+      .sort((left, right) => left - right)
+      .join('-');
+    const tables = await this.findStandings(organizationId, tournamentId);
+    this.assertCurrentBlock(tables, blockKey);
+
+    const orders = dto.entries
+      .map((entry) => entry.order)
+      .sort((left, right) => left - right);
+    if (orders.some((order, index) => order !== index + 1)) {
+      throw ApiException.unprocessable(
+        'The tiebreak order must be a complete permutation of 1..n.',
+        'INVALID_TIEBREAK_ORDER',
+      );
+    }
+
+    // The block check already proved every id is a registration of this
+    // tournament in this organization, so `where: { id }` cannot cross a tenant.
+    await this.prisma.$transaction(async (tx) => {
+      for (const entry of dto.entries) {
+        await tx.tournamentTeam.update({
+          where: { id: entry.tournamentTeamId },
+          data: { tiebreakOrder: entry.order, tiebreakBlockKey: blockKey },
+        });
+      }
+    });
+
+    return this.findStandings(organizationId, tournamentId);
   }
 
   private async resolveScopes(
@@ -192,6 +235,33 @@ export class StandingsService {
     });
     if (!tournament) throw ApiException.notFound('Tournament not found');
     return tournament;
+  }
+
+  private assertMutable(status: TournamentStatus): void {
+    if (
+      status === TournamentStatus.COMPLETED ||
+      status === TournamentStatus.CANCELLED
+    ) {
+      throw ApiException.conflict(
+        'The tournament standings can no longer be changed.',
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+    }
+  }
+
+  private assertCurrentBlock(
+    tables: readonly StandingsTableResponseDto[],
+    blockKey: string,
+  ): void {
+    const isCurrent = tables.some((table) =>
+      table.rows.some((row) => row.tieBlockKey === blockKey),
+    );
+    if (!isCurrent) {
+      throw ApiException.conflict(
+        'The submitted teams are not a current tied block.',
+        'TIE_BLOCK_MISMATCH',
+      );
+    }
   }
 }
 

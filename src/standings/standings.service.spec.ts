@@ -853,4 +853,207 @@ describe('StandingsService', () => {
       4, 3,
     ]);
   });
+
+  function arrangeUnresolvedBlock(
+    status: TournamentStatus = TournamentStatus.IN_PROGRESS,
+  ): void {
+    arrangeLeague(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [finished(1, 90, 3, 70), finished(2, 90, 4, 70)],
+      status,
+    );
+    mockPrisma.$transaction.mockImplementation((callback: unknown) =>
+      (callback as (tx: unknown) => Promise<unknown>)(mockPrisma),
+    );
+  }
+
+  const drawEntries = [
+    { tournamentTeamId: 2, order: 1 },
+    { tournamentTeamId: 1, order: 2 },
+  ];
+
+  it('persists the order and the block key for every submitted entry', async () => {
+    arrangeUnresolvedBlock();
+
+    await service.setTiebreaks(42, 12, { entries: drawEntries });
+
+    expect(mockPrisma.tournamentTeam.update).toHaveBeenCalledWith({
+      where: { id: 2 },
+      data: { tiebreakOrder: 1, tiebreakBlockKey: '1-2' },
+    });
+  });
+
+  it('writes every entry of the block inside one transaction', async () => {
+    arrangeUnresolvedBlock();
+
+    await service.setTiebreaks(42, 12, { entries: drawEntries });
+
+    expect(mockPrisma.tournamentTeam.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns the standings recomputed after the draw', async () => {
+    arrangeUnresolvedBlock();
+    mockPrisma.tournamentTeam.findMany
+      .mockResolvedValueOnce([
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ])
+      .mockResolvedValueOnce([
+        team(1, 'Alpha', { tiebreakOrder: 2, tiebreakBlockKey: '1-2' }),
+        team(2, 'Bravo', { tiebreakOrder: 1, tiebreakBlockKey: '1-2' }),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ]);
+
+    const [table] = await service.setTiebreaks(42, 12, {
+      entries: drawEntries,
+    });
+
+    expect(table.rows.slice(0, 2).map((row) => row.tournamentTeamId)).toEqual([
+      2, 1,
+    ]);
+  });
+
+  it('corrects a block whose draw is already recorded', async () => {
+    arrangeLeague(
+      [
+        team(1, 'Alpha', { tiebreakOrder: 1, tiebreakBlockKey: '1-2' }),
+        team(2, 'Bravo', { tiebreakOrder: 2, tiebreakBlockKey: '1-2' }),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [finished(1, 90, 3, 70), finished(2, 90, 4, 70)],
+    );
+    mockPrisma.$transaction.mockImplementation((callback: unknown) =>
+      (callback as (tx: unknown) => Promise<unknown>)(mockPrisma),
+    );
+
+    await service.setTiebreaks(42, 12, { entries: drawEntries });
+
+    expect(mockPrisma.tournamentTeam.update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { tiebreakOrder: 2, tiebreakBlockKey: '1-2' },
+    });
+  });
+
+  it('rejects a set of teams that is not a current tie block', async () => {
+    arrangeUnresolvedBlock();
+
+    const error = await captureApiException(
+      service.setTiebreaks(42, 12, {
+        entries: [
+          { tournamentTeamId: 1, order: 1 },
+          { tournamentTeamId: 3, order: 2 },
+        ],
+      }),
+    );
+
+    expect(getApiErrorCode(error)).toBe('TIE_BLOCK_MISMATCH');
+  });
+
+  it('answers 409 when the submitted set is not a current tie block', async () => {
+    arrangeUnresolvedBlock();
+
+    const error = await captureApiException(
+      service.setTiebreaks(42, 12, {
+        entries: [
+          { tournamentTeamId: 1, order: 1 },
+          { tournamentTeamId: 3, order: 2 },
+        ],
+      }),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+  });
+
+  it('rejects a partial block that omits one of its teams', async () => {
+    arrangeUnresolvedBlock();
+
+    const error = await captureApiException(
+      service.setTiebreaks(42, 12, {
+        entries: [
+          { tournamentTeamId: 1, order: 1 },
+          { tournamentTeamId: 2, order: 2 },
+          { tournamentTeamId: 3, order: 3 },
+        ],
+      }),
+    );
+
+    expect(getApiErrorCode(error)).toBe('TIE_BLOCK_MISMATCH');
+  });
+
+  it('rejects an order that is not a complete permutation', async () => {
+    arrangeUnresolvedBlock();
+
+    const error = await captureApiException(
+      service.setTiebreaks(42, 12, {
+        entries: [
+          { tournamentTeamId: 1, order: 1 },
+          { tournamentTeamId: 2, order: 3 },
+        ],
+      }),
+    );
+
+    expect(getApiErrorCode(error)).toBe('INVALID_TIEBREAK_ORDER');
+  });
+
+  it('answers 422 for an order that is not a complete permutation', async () => {
+    arrangeUnresolvedBlock();
+
+    const error = await captureApiException(
+      service.setTiebreaks(42, 12, {
+        entries: [
+          { tournamentTeamId: 1, order: 1 },
+          { tournamentTeamId: 2, order: 3 },
+        ],
+      }),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+  });
+
+  it('does not write when the order is not a complete permutation', async () => {
+    arrangeUnresolvedBlock();
+
+    await captureApiException(
+      service.setTiebreaks(42, 12, {
+        entries: [
+          { tournamentTeamId: 1, order: 1 },
+          { tournamentTeamId: 2, order: 3 },
+        ],
+      }),
+    );
+
+    expect(mockPrisma.tournamentTeam.update).not.toHaveBeenCalled();
+  });
+
+  it.each([TournamentStatus.COMPLETED, TournamentStatus.CANCELLED])(
+    'rejects a draw while the tournament is %s',
+    async (status) => {
+      arrangeUnresolvedBlock(status);
+
+      const error = await captureApiException(
+        service.setTiebreaks(42, 12, { entries: drawEntries }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
+    },
+  );
+
+  it('returns 404 before recording a draw in a cross-tenant tournament', async () => {
+    mockPrisma.tournament.findFirst.mockResolvedValue(null);
+
+    const error = await captureApiException(
+      service.setTiebreaks(42, 999, { entries: drawEntries }),
+    );
+
+    expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+  });
 });
