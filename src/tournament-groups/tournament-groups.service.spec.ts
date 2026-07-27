@@ -1,4 +1,5 @@
 import { HttpStatus } from '@nestjs/common';
+import { expect, jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
 import {
   TournamentFormat,
@@ -13,22 +14,45 @@ import {
   tournamentGroupTeamSelect,
 } from './tournament-groups.service';
 
-const mockPrisma: any = {
-  tournament: { findFirst: jest.fn() },
+type AsyncMock = jest.Mock<(input?: unknown) => Promise<unknown>>;
+
+type MockPrisma = {
+  tournament: { findFirst: AsyncMock };
   tournamentGroup: {
-    findMany: jest.fn(),
-    findFirst: jest.fn(),
-    aggregate: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
+    findMany: AsyncMock;
+    findFirst: AsyncMock;
+    aggregate: AsyncMock;
+    create: AsyncMock;
+    update: AsyncMock;
+  };
+  tournamentGroupTeam: {
+    findMany: AsyncMock;
+    findFirst: AsyncMock;
+    create: AsyncMock;
+    update: AsyncMock;
+  };
+  tournamentTeam: { findFirst: AsyncMock };
+};
+
+const createAsyncMock = (): AsyncMock =>
+  jest.fn<(input?: unknown) => Promise<unknown>>();
+
+const mockPrisma: MockPrisma = {
+  tournament: { findFirst: createAsyncMock() },
+  tournamentGroup: {
+    findMany: createAsyncMock(),
+    findFirst: createAsyncMock(),
+    aggregate: createAsyncMock(),
+    create: createAsyncMock(),
+    update: createAsyncMock(),
   },
   tournamentGroupTeam: {
-    findMany: jest.fn(),
-    findFirst: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
+    findMany: createAsyncMock(),
+    findFirst: createAsyncMock(),
+    create: createAsyncMock(),
+    update: createAsyncMock(),
   },
-  tournamentTeam: { findFirst: jest.fn() },
+  tournamentTeam: { findFirst: createAsyncMock() },
 };
 
 const groupRow = {
@@ -58,6 +82,22 @@ async function captureApiException(
     },
     (error: unknown) => error as ApiException,
   );
+}
+
+function getApiErrorCode(error: ApiException): string {
+  const response = error.getResponse();
+  if (
+    typeof response !== 'object' ||
+    response === null ||
+    !('error' in response) ||
+    typeof response.error !== 'object' ||
+    response.error === null ||
+    !('code' in response.error) ||
+    typeof response.error.code !== 'string'
+  ) {
+    throw new Error('Expected ApiException error response');
+  }
+  return response.error.code;
 }
 
 describe('TournamentGroupsService', () => {
@@ -228,9 +268,7 @@ describe('TournamentGroupsService', () => {
         service.createGroup(42, 12, { name: 'Group A' }),
       );
       expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
-      expect((error.getResponse() as any).error.code).toBe(
-        'TOURNAMENT_NOT_MUTABLE',
-      );
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
     },
   );
 
@@ -246,9 +284,7 @@ describe('TournamentGroupsService', () => {
         service.createGroup(42, 12, { name: 'Group A' }),
       );
       expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
-      expect((error.getResponse() as any).error.code).toBe(
-        'INVALID_TOURNAMENT_FORMAT',
-      );
+      expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
     },
   );
 
@@ -266,9 +302,11 @@ describe('TournamentGroupsService', () => {
       where: { tournamentId: 12, organizationId: 42, isDeleted: false },
       _max: { sortOrder: true },
     });
-    expect(
-      mockPrisma.tournamentGroup.create.mock.calls[0][0].data.sortOrder,
-    ).toBe(1);
+    expect(mockPrisma.tournamentGroup.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ sortOrder: 1 }),
+      }),
+    );
   });
 
   it('returns DUPLICATE_RECORD for an active exact-name conflict', async () => {
@@ -280,7 +318,7 @@ describe('TournamentGroupsService', () => {
     );
 
     expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
-    expect((error.getResponse() as any).error.code).toBe('DUPLICATE_RECORD');
+    expect(getApiErrorCode(error)).toBe('DUPLICATE_RECORD');
     expect(mockPrisma.tournamentGroup.create).not.toHaveBeenCalled();
   });
 
@@ -348,7 +386,7 @@ describe('TournamentGroupsService', () => {
     const error = await captureApiException(service.removeGroup(42, 7));
 
     expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
-    expect((error.getResponse() as any).error.code).toBe('GROUP_NOT_EMPTY');
+    expect(getApiErrorCode(error)).toBe('GROUP_NOT_EMPTY');
     expect(mockPrisma.tournamentGroup.update).not.toHaveBeenCalled();
   });
 
@@ -385,18 +423,14 @@ describe('TournamentGroupsService', () => {
       jest.clearAllMocks();
       arrangeGroupTarget(status);
       const error = await captureApiException(call(service));
-      expect((error.getResponse() as any).error.code).toBe(
-        'TOURNAMENT_NOT_MUTABLE',
-      );
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
     }
 
     for (const format of [TournamentFormat.LEAGUE, TournamentFormat.KNOCKOUT]) {
       jest.clearAllMocks();
       arrangeGroupTarget(TournamentStatus.DRAFT, format);
       const error = await captureApiException(call(service));
-      expect((error.getResponse() as any).error.code).toBe(
-        'INVALID_TOURNAMENT_FORMAT',
-      );
+      expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
     }
   });
 
@@ -434,7 +468,7 @@ describe('TournamentGroupsService', () => {
       },
       select: { id: true },
     });
-    expect((error.getResponse() as any).error.code).toBe('DUPLICATE_RECORD');
+    expect(getApiErrorCode(error)).toBe('DUPLICATE_RECORD');
     expect(mockPrisma.tournamentGroup.update).not.toHaveBeenCalled();
   });
 
@@ -526,9 +560,7 @@ describe('TournamentGroupsService', () => {
     );
 
     expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
-    expect((error.getResponse() as any).error.code).toBe(
-      'INACTIVE_REGISTRATION',
-    );
+    expect(getApiErrorCode(error)).toBe('INACTIVE_REGISTRATION');
   });
 
   it('rejects a registration from another tournament', async () => {
@@ -547,9 +579,7 @@ describe('TournamentGroupsService', () => {
     );
 
     expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
-    expect((error.getResponse() as any).error.code).toBe(
-      'INVALID_GROUP_ASSIGNMENT',
-    );
+    expect(getApiErrorCode(error)).toBe('INVALID_GROUP_ASSIGNMENT');
   });
 
   it('rejects an active membership in any group of the tournament', async () => {
@@ -578,9 +608,7 @@ describe('TournamentGroupsService', () => {
       select: { id: true },
     });
     expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
-    expect((error.getResponse() as any).error.code).toBe(
-      'TEAM_ALREADY_ASSIGNED',
-    );
+    expect(getApiErrorCode(error)).toBe('TEAM_ALREADY_ASSIGNED');
   });
 
   it.each([TournamentStatus.COMPLETED, TournamentStatus.CANCELLED])(
@@ -594,9 +622,7 @@ describe('TournamentGroupsService', () => {
         }),
       );
 
-      expect((error.getResponse() as any).error.code).toBe(
-        'TOURNAMENT_NOT_MUTABLE',
-      );
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
       expect(mockPrisma.tournamentGroupTeam.create).not.toHaveBeenCalled();
     },
   );
@@ -618,9 +644,7 @@ describe('TournamentGroupsService', () => {
         }),
       );
 
-      expect((error.getResponse() as any).error.code).toBe(
-        'INVALID_TOURNAMENT_FORMAT',
-      );
+      expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
       expect(mockPrisma.tournamentGroupTeam.create).not.toHaveBeenCalled();
     },
   );
@@ -674,9 +698,7 @@ describe('TournamentGroupsService', () => {
 
       const error = await captureApiException(service.removeTeam(42, 31));
 
-      expect((error.getResponse() as any).error.code).toBe(
-        'TOURNAMENT_NOT_MUTABLE',
-      );
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
       expect(mockPrisma.tournamentGroupTeam.update).not.toHaveBeenCalled();
     },
   );
@@ -688,9 +710,7 @@ describe('TournamentGroupsService', () => {
 
       const error = await captureApiException(service.removeTeam(42, 31));
 
-      expect((error.getResponse() as any).error.code).toBe(
-        'INVALID_TOURNAMENT_FORMAT',
-      );
+      expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
       expect(mockPrisma.tournamentGroupTeam.update).not.toHaveBeenCalled();
     },
   );
