@@ -197,7 +197,7 @@ export class TournamentGroupsService {
         id,
         organizationId,
         isDeleted: false,
-        tournament: { isDeleted: false },
+        tournament: { organizationId, isDeleted: false },
       },
       select: tournamentGroupTargetSelect,
     });

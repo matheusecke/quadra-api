@@ -287,6 +287,15 @@ describe('TournamentGroupsService', () => {
     arrangeGroupTarget();
 
     await expect(service.updateGroup(42, 7, {})).resolves.toEqual(groupRow);
+    expect(mockPrisma.tournamentGroup.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 7,
+        organizationId: 42,
+        isDeleted: false,
+        tournament: { organizationId: 42, isDeleted: false },
+      },
+      select: expect.any(Object),
+    });
     expect(mockPrisma.tournamentGroup.update).not.toHaveBeenCalled();
   });
 
