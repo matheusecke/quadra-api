@@ -34,8 +34,8 @@ No `DELETE` route. A tournament is `CANCELLED` via `PATCH`, never deleted.
 
 - **`PATCH` cannot change the status of a `COMPLETED` tournament** (`409 INVALID_STATUS_TRANSITION`, pointing at `/reopen`). Editing other fields (name, regulation, dates) of a completed tournament stays allowed. `seasonId` remains freely editable in this phase, and so does `format` — **except while a champion is declared** (`422 INVALID_CHAMPION`): the champion was validated against the old format, so `GROUP_STAGE_KNOCKOUT → GROUP_STAGE` would strand a title `/complete` refuses to grant. Reopen first. No document defines a guard for changing the format once groups or bracket rounds exist; neither has an endpoint yet.
 
-- **`GET /:id/champion-suggestion`** suggests, never asserts: `GROUP_STAGE` is always `null` (no champion concept); `LEAGUE` is `null` in this phase (needs `StandingsService`, roadmap phase 5 — see the `TODO` in the service); `KNOCKOUT`/`GROUP_STAGE_KNOCKOUT` return the winner of the single slot in the highest round with non-deleted slots, or `null` when that round has zero or more than one slot, or the single slot has no winner yet.
+- **`GET /:id/champion-suggestion`** suggests, never asserts: `GROUP_STAGE` is always `null` (no champion concept); `LEAGUE` is `null` for now — the suggestion does not yet read the classification table (see the `TODO` in the service); `KNOCKOUT`/`GROUP_STAGE_KNOCKOUT` return the winner of the single slot in the highest round with non-deleted slots, or `null` when that round has zero or more than one slot, or the single slot has no winner yet.
 
-- **`mvpTournamentRosterId`** is read-only in this phase — always `null`, never accepted in `POST`/`PATCH`. No screen sets a tournament MVP yet and `tournament_rosters` has no application module before phase 3.
+- **`mvpTournamentRosterId`** is read-only for now — always `null`, never accepted in `POST`/`PATCH`, because no screen sets a tournament MVP yet.
 
 Contract and domain rules: `../../../../docs/sports-api-contract.md` §4, `../../../../docs/sports-domain-rules.md` §1–§3.

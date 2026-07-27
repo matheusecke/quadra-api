@@ -1,7 +1,7 @@
 # Tournament groups
 
-Phase 4 owns manual group-stage structure and assignment of existing
-`TournamentTeam` registrations.
+Manual group-stage structure and assignment of existing `TournamentTeam`
+registrations.
 
 ## Routes
 

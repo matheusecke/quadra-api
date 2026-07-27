@@ -318,7 +318,7 @@ export class TournamentsService {
     }
 
     // TODO(matheusecke): suggest position 1 when standingsState is FINAL — needs
-    // StandingsService (roadmap phase 5, docs/sports-domain-rules.md §5).
+    // StandingsService (docs/sports-domain-rules.md §5).
     if (tournament.format === TournamentFormat.LEAGUE) {
       return { championTournamentTeamId: null };
     }
