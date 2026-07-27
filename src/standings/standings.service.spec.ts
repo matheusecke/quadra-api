@@ -135,6 +135,24 @@ function arrangeLeague(
   mockPrisma.match.findMany.mockResolvedValue(matches);
 }
 
+function arrangeGroupStage(
+  teams: ReturnType<typeof team>[],
+  groups: { id: number; name: string }[],
+  memberships: { tournamentGroupId: number; tournamentTeamId: number }[],
+  matches: unknown[],
+  status: TournamentStatus = TournamentStatus.IN_PROGRESS,
+): void {
+  mockPrisma.tournament.findFirst.mockResolvedValue({
+    id: 12,
+    status,
+    format: TournamentFormat.GROUP_STAGE,
+  });
+  mockPrisma.tournamentTeam.findMany.mockResolvedValue(teams);
+  mockPrisma.tournamentGroup.findMany.mockResolvedValue(groups);
+  mockPrisma.tournamentGroupTeam.findMany.mockResolvedValue(memberships);
+  mockPrisma.match.findMany.mockResolvedValue(matches);
+}
+
 async function captureApiException(
   promise: Promise<unknown>,
 ): Promise<ApiException> {
@@ -359,5 +377,141 @@ describe('StandingsService', () => {
     const error = await captureApiException(service.findStandings(42, 999));
 
     expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+  });
+
+  it('returns one table per group in a group stage', async () => {
+    arrangeGroupStage(
+      [
+        team(1, 'Alpha'),
+        team(2, 'Bravo'),
+        team(3, 'Charlie'),
+        team(4, 'Delta'),
+      ],
+      [
+        { id: 7, name: 'Grupo A' },
+        { id: 8, name: 'Grupo B' },
+      ],
+      [
+        { tournamentGroupId: 7, tournamentTeamId: 1 },
+        { tournamentGroupId: 7, tournamentTeamId: 2 },
+        { tournamentGroupId: 8, tournamentTeamId: 3 },
+        { tournamentGroupId: 8, tournamentTeamId: 4 },
+      ],
+      [
+        finished(1, 80, 2, 70, { groupId: 7 }),
+        finished(3, 90, 4, 60, { groupId: 8 }),
+      ],
+    );
+
+    const tables = await service.findStandings(42, 12);
+
+    expect(tables.map((table) => table.group?.id)).toEqual([7, 8]);
+  });
+
+  it('keeps each group table to its own members', async () => {
+    arrangeGroupStage(
+      [team(1, 'Alpha'), team(2, 'Bravo'), team(3, 'Charlie')],
+      [{ id: 7, name: 'Grupo A' }],
+      [
+        { tournamentGroupId: 7, tournamentTeamId: 1 },
+        { tournamentGroupId: 7, tournamentTeamId: 2 },
+      ],
+      [finished(1, 80, 2, 70, { groupId: 7 })],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.map((row) => row.tournamentTeamId)).toEqual([1, 2]);
+  });
+
+  it('ignores a match played outside the group', async () => {
+    arrangeGroupStage(
+      [team(1, 'Alpha'), team(2, 'Bravo')],
+      [{ id: 7, name: 'Grupo A' }],
+      [
+        { tournamentGroupId: 7, tournamentTeamId: 1 },
+        { tournamentGroupId: 7, tournamentTeamId: 2 },
+      ],
+      [finished(1, 80, 2, 70, { groupId: null })],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.standingsState).toBe('EMPTY');
+  });
+
+  it('ignores a match whose opponent is not in the table', async () => {
+    arrangeGroupStage(
+      [team(1, 'Alpha'), team(2, 'Bravo'), team(3, 'Charlie')],
+      [{ id: 7, name: 'Grupo A' }],
+      [
+        { tournamentGroupId: 7, tournamentTeamId: 1 },
+        { tournamentGroupId: 7, tournamentTeamId: 2 },
+      ],
+      [finished(1, 80, 3, 70, { groupId: 7 })],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.standingsState).toBe('EMPTY');
+  });
+
+  it('filters the tables down to the requested group', async () => {
+    arrangeGroupStage(
+      [team(1, 'Alpha'), team(2, 'Bravo')],
+      [{ id: 8, name: 'Grupo B' }],
+      [
+        { tournamentGroupId: 8, tournamentTeamId: 1 },
+        { tournamentGroupId: 8, tournamentTeamId: 2 },
+      ],
+      [finished(1, 80, 2, 70, { groupId: 8 })],
+    );
+
+    const tables = await service.findStandings(42, 12, 8);
+
+    expect(mockPrisma.tournamentGroup.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 8 }),
+      }),
+    );
+    expect(tables).toHaveLength(1);
+  });
+
+  it('returns no table for a groupId that matches nothing', async () => {
+    arrangeGroupStage([team(1, 'Alpha')], [], [], []);
+
+    await expect(service.findStandings(42, 12, 999)).resolves.toEqual([]);
+  });
+
+  it('returns no table when a league is filtered by group', async () => {
+    arrangeLeague(
+      [team(1, 'Alpha'), team(2, 'Bravo')],
+      [finished(1, 80, 2, 70)],
+    );
+
+    await expect(service.findStandings(42, 12, 7)).resolves.toEqual([]);
+  });
+
+  it('returns no table for a knockout tournament', async () => {
+    mockPrisma.tournament.findFirst.mockResolvedValue({
+      id: 12,
+      status: TournamentStatus.IN_PROGRESS,
+      format: TournamentFormat.KNOCKOUT,
+    });
+
+    await expect(service.findStandings(42, 12)).resolves.toEqual([]);
+  });
+
+  it('keeps a withdrawn registration in the table with its record', async () => {
+    arrangeLeague(
+      [team(1, 'Alpha'), team(2, 'Bravo')],
+      [finished(1, 80, 2, 70)],
+    );
+
+    const [table] = await service.findStandings(42, 12);
+
+    expect(table.rows.find((row) => row.tournamentTeamId === 2)?.played).toBe(
+      1,
+    );
   });
 });
