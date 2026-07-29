@@ -25,7 +25,8 @@ export class TournamentBracketSlotResponseDto {
   @ApiProperty({
     example: null,
     nullable: true,
-    description: 'Set by the Phase 7 link-match route; always null in this phase.',
+    description:
+      'Set by the Phase 7 link-match route; always null in this phase.',
   })
   matchId!: number | null;
 

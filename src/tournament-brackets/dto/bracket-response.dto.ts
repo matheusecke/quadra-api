@@ -6,7 +6,8 @@ export class BracketSlotTeamResponseDto {
 
   @ApiProperty({
     example: 'Engenharia',
-    description: 'TournamentTeam.displayNameSnapshot — the registration snapshot.',
+    description:
+      'TournamentTeam.displayNameSnapshot — the registration snapshot.',
   })
   name!: string;
 

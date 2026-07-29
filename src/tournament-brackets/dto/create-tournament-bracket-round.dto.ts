@@ -17,7 +17,8 @@ export class CreateTournamentBracketRoundDto {
   @ApiProperty({
     example: 1,
     minimum: 1,
-    description: 'Client-supplied ordering. Gaps are legal and nothing renumbers.',
+    description:
+      'Client-supplied ordering. Gaps are legal and nothing renumbers.',
   })
   @Type(() => Number)
   @IsInt()

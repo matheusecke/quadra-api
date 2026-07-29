@@ -63,10 +63,16 @@ const readSlotRow = {
     id: 21,
     displayNameSnapshot: 'Engenharia',
     team: { shortName: 'ENG' },
-  } as { id: number; displayNameSnapshot: string; team: { shortName: string } } | null,
-  awayTournamentTeam: null as
-    | { id: number; displayNameSnapshot: string; team: { shortName: string } }
-    | null,
+  } as {
+    id: number;
+    displayNameSnapshot: string;
+    team: { shortName: string };
+  } | null,
+  awayTournamentTeam: null as {
+    id: number;
+    displayNameSnapshot: string;
+    team: { shortName: string };
+  } | null,
 };
 
 const readRoundRow = {
@@ -133,7 +139,11 @@ describe('TournamentBracketsService', () => {
     status: TournamentStatus = TournamentStatus.REGISTRATION,
     format: TournamentFormat = TournamentFormat.KNOCKOUT,
   ): void {
-    mockPrisma.tournament.findFirst.mockResolvedValue({ id: 12, status, format });
+    mockPrisma.tournament.findFirst.mockResolvedValue({
+      id: 12,
+      status,
+      format,
+    });
   }
 
   function arrangeRoundTarget(
@@ -187,7 +197,9 @@ describe('TournamentBracketsService', () => {
   describe('bracket read', () => {
     it('maps rounds and slots into the enriched bracket tree', async () => {
       arrangeTournament();
-      mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([readRoundRow]);
+      mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([
+        readRoundRow,
+      ]);
 
       await expect(service.findBracket(42, 12)).resolves.toEqual({
         rounds: [
@@ -279,7 +291,9 @@ describe('TournamentBracketsService', () => {
       arrangeTournament();
       mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([]);
 
-      await expect(service.findBracket(42, 12)).resolves.toEqual({ rounds: [] });
+      await expect(service.findBracket(42, 12)).resolves.toEqual({
+        rounds: [],
+      });
     });
 
     it.each([
@@ -290,7 +304,9 @@ describe('TournamentBracketsService', () => {
       arrangeTournament(TournamentStatus.COMPLETED, format);
       mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([]);
 
-      await expect(service.findBracket(42, 12)).resolves.toEqual({ rounds: [] });
+      await expect(service.findBracket(42, 12)).resolves.toEqual({
+        rounds: [],
+      });
     });
 
     it('scopes both levels to the tenant and applies the contract ordering', async () => {
@@ -322,7 +338,10 @@ describe('TournamentBracketsService', () => {
 
   describe('bracket rounds', () => {
     it('creates a round and returns the persisted row', async () => {
-      arrangeTournament(TournamentStatus.REGISTRATION, TournamentFormat.KNOCKOUT);
+      arrangeTournament(
+        TournamentStatus.REGISTRATION,
+        TournamentFormat.KNOCKOUT,
+      );
       mockPrisma.tournamentBracketRound.findFirst.mockResolvedValue(null);
       mockPrisma.tournamentBracketRound.create.mockResolvedValue(roundRow);
 
@@ -531,7 +550,9 @@ describe('TournamentBracketsService', () => {
       await expect(service.updateRound(42, 10, { number: 1 })).resolves.toEqual(
         roundRow,
       );
-      expect(mockPrisma.tournamentBracketRound.findFirst).toHaveBeenLastCalledWith({
+      expect(
+        mockPrisma.tournamentBracketRound.findFirst,
+      ).toHaveBeenLastCalledWith({
         where: {
           tournamentId: 12,
           organizationId: 42,
@@ -545,7 +566,9 @@ describe('TournamentBracketsService', () => {
 
     it('rejects a number held by another active round', async () => {
       arrangeRoundTarget();
-      mockPrisma.tournamentBracketRound.findFirst.mockResolvedValueOnce({ id: 99 });
+      mockPrisma.tournamentBracketRound.findFirst.mockResolvedValueOnce({
+        id: 99,
+      });
 
       const error = await captureApiException(
         service.updateRound(42, 10, { number: 2 }),
@@ -556,7 +579,10 @@ describe('TournamentBracketsService', () => {
     });
 
     it('rejects a round update in a format without a knockout stage', async () => {
-      arrangeRoundTarget(TournamentStatus.REGISTRATION, TournamentFormat.LEAGUE);
+      arrangeRoundTarget(
+        TournamentStatus.REGISTRATION,
+        TournamentFormat.LEAGUE,
+      );
 
       const error = await captureApiException(
         service.updateRound(42, 10, { number: 2 }),
@@ -685,7 +711,11 @@ describe('TournamentBracketsService', () => {
         label: 'Final',
       });
 
-      await service.createSlot(42, { roundId: 10, position: 1, label: 'Final' });
+      await service.createSlot(42, {
+        roundId: 10,
+        position: 1,
+        label: 'Final',
+      });
 
       expect(mockPrisma.tournamentTeam.findFirst).not.toHaveBeenCalled();
       expect(mockPrisma.tournamentBracketSlot.create).toHaveBeenCalledWith({
@@ -735,7 +765,9 @@ describe('TournamentBracketsService', () => {
 
     it('rejects a position already held by an active slot of the same round', async () => {
       arrangeRoundTarget();
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce({ id: 199 });
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce({
+        id: 199,
+      });
 
       const error = await captureApiException(
         service.createSlot(42, { roundId: 10, position: 1 }),
@@ -743,7 +775,9 @@ describe('TournamentBracketsService', () => {
 
       expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
       expect(getApiErrorCode(error)).toBe('DUPLICATE_RECORD');
-      expect(mockPrisma.tournamentBracketSlot.findFirst).toHaveBeenLastCalledWith({
+      expect(
+        mockPrisma.tournamentBracketSlot.findFirst,
+      ).toHaveBeenLastCalledWith({
         where: {
           roundId: 10,
           organizationId: 42,
@@ -1020,7 +1054,9 @@ describe('TournamentBracketsService', () => {
       await expect(
         service.updateSlot(42, 101, { position: 1 }),
       ).resolves.toEqual(slotRow);
-      expect(mockPrisma.tournamentBracketSlot.findFirst).toHaveBeenLastCalledWith({
+      expect(
+        mockPrisma.tournamentBracketSlot.findFirst,
+      ).toHaveBeenLastCalledWith({
         where: {
           roundId: 10,
           organizationId: 42,
@@ -1034,7 +1070,9 @@ describe('TournamentBracketsService', () => {
 
     it('rejects a position held by another active slot of the round', async () => {
       arrangeSlotTarget();
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce({ id: 199 });
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce({
+        id: 199,
+      });
 
       const error = await captureApiException(
         service.updateSlot(42, 101, { position: 2 }),
@@ -1069,7 +1107,11 @@ describe('TournamentBracketsService', () => {
     });
 
     it('rejects a slot update in a format without a knockout stage', async () => {
-      arrangeSlotTarget({}, TournamentStatus.REGISTRATION, TournamentFormat.LEAGUE);
+      arrangeSlotTarget(
+        {},
+        TournamentStatus.REGISTRATION,
+        TournamentFormat.LEAGUE,
+      );
 
       const error = await captureApiException(
         service.updateSlot(42, 101, { position: 2 }),

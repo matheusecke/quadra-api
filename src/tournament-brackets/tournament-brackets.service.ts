@@ -47,7 +47,8 @@ type BracketRoundReadRow = Prisma.TournamentBracketRoundGetPayload<{
   select: typeof bracketReadSelect;
 }>;
 
-type BracketSlotTeamRow = BracketRoundReadRow['slots'][number]['homeTournamentTeam'];
+type BracketSlotTeamRow =
+  BracketRoundReadRow['slots'][number]['homeTournamentTeam'];
 
 export const tournamentBracketRoundSelect = {
   id: true,
