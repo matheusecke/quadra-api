@@ -1,7 +1,11 @@
 import { HttpStatus } from '@nestjs/common';
 import { expect, jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
-import { TournamentFormat, TournamentStatus } from '@prisma/client';
+import {
+  TournamentFormat,
+  TournamentStatus,
+  TournamentTeamStatus,
+} from '@prisma/client';
 import { ApiException } from '../common/exceptions/api.exception';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -9,6 +13,8 @@ import {
   bracketReadSelect,
   tournamentBracketRoundSelect,
   tournamentBracketRoundTargetSelect,
+  tournamentBracketSlotSelect,
+  tournamentBracketSlotTargetSelect,
 } from './tournament-brackets.service';
 
 type AsyncMock = jest.Mock<(input?: unknown) => Promise<unknown>>;
@@ -79,6 +85,20 @@ const roundRow = {
   updatedAt: new Date('2026-07-28T18:00:00.000Z'),
 };
 
+const slotRow = {
+  id: 101,
+  tournamentId: 12,
+  roundId: 10,
+  position: 1,
+  label: null as string | null,
+  homeTournamentTeamId: null as number | null,
+  awayTournamentTeamId: null as number | null,
+  matchId: null as number | null,
+  winnerTournamentTeamId: null as number | null,
+  createdAt: new Date('2026-07-28T18:05:00.000Z'),
+  updatedAt: new Date('2026-07-28T18:05:00.000Z'),
+};
+
 async function captureApiException(
   promise: Promise<unknown>,
 ): Promise<ApiException> {
@@ -123,6 +143,33 @@ describe('TournamentBracketsService', () => {
     mockPrisma.tournamentBracketRound.findFirst.mockResolvedValueOnce({
       ...roundRow,
       tournament: { status, format },
+    });
+  }
+
+  function arrangeSlotTarget(
+    overrides: Partial<typeof slotRow> = {},
+    status: TournamentStatus = TournamentStatus.REGISTRATION,
+    format: TournamentFormat = TournamentFormat.KNOCKOUT,
+  ): void {
+    mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce({
+      ...slotRow,
+      ...overrides,
+      tournament: { status, format },
+    });
+  }
+
+  function arrangeRegistration(
+    overrides: {
+      id?: number;
+      tournamentId?: number;
+      status?: TournamentTeamStatus;
+    } = {},
+  ): void {
+    mockPrisma.tournamentTeam.findFirst.mockResolvedValueOnce({
+      id: 21,
+      tournamentId: 12,
+      status: TournamentTeamStatus.ACTIVE,
+      ...overrides,
     });
   }
 
@@ -592,6 +639,514 @@ describe('TournamentBracketsService', () => {
 
       expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
       expect(mockPrisma.tournamentBracketRound.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('bracket slots', () => {
+    it('creates a slot from its round and returns the persisted row', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      arrangeRegistration({ id: 21 });
+      arrangeRegistration({ id: 22 });
+      const created = {
+        ...slotRow,
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+      };
+      mockPrisma.tournamentBracketSlot.create.mockResolvedValue(created);
+
+      await expect(
+        service.createSlot(42, {
+          roundId: 10,
+          position: 1,
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 22,
+        }),
+      ).resolves.toEqual(created);
+      expect(mockPrisma.tournamentBracketSlot.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: 42,
+          tournamentId: 12,
+          roundId: 10,
+          position: 1,
+          label: null,
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 22,
+        },
+        select: tournamentBracketSlotSelect,
+      });
+    });
+
+    it('creates an empty slot when both participants are omitted', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.tournamentBracketSlot.create.mockResolvedValue({
+        ...slotRow,
+        label: 'Final',
+      });
+
+      await service.createSlot(42, { roundId: 10, position: 1, label: 'Final' });
+
+      expect(mockPrisma.tournamentTeam.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentBracketSlot.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: 42,
+          tournamentId: 12,
+          roundId: 10,
+          position: 1,
+          label: 'Final',
+          homeTournamentTeamId: null,
+          awayTournamentTeamId: null,
+        },
+        select: tournamentBracketSlotSelect,
+      });
+    });
+
+    it('creates a bye slot with only a home participant', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      arrangeRegistration({ id: 23 });
+      mockPrisma.tournamentBracketSlot.create.mockResolvedValue({
+        ...slotRow,
+        id: 102,
+        position: 2,
+        homeTournamentTeamId: 23,
+      });
+
+      await service.createSlot(42, {
+        roundId: 10,
+        position: 2,
+        homeTournamentTeamId: 23,
+      });
+
+      expect(mockPrisma.tournamentBracketSlot.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: 42,
+          tournamentId: 12,
+          roundId: 10,
+          position: 2,
+          label: null,
+          homeTournamentTeamId: 23,
+          awayTournamentTeamId: null,
+        },
+        select: tournamentBracketSlotSelect,
+      });
+    });
+
+    it('rejects a position already held by an active slot of the same round', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce({ id: 199 });
+
+      const error = await captureApiException(
+        service.createSlot(42, { roundId: 10, position: 1 }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(getApiErrorCode(error)).toBe('DUPLICATE_RECORD');
+      expect(mockPrisma.tournamentBracketSlot.findFirst).toHaveBeenLastCalledWith({
+        where: {
+          roundId: 10,
+          organizationId: 42,
+          position: 1,
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+      expect(mockPrisma.tournamentBracketSlot.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts the same position in a different round', async () => {
+      mockPrisma.tournamentBracketRound.findFirst.mockResolvedValueOnce({
+        ...roundRow,
+        id: 11,
+        number: 2,
+        tournament: {
+          status: TournamentStatus.REGISTRATION,
+          format: TournamentFormat.KNOCKOUT,
+        },
+      });
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.tournamentBracketSlot.create.mockResolvedValue({
+        ...slotRow,
+        id: 103,
+        roundId: 11,
+      });
+
+      await expect(
+        service.createSlot(42, { roundId: 11, position: 1 }),
+      ).resolves.toEqual({ ...slotRow, id: 103, roundId: 11 });
+    });
+
+    it('returns 404 before creating a slot in a missing or cross-tenant round', async () => {
+      mockPrisma.tournamentBracketRound.findFirst.mockResolvedValueOnce(null);
+
+      const error = await captureApiException(
+        service.createSlot(42, { roundId: 999, position: 1 }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(mockPrisma.tournamentBracketSlot.create).not.toHaveBeenCalled();
+    });
+
+    it.each([[TournamentFormat.LEAGUE], [TournamentFormat.GROUP_STAGE]])(
+      'rejects a slot create in a %s tournament',
+      async (format) => {
+        arrangeRoundTarget(TournamentStatus.REGISTRATION, format);
+
+        const error = await captureApiException(
+          service.createSlot(42, { roundId: 10, position: 1 }),
+        );
+
+        expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
+        expect(mockPrisma.tournamentBracketSlot.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      [TournamentStatus.DRAFT],
+      [TournamentStatus.REGISTRATION],
+      [TournamentStatus.IN_PROGRESS],
+    ])('creates a slot while the tournament is %s', async (status) => {
+      arrangeRoundTarget(status);
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.tournamentBracketSlot.create.mockResolvedValue(slotRow);
+
+      await expect(
+        service.createSlot(42, { roundId: 10, position: 1 }),
+      ).resolves.toEqual(slotRow);
+    });
+
+    it.each([[TournamentStatus.COMPLETED], [TournamentStatus.CANCELLED]])(
+      'rejects a slot create while the tournament is %s',
+      async (status) => {
+        arrangeRoundTarget(status);
+
+        const error = await captureApiException(
+          service.createSlot(42, { roundId: 10, position: 1 }),
+        );
+
+        expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
+        expect(mockPrisma.tournamentBracketSlot.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('returns 404 for a participant that is missing or from another organization', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValueOnce(null);
+
+      const error = await captureApiException(
+        service.createSlot(42, {
+          roundId: 10,
+          position: 1,
+          homeTournamentTeamId: 777,
+        }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(mockPrisma.tournamentTeam.findFirst).toHaveBeenCalledWith({
+        where: { id: 777, organizationId: 42, isDeleted: false },
+        select: { id: true, tournamentId: true, status: true },
+      });
+      expect(mockPrisma.tournamentBracketSlot.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a withdrawn participant', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      arrangeRegistration({ id: 21, status: TournamentTeamStatus.WITHDRAWN });
+
+      const error = await captureApiException(
+        service.createSlot(42, {
+          roundId: 10,
+          position: 1,
+          homeTournamentTeamId: 21,
+        }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(getApiErrorCode(error)).toBe('INACTIVE_REGISTRATION');
+    });
+
+    it('rejects a participant registered in another tournament', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      arrangeRegistration({ id: 21, tournamentId: 99 });
+
+      const error = await captureApiException(
+        service.createSlot(42, {
+          roundId: 10,
+          position: 1,
+          homeTournamentTeamId: 21,
+        }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(getApiErrorCode(error)).toBe('INVALID_BRACKET_ASSIGNMENT');
+    });
+
+    it('rejects the same registration on both sides of a slot', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      arrangeRegistration({ id: 21 });
+      arrangeRegistration({ id: 21 });
+
+      const error = await captureApiException(
+        service.createSlot(42, {
+          roundId: 10,
+          position: 1,
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 21,
+        }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+      expect(getApiErrorCode(error)).toBe('SAME_TEAM_IN_SLOT');
+      expect(mockPrisma.tournamentBracketSlot.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a registration that already occupies another slot', async () => {
+      arrangeRoundTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      arrangeRegistration({ id: 21 });
+      mockPrisma.tournamentBracketSlot.create.mockResolvedValue({
+        ...slotRow,
+        id: 104,
+        position: 3,
+        homeTournamentTeamId: 21,
+      });
+
+      await expect(
+        service.createSlot(42, {
+          roundId: 10,
+          position: 3,
+          homeTournamentTeamId: 21,
+        }),
+      ).resolves.toEqual({
+        ...slotRow,
+        id: 104,
+        position: 3,
+        homeTournamentTeamId: 21,
+      });
+    });
+
+    it('scopes the slot lookup to the tenant and to live rows', async () => {
+      arrangeSlotTarget();
+
+      await service.updateSlot(42, 101, {});
+
+      expect(mockPrisma.tournamentBracketSlot.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 101,
+          organizationId: 42,
+          isDeleted: false,
+          tournament: { organizationId: 42, isDeleted: false },
+        },
+        select: tournamentBracketSlotTargetSelect,
+      });
+    });
+
+    it('sets the away participant on a slot that only had a home participant', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 23 });
+      arrangeRegistration({ id: 24 });
+      const updated = {
+        ...slotRow,
+        homeTournamentTeamId: 23,
+        awayTournamentTeamId: 24,
+      };
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue(updated);
+
+      await expect(
+        service.updateSlot(42, 101, { awayTournamentTeamId: 24 }),
+      ).resolves.toEqual(updated);
+      expect(mockPrisma.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 101 },
+        data: { awayTournamentTeamId: 24 },
+        select: tournamentBracketSlotSelect,
+      });
+    });
+
+    it('clears both participants when the body sends null and looks up neither', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 23, awayTournamentTeamId: 24 });
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue(slotRow);
+
+      await service.updateSlot(42, 101, {
+        homeTournamentTeamId: null,
+        awayTournamentTeamId: null,
+      });
+
+      expect(mockPrisma.tournamentTeam.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 101 },
+        data: { homeTournamentTeamId: null, awayTournamentTeamId: null },
+        select: tournamentBracketSlotSelect,
+      });
+    });
+
+    it('writes only position and label when the participant keys are omitted', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 23 });
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        position: 4,
+        label: 'Disputa de 3º lugar',
+        homeTournamentTeamId: 23,
+      });
+
+      await service.updateSlot(42, 101, {
+        position: 4,
+        label: 'Disputa de 3º lugar',
+      });
+
+      expect(mockPrisma.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 101 },
+        data: { position: 4, label: 'Disputa de 3º lugar' },
+        select: tournamentBracketSlotSelect,
+      });
+    });
+
+    it('returns the current row without writing for an empty patch body', async () => {
+      arrangeSlotTarget();
+
+      await expect(service.updateSlot(42, 101, {})).resolves.toEqual(slotRow);
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('treats the slot own current position as a no-op instead of a conflict', async () => {
+      arrangeSlotTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue(slotRow);
+
+      await expect(
+        service.updateSlot(42, 101, { position: 1 }),
+      ).resolves.toEqual(slotRow);
+      expect(mockPrisma.tournamentBracketSlot.findFirst).toHaveBeenLastCalledWith({
+        where: {
+          roundId: 10,
+          organizationId: 42,
+          position: 1,
+          isDeleted: false,
+          id: { not: 101 },
+        },
+        select: { id: true },
+      });
+    });
+
+    it('rejects a position held by another active slot of the round', async () => {
+      arrangeSlotTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce({ id: 199 });
+
+      const error = await captureApiException(
+        service.updateSlot(42, 101, { position: 2 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('DUPLICATE_RECORD');
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an away participant equal to the stored home participant', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 23 });
+      arrangeRegistration({ id: 23 });
+
+      const error = await captureApiException(
+        service.updateSlot(42, 101, { awayTournamentTeamId: 23 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('SAME_TEAM_IN_SLOT');
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a home participant equal to the stored away participant', async () => {
+      arrangeSlotTarget({ awayTournamentTeamId: 24 });
+      arrangeRegistration({ id: 24 });
+
+      const error = await captureApiException(
+        service.updateSlot(42, 101, { homeTournamentTeamId: 24 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('SAME_TEAM_IN_SLOT');
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a slot update in a format without a knockout stage', async () => {
+      arrangeSlotTarget({}, TournamentStatus.REGISTRATION, TournamentFormat.LEAGUE);
+
+      const error = await captureApiException(
+        service.updateSlot(42, 101, { position: 2 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
+    });
+
+    it('rejects a slot update in a terminal tournament', async () => {
+      arrangeSlotTarget({}, TournamentStatus.COMPLETED);
+
+      const error = await captureApiException(
+        service.updateSlot(42, 101, { position: 2 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
+    });
+
+    it('returns 404 for a missing, deleted, or cross-tenant slot', async () => {
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+
+      const error = await captureApiException(
+        service.updateSlot(42, 999, { position: 2 }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('soft-deletes an unlinked slot', async () => {
+      arrangeSlotTarget();
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue(slotRow);
+
+      await expect(service.removeSlot(42, 101)).resolves.toBeUndefined();
+      expect(mockPrisma.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 101 },
+        data: { isDeleted: true },
+      });
+    });
+
+    it('rejects deleting a slot that still has a linked match', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+
+      const error = await captureApiException(service.removeSlot(42, 101));
+
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(getApiErrorCode(error)).toBe('SLOT_HAS_MATCH');
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a slot delete in a terminal tournament', async () => {
+      arrangeSlotTarget({}, TournamentStatus.CANCELLED);
+
+      const error = await captureApiException(service.removeSlot(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
+    });
+
+    it('rejects a slot delete in a format without a knockout stage', async () => {
+      arrangeSlotTarget(
+        {},
+        TournamentStatus.REGISTRATION,
+        TournamentFormat.GROUP_STAGE,
+      );
+
+      const error = await captureApiException(service.removeSlot(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
+    });
+
+    it('returns 404 when deleting a missing, deleted, or cross-tenant slot', async () => {
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+
+      const error = await captureApiException(service.removeSlot(42, 999));
+
+      expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
     });
   });
 });
