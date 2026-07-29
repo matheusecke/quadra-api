@@ -108,6 +108,10 @@ async function bootstrap(): Promise<void> {
       'Tournament group structure and registered-team assignments.',
     )
     .addTag(
+      'tournament-brackets',
+      'Knockout bracket rounds, slots, participants, and the composite bracket read.',
+    )
+    .addTag(
       'organization-user-affiliations',
       'User membership in organizations: invites, roles, jersey numbers, and status.',
     )

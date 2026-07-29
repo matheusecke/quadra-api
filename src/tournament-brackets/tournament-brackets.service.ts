@@ -1,0 +1,511 @@
+import { Injectable } from '@nestjs/common';
+import {
+  Prisma,
+  TournamentFormat,
+  TournamentStatus,
+  TournamentTeamStatus,
+} from '@prisma/client';
+import { ApiException } from '../common/exceptions/api.exception';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  BracketResponseDto,
+  BracketRoundResponseDto,
+  BracketSlotTeamResponseDto,
+} from './dto/bracket-response.dto';
+import { CreateTournamentBracketRoundDto } from './dto/create-tournament-bracket-round.dto';
+import { CreateTournamentBracketSlotDto } from './dto/create-tournament-bracket-slot.dto';
+import { TournamentBracketRoundResponseDto } from './dto/tournament-bracket-round-response.dto';
+import { TournamentBracketSlotResponseDto } from './dto/tournament-bracket-slot-response.dto';
+import { UpdateTournamentBracketRoundDto } from './dto/update-tournament-bracket-round.dto';
+import { UpdateTournamentBracketSlotDto } from './dto/update-tournament-bracket-slot.dto';
+
+const bracketSlotTeamSelect = {
+  id: true,
+  displayNameSnapshot: true,
+  team: { select: { shortName: true } },
+} satisfies Prisma.TournamentTeamSelect;
+
+export const bracketReadSelect = {
+  id: true,
+  number: true,
+  label: true,
+  slots: {
+    where: { isDeleted: false },
+    orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true,
+      position: true,
+      label: true,
+      winnerTournamentTeamId: true,
+      homeTournamentTeam: { select: bracketSlotTeamSelect },
+      awayTournamentTeam: { select: bracketSlotTeamSelect },
+    },
+  },
+} satisfies Prisma.TournamentBracketRoundSelect;
+
+type BracketRoundReadRow = Prisma.TournamentBracketRoundGetPayload<{
+  select: typeof bracketReadSelect;
+}>;
+
+type BracketSlotTeamRow =
+  BracketRoundReadRow['slots'][number]['homeTournamentTeam'];
+
+export const tournamentBracketRoundSelect = {
+  id: true,
+  tournamentId: true,
+  number: true,
+  label: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.TournamentBracketRoundSelect;
+
+export const tournamentBracketRoundTargetSelect = {
+  ...tournamentBracketRoundSelect,
+  tournament: { select: { status: true, format: true } },
+} satisfies Prisma.TournamentBracketRoundSelect;
+
+type TournamentBracketRoundTarget = Prisma.TournamentBracketRoundGetPayload<{
+  select: typeof tournamentBracketRoundTargetSelect;
+}>;
+
+export const tournamentBracketSlotSelect = {
+  id: true,
+  tournamentId: true,
+  roundId: true,
+  position: true,
+  label: true,
+  homeTournamentTeamId: true,
+  awayTournamentTeamId: true,
+  matchId: true,
+  winnerTournamentTeamId: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.TournamentBracketSlotSelect;
+
+export const tournamentBracketSlotTargetSelect = {
+  ...tournamentBracketSlotSelect,
+  tournament: { select: { status: true, format: true } },
+} satisfies Prisma.TournamentBracketSlotSelect;
+
+type TournamentBracketSlotTarget = Prisma.TournamentBracketSlotGetPayload<{
+  select: typeof tournamentBracketSlotTargetSelect;
+}>;
+
+@Injectable()
+export class TournamentBracketsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findBracket(
+    organizationId: number,
+    tournamentId: number,
+  ): Promise<BracketResponseDto> {
+    await this.findTournamentOrThrow(organizationId, tournamentId);
+    const rounds = await this.prisma.tournamentBracketRound.findMany({
+      where: { tournamentId, organizationId, isDeleted: false },
+      orderBy: [{ number: 'asc' }, { id: 'asc' }],
+      select: bracketReadSelect,
+    });
+    return { rounds: rounds.map((round) => this.toBracketRound(round)) };
+  }
+
+  async createRound(
+    organizationId: number,
+    tournamentId: number,
+    dto: CreateTournamentBracketRoundDto,
+  ): Promise<TournamentBracketRoundResponseDto> {
+    const tournament = await this.findTournamentOrThrow(
+      organizationId,
+      tournamentId,
+    );
+    this.assertMutable(tournament.status);
+    this.assertKnockoutFormat(tournament.format);
+    await this.assertRoundNumberAvailable(
+      organizationId,
+      tournamentId,
+      dto.number,
+    );
+
+    return this.prisma.tournamentBracketRound.create({
+      data: {
+        organizationId,
+        tournamentId,
+        number: dto.number,
+        label: dto.label ?? null,
+      },
+      select: tournamentBracketRoundSelect,
+    });
+  }
+
+  async updateRound(
+    organizationId: number,
+    id: number,
+    dto: UpdateTournamentBracketRoundDto,
+  ): Promise<TournamentBracketRoundResponseDto> {
+    const round = await this.findRoundOrThrow(organizationId, id);
+    this.assertMutable(round.tournament.status);
+    this.assertKnockoutFormat(round.tournament.format);
+
+    const { tournament, ...current } = round;
+    void tournament;
+
+    const data: Prisma.TournamentBracketRoundUncheckedUpdateInput = {};
+    if (dto.number !== undefined) data.number = dto.number;
+    if (dto.label !== undefined) data.label = dto.label;
+    if (Object.keys(data).length === 0) return current;
+
+    if (dto.number !== undefined) {
+      await this.assertRoundNumberAvailable(
+        organizationId,
+        current.tournamentId,
+        dto.number,
+        id,
+      );
+    }
+
+    return this.prisma.tournamentBracketRound.update({
+      where: { id },
+      data,
+      select: tournamentBracketRoundSelect,
+    });
+  }
+
+  async removeRound(organizationId: number, id: number): Promise<void> {
+    const round = await this.findRoundOrThrow(organizationId, id);
+    this.assertMutable(round.tournament.status);
+    this.assertKnockoutFormat(round.tournament.format);
+
+    const slot = await this.prisma.tournamentBracketSlot.findFirst({
+      where: { roundId: id, organizationId, isDeleted: false },
+      select: { id: true },
+    });
+    if (slot) {
+      throw ApiException.conflict(
+        'The round must be empty before it can be deleted.',
+        'ROUND_NOT_EMPTY',
+      );
+    }
+
+    await this.prisma.tournamentBracketRound.update({
+      where: { id },
+      data: { isDeleted: true },
+    });
+  }
+
+  async createSlot(
+    organizationId: number,
+    dto: CreateTournamentBracketSlotDto,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const round = await this.findRoundOrThrow(organizationId, dto.roundId);
+    this.assertMutable(round.tournament.status);
+    this.assertKnockoutFormat(round.tournament.format);
+    await this.assertSlotPositionAvailable(
+      organizationId,
+      round.id,
+      dto.position,
+    );
+
+    await this.assertParticipant(
+      organizationId,
+      round.tournamentId,
+      dto.homeTournamentTeamId,
+    );
+    await this.assertParticipant(
+      organizationId,
+      round.tournamentId,
+      dto.awayTournamentTeamId,
+    );
+    this.assertDistinctParticipants(
+      dto.homeTournamentTeamId ?? null,
+      dto.awayTournamentTeamId ?? null,
+    );
+
+    return this.prisma.tournamentBracketSlot.create({
+      data: {
+        organizationId,
+        tournamentId: round.tournamentId,
+        roundId: round.id,
+        position: dto.position,
+        label: dto.label ?? null,
+        homeTournamentTeamId: dto.homeTournamentTeamId ?? null,
+        awayTournamentTeamId: dto.awayTournamentTeamId ?? null,
+      },
+      select: tournamentBracketSlotSelect,
+    });
+  }
+
+  async updateSlot(
+    organizationId: number,
+    id: number,
+    dto: UpdateTournamentBracketSlotDto,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id);
+    this.assertMutable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+
+    const { tournament, ...current } = slot;
+    void tournament;
+
+    const data: Prisma.TournamentBracketSlotUncheckedUpdateInput = {};
+    if (dto.position !== undefined) data.position = dto.position;
+    if (dto.label !== undefined) data.label = dto.label;
+    if (dto.homeTournamentTeamId !== undefined) {
+      data.homeTournamentTeamId = dto.homeTournamentTeamId;
+    }
+    if (dto.awayTournamentTeamId !== undefined) {
+      data.awayTournamentTeamId = dto.awayTournamentTeamId;
+    }
+    if (Object.keys(data).length === 0) return current;
+
+    if (dto.position !== undefined) {
+      await this.assertSlotPositionAvailable(
+        organizationId,
+        current.roundId,
+        dto.position,
+        id,
+      );
+    }
+
+    await this.assertParticipant(
+      organizationId,
+      current.tournamentId,
+      dto.homeTournamentTeamId,
+    );
+    await this.assertParticipant(
+      organizationId,
+      current.tournamentId,
+      dto.awayTournamentTeamId,
+    );
+    this.assertDistinctParticipants(
+      dto.homeTournamentTeamId !== undefined
+        ? dto.homeTournamentTeamId
+        : current.homeTournamentTeamId,
+      dto.awayTournamentTeamId !== undefined
+        ? dto.awayTournamentTeamId
+        : current.awayTournamentTeamId,
+    );
+
+    return this.prisma.tournamentBracketSlot.update({
+      where: { id },
+      data,
+      select: tournamentBracketSlotSelect,
+    });
+  }
+
+  async removeSlot(organizationId: number, id: number): Promise<void> {
+    const slot = await this.findSlotOrThrow(organizationId, id);
+    this.assertMutable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+
+    // NOTE: no Phase 6 route can set matchId. The guard exists so the Phase 7
+    // unlink cascade cannot be bypassed by deleting the slot instead.
+    if (slot.matchId !== null) {
+      throw ApiException.conflict(
+        'Unlink the match before deleting the slot.',
+        'SLOT_HAS_MATCH',
+      );
+    }
+
+    await this.prisma.tournamentBracketSlot.update({
+      where: { id },
+      data: { isDeleted: true },
+    });
+  }
+
+  private toBracketRound(round: BracketRoundReadRow): BracketRoundResponseDto {
+    return {
+      id: round.id,
+      number: round.number,
+      label: round.label,
+      slots: round.slots.map((slot) => ({
+        id: slot.id,
+        position: slot.position,
+        label: slot.label,
+        homeTeam: this.toSlotTeam(slot.homeTournamentTeam),
+        awayTeam: this.toSlotTeam(slot.awayTournamentTeam),
+        // NOTE: Phase 7 links matches to slots; until then no match projection exists.
+        match: null,
+        winnerTournamentTeamId: slot.winnerTournamentTeamId,
+      })),
+    };
+  }
+
+  private toSlotTeam(
+    registration: BracketSlotTeamRow,
+  ): BracketSlotTeamResponseDto | null {
+    if (!registration) return null;
+    return {
+      tournamentTeamId: registration.id,
+      name: registration.displayNameSnapshot,
+      shortName: registration.team.shortName,
+    };
+  }
+
+  private async findTournamentOrThrow(
+    organizationId: number,
+    tournamentId: number,
+  ): Promise<{
+    id: number;
+    status: TournamentStatus;
+    format: TournamentFormat;
+  }> {
+    const tournament = await this.prisma.tournament.findFirst({
+      where: { id: tournamentId, organizationId, isDeleted: false },
+      select: { id: true, status: true, format: true },
+    });
+    if (!tournament) throw ApiException.notFound('Tournament not found');
+    return tournament;
+  }
+
+  private async findRoundOrThrow(
+    organizationId: number,
+    id: number,
+  ): Promise<TournamentBracketRoundTarget> {
+    const round = await this.prisma.tournamentBracketRound.findFirst({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        tournament: { organizationId, isDeleted: false },
+      },
+      select: tournamentBracketRoundTargetSelect,
+    });
+    if (!round) {
+      throw ApiException.notFound('Tournament bracket round not found');
+    }
+    return round;
+  }
+
+  private async assertRoundNumberAvailable(
+    organizationId: number,
+    tournamentId: number,
+    number: number,
+    exceptId?: number,
+  ): Promise<void> {
+    const duplicate = await this.prisma.tournamentBracketRound.findFirst({
+      where: {
+        tournamentId,
+        organizationId,
+        number,
+        isDeleted: false,
+        ...(exceptId === undefined ? {} : { id: { not: exceptId } }),
+      },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw ApiException.conflict(
+        'A round with this number already exists in the tournament.',
+        'DUPLICATE_RECORD',
+      );
+    }
+  }
+
+  private async findSlotOrThrow(
+    organizationId: number,
+    id: number,
+  ): Promise<TournamentBracketSlotTarget> {
+    const slot = await this.prisma.tournamentBracketSlot.findFirst({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        tournament: { organizationId, isDeleted: false },
+      },
+      select: tournamentBracketSlotTargetSelect,
+    });
+    if (!slot) {
+      throw ApiException.notFound('Tournament bracket slot not found');
+    }
+    return slot;
+  }
+
+  private async assertSlotPositionAvailable(
+    organizationId: number,
+    roundId: number,
+    position: number,
+    exceptId?: number,
+  ): Promise<void> {
+    const duplicate = await this.prisma.tournamentBracketSlot.findFirst({
+      where: {
+        roundId,
+        organizationId,
+        position,
+        isDeleted: false,
+        ...(exceptId === undefined ? {} : { id: { not: exceptId } }),
+      },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw ApiException.conflict(
+        'A slot with this position already exists in the round.',
+        'DUPLICATE_RECORD',
+      );
+    }
+  }
+
+  private async assertParticipant(
+    organizationId: number,
+    tournamentId: number,
+    tournamentTeamId: number | null | undefined,
+  ): Promise<void> {
+    if (tournamentTeamId === undefined || tournamentTeamId === null) return;
+
+    const registration = await this.prisma.tournamentTeam.findFirst({
+      where: { id: tournamentTeamId, organizationId, isDeleted: false },
+      select: { id: true, tournamentId: true, status: true },
+    });
+    if (!registration) {
+      throw ApiException.notFound('Tournament team not found');
+    }
+    if (registration.status !== TournamentTeamStatus.ACTIVE) {
+      throw ApiException.unprocessable(
+        'The tournament team registration is not active.',
+        'INACTIVE_REGISTRATION',
+      );
+    }
+    if (registration.tournamentId !== tournamentId) {
+      throw ApiException.unprocessable(
+        'The bracket slot and tournament team must belong to the same tournament.',
+        'INVALID_BRACKET_ASSIGNMENT',
+      );
+    }
+  }
+
+  private assertDistinctParticipants(
+    homeTournamentTeamId: number | null,
+    awayTournamentTeamId: number | null,
+  ): void {
+    if (
+      homeTournamentTeamId !== null &&
+      homeTournamentTeamId === awayTournamentTeamId
+    ) {
+      throw ApiException.unprocessable(
+        'A slot cannot have the same team on both sides.',
+        'SAME_TEAM_IN_SLOT',
+      );
+    }
+  }
+
+  private assertMutable(status: TournamentStatus): void {
+    if (
+      status === TournamentStatus.COMPLETED ||
+      status === TournamentStatus.CANCELLED
+    ) {
+      throw ApiException.conflict(
+        'The tournament structure can no longer be changed.',
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+    }
+  }
+
+  private assertKnockoutFormat(format: TournamentFormat): void {
+    if (
+      format !== TournamentFormat.KNOCKOUT &&
+      format !== TournamentFormat.GROUP_STAGE_KNOCKOUT
+    ) {
+      throw ApiException.unprocessable(
+        'This tournament format does not have a knockout stage.',
+        'INVALID_TOURNAMENT_FORMAT',
+      );
+    }
+  }
+}
