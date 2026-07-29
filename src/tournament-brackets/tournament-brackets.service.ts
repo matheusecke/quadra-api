@@ -7,6 +7,9 @@ import {
   BracketRoundResponseDto,
   BracketSlotTeamResponseDto,
 } from './dto/bracket-response.dto';
+import { CreateTournamentBracketRoundDto } from './dto/create-tournament-bracket-round.dto';
+import { TournamentBracketRoundResponseDto } from './dto/tournament-bracket-round-response.dto';
+import { UpdateTournamentBracketRoundDto } from './dto/update-tournament-bracket-round.dto';
 
 const bracketSlotTeamSelect = {
   id: true,
@@ -38,6 +41,24 @@ type BracketRoundReadRow = Prisma.TournamentBracketRoundGetPayload<{
 
 type BracketSlotTeamRow = BracketRoundReadRow['slots'][number]['homeTournamentTeam'];
 
+export const tournamentBracketRoundSelect = {
+  id: true,
+  tournamentId: true,
+  number: true,
+  label: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.TournamentBracketRoundSelect;
+
+export const tournamentBracketRoundTargetSelect = {
+  ...tournamentBracketRoundSelect,
+  tournament: { select: { status: true, format: true } },
+} satisfies Prisma.TournamentBracketRoundSelect;
+
+type TournamentBracketRoundTarget = Prisma.TournamentBracketRoundGetPayload<{
+  select: typeof tournamentBracketRoundTargetSelect;
+}>;
+
 @Injectable()
 export class TournamentBracketsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -53,6 +74,89 @@ export class TournamentBracketsService {
       select: bracketReadSelect,
     });
     return { rounds: rounds.map((round) => this.toBracketRound(round)) };
+  }
+
+  async createRound(
+    organizationId: number,
+    tournamentId: number,
+    dto: CreateTournamentBracketRoundDto,
+  ): Promise<TournamentBracketRoundResponseDto> {
+    const tournament = await this.findTournamentOrThrow(
+      organizationId,
+      tournamentId,
+    );
+    this.assertMutable(tournament.status);
+    this.assertKnockoutFormat(tournament.format);
+    await this.assertRoundNumberAvailable(
+      organizationId,
+      tournamentId,
+      dto.number,
+    );
+
+    return this.prisma.tournamentBracketRound.create({
+      data: {
+        organizationId,
+        tournamentId,
+        number: dto.number,
+        label: dto.label ?? null,
+      },
+      select: tournamentBracketRoundSelect,
+    });
+  }
+
+  async updateRound(
+    organizationId: number,
+    id: number,
+    dto: UpdateTournamentBracketRoundDto,
+  ): Promise<TournamentBracketRoundResponseDto> {
+    const round = await this.findRoundOrThrow(organizationId, id);
+    this.assertMutable(round.tournament.status);
+    this.assertKnockoutFormat(round.tournament.format);
+
+    const { tournament, ...current } = round;
+    void tournament;
+
+    const data: Prisma.TournamentBracketRoundUncheckedUpdateInput = {};
+    if (dto.number !== undefined) data.number = dto.number;
+    if (dto.label !== undefined) data.label = dto.label;
+    if (Object.keys(data).length === 0) return current;
+
+    if (dto.number !== undefined) {
+      await this.assertRoundNumberAvailable(
+        organizationId,
+        current.tournamentId,
+        dto.number,
+        id,
+      );
+    }
+
+    return this.prisma.tournamentBracketRound.update({
+      where: { id },
+      data,
+      select: tournamentBracketRoundSelect,
+    });
+  }
+
+  async removeRound(organizationId: number, id: number): Promise<void> {
+    const round = await this.findRoundOrThrow(organizationId, id);
+    this.assertMutable(round.tournament.status);
+    this.assertKnockoutFormat(round.tournament.format);
+
+    const slot = await this.prisma.tournamentBracketSlot.findFirst({
+      where: { roundId: id, organizationId, isDeleted: false },
+      select: { id: true },
+    });
+    if (slot) {
+      throw ApiException.conflict(
+        'The round must be empty before it can be deleted.',
+        'ROUND_NOT_EMPTY',
+      );
+    }
+
+    await this.prisma.tournamentBracketRound.update({
+      where: { id },
+      data: { isDeleted: true },
+    });
   }
 
   private toBracketRound(round: BracketRoundReadRow): BracketRoundResponseDto {
@@ -98,5 +202,72 @@ export class TournamentBracketsService {
     });
     if (!tournament) throw ApiException.notFound('Tournament not found');
     return tournament;
+  }
+
+  private async findRoundOrThrow(
+    organizationId: number,
+    id: number,
+  ): Promise<TournamentBracketRoundTarget> {
+    const round = await this.prisma.tournamentBracketRound.findFirst({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        tournament: { organizationId, isDeleted: false },
+      },
+      select: tournamentBracketRoundTargetSelect,
+    });
+    if (!round) {
+      throw ApiException.notFound('Tournament bracket round not found');
+    }
+    return round;
+  }
+
+  private async assertRoundNumberAvailable(
+    organizationId: number,
+    tournamentId: number,
+    number: number,
+    exceptId?: number,
+  ): Promise<void> {
+    const duplicate = await this.prisma.tournamentBracketRound.findFirst({
+      where: {
+        tournamentId,
+        organizationId,
+        number,
+        isDeleted: false,
+        ...(exceptId === undefined ? {} : { id: { not: exceptId } }),
+      },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw ApiException.conflict(
+        'A round with this number already exists in the tournament.',
+        'DUPLICATE_RECORD',
+      );
+    }
+  }
+
+  private assertMutable(status: TournamentStatus): void {
+    if (
+      status === TournamentStatus.COMPLETED ||
+      status === TournamentStatus.CANCELLED
+    ) {
+      throw ApiException.conflict(
+        'The tournament structure can no longer be changed.',
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+    }
+  }
+
+  private assertKnockoutFormat(format: TournamentFormat): void {
+    if (
+      format !== TournamentFormat.KNOCKOUT &&
+      format !== TournamentFormat.GROUP_STAGE_KNOCKOUT
+    ) {
+      throw ApiException.unprocessable(
+        'This tournament format does not have a knockout stage.',
+        'INVALID_TOURNAMENT_FORMAT',
+      );
+    }
   }
 }
