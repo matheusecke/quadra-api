@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  MatchSide,
   Prisma,
   TournamentFormat,
   TournamentStatus,
@@ -10,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   BracketResponseDto,
   BracketRoundResponseDto,
+  BracketSlotMatchResponseDto,
   BracketSlotTeamResponseDto,
 } from './dto/bracket-response.dto';
 import { CreateTournamentBracketRoundDto } from './dto/create-tournament-bracket-round.dto';
@@ -37,6 +39,20 @@ export const bracketReadSelect = {
       position: true,
       label: true,
       winnerTournamentTeamId: true,
+      // NOTE: isDeleted is selected because Prisma cannot filter a to-one
+      // relation; a soft-deleted match is discarded in toSlotMatch instead.
+      match: {
+        select: {
+          id: true,
+          status: true,
+          scheduledAt: true,
+          isDeleted: true,
+          teams: {
+            where: { isDeleted: false },
+            select: { side: true, finalScore: true },
+          },
+        },
+      },
       homeTournamentTeam: { select: bracketSlotTeamSelect },
       awayTournamentTeam: { select: bracketSlotTeamSelect },
     },
@@ -49,6 +65,8 @@ type BracketRoundReadRow = Prisma.TournamentBracketRoundGetPayload<{
 
 type BracketSlotTeamRow =
   BracketRoundReadRow['slots'][number]['homeTournamentTeam'];
+
+type BracketSlotMatchRow = BracketRoundReadRow['slots'][number]['match'];
 
 export const tournamentBracketRoundSelect = {
   id: true,
@@ -322,8 +340,7 @@ export class TournamentBracketsService {
         label: slot.label,
         homeTeam: this.toSlotTeam(slot.homeTournamentTeam),
         awayTeam: this.toSlotTeam(slot.awayTournamentTeam),
-        // NOTE: Phase 7 links matches to slots; until then no match projection exists.
-        match: null,
+        match: this.toSlotMatch(slot.match),
         winnerTournamentTeamId: slot.winnerTournamentTeamId,
       })),
     };
@@ -338,6 +355,27 @@ export class TournamentBracketsService {
       name: registration.displayNameSnapshot,
       shortName: registration.team.shortName,
     };
+  }
+
+  private toSlotMatch(
+    match: BracketSlotMatchRow,
+  ): BracketSlotMatchResponseDto | null {
+    if (!match || match.isDeleted) return null;
+    return {
+      id: match.id,
+      status: match.status,
+      date: match.scheduledAt,
+      // NOTE: scores are read as persisted. Result derivation is Phase 9.
+      homeScore: this.findSideScore(match.teams, MatchSide.HOME),
+      awayScore: this.findSideScore(match.teams, MatchSide.AWAY),
+    };
+  }
+
+  private findSideScore(
+    teams: { side: MatchSide; finalScore: number | null }[],
+    side: MatchSide,
+  ): number | null {
+    return teams.find((team) => team.side === side)?.finalScore ?? null;
   }
 
   private async findTournamentOrThrow(

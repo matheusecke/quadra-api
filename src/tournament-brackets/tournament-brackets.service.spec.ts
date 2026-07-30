@@ -2,6 +2,8 @@ import { HttpStatus } from '@nestjs/common';
 import { expect, jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
 import {
+  MatchSide,
+  MatchStatus,
   TournamentFormat,
   TournamentStatus,
   TournamentTeamStatus,
@@ -36,6 +38,7 @@ type MockPrisma = {
     update: AsyncMock;
   };
   tournamentTeam: { findFirst: AsyncMock };
+  match: { findFirst: AsyncMock; update: AsyncMock };
 };
 
 const mockPrisma: MockPrisma = {
@@ -52,6 +55,15 @@ const mockPrisma: MockPrisma = {
     update: createAsyncMock(),
   },
   tournamentTeam: { findFirst: createAsyncMock() },
+  match: { findFirst: createAsyncMock(), update: createAsyncMock() },
+};
+
+type ReadMatchRow = {
+  id: number;
+  status: MatchStatus;
+  scheduledAt: Date;
+  isDeleted: boolean;
+  teams: { side: MatchSide; finalScore: number | null }[];
 };
 
 const readSlotRow = {
@@ -59,6 +71,7 @@ const readSlotRow = {
   position: 1,
   label: null as string | null,
   winnerTournamentTeamId: null as number | null,
+  match: null as ReadMatchRow | null,
   homeTournamentTeam: {
     id: 21,
     displayNameSnapshot: 'Engenharia',
@@ -80,6 +93,17 @@ const readRoundRow = {
   number: 1,
   label: 'Semifinais' as string | null,
   slots: [readSlotRow],
+};
+
+const readMatchRow: ReadMatchRow = {
+  id: 501,
+  status: MatchStatus.FINISHED,
+  scheduledAt: new Date('2026-08-01T20:00:00.000Z'),
+  isDeleted: false,
+  teams: [
+    { side: MatchSide.HOME, finalScore: 78 },
+    { side: MatchSide.AWAY, finalScore: 72 },
+  ],
 };
 
 const roundRow = {
@@ -333,6 +357,90 @@ describe('TournamentBracketsService', () => {
 
       expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
       expect(mockPrisma.tournamentBracketRound.findMany).not.toHaveBeenCalled();
+    });
+
+    it('projects the linked match with both persisted scores', async () => {
+      arrangeTournament();
+      mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([
+        { ...readRoundRow, slots: [{ ...readSlotRow, match: readMatchRow }] },
+      ]);
+
+      const bracket = await service.findBracket(42, 12);
+
+      expect(bracket.rounds[0].slots[0].match).toEqual({
+        id: 501,
+        status: MatchStatus.FINISHED,
+        date: new Date('2026-08-01T20:00:00.000Z'),
+        homeScore: 78,
+        awayScore: 72,
+      });
+    });
+
+    it('projects null scores for a linked match with no recorded result', async () => {
+      arrangeTournament();
+      mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([
+        {
+          ...readRoundRow,
+          slots: [
+            {
+              ...readSlotRow,
+              match: {
+                ...readMatchRow,
+                status: MatchStatus.SCHEDULED,
+                teams: [
+                  { side: MatchSide.HOME, finalScore: null },
+                  { side: MatchSide.AWAY, finalScore: null },
+                ],
+              },
+            },
+          ],
+        },
+      ]);
+
+      const bracket = await service.findBracket(42, 12);
+
+      expect(bracket.rounds[0].slots[0].match).toEqual({
+        id: 501,
+        status: MatchStatus.SCHEDULED,
+        date: new Date('2026-08-01T20:00:00.000Z'),
+        homeScore: null,
+        awayScore: null,
+      });
+    });
+
+    it('projects null scores when the match has no active team rows', async () => {
+      arrangeTournament();
+      mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([
+        {
+          ...readRoundRow,
+          slots: [
+            { ...readSlotRow, match: { ...readMatchRow, teams: [] } },
+          ],
+        },
+      ]);
+
+      const bracket = await service.findBracket(42, 12);
+
+      expect(bracket.rounds[0].slots[0].match).toMatchObject({
+        homeScore: null,
+        awayScore: null,
+      });
+    });
+
+    it('projects null for a soft-deleted linked match', async () => {
+      arrangeTournament();
+      mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([
+        {
+          ...readRoundRow,
+          slots: [
+            { ...readSlotRow, match: { ...readMatchRow, isDeleted: true } },
+          ],
+        },
+      ]);
+
+      const bracket = await service.findBracket(42, 12);
+
+      expect(bracket.rounds[0].slots[0].match).toBeNull();
     });
   });
 
