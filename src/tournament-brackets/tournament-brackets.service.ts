@@ -18,6 +18,7 @@ import {
 import { CreateTournamentBracketRoundDto } from './dto/create-tournament-bracket-round.dto';
 import { CreateTournamentBracketSlotDto } from './dto/create-tournament-bracket-slot.dto';
 import { LinkBracketSlotMatchDto } from './dto/link-bracket-slot-match.dto';
+import { SetBracketSlotWinnerDto } from './dto/set-bracket-slot-winner.dto';
 import { TournamentBracketRoundResponseDto } from './dto/tournament-bracket-round-response.dto';
 import { TournamentBracketSlotResponseDto } from './dto/tournament-bracket-slot-response.dto';
 import { UpdateTournamentBracketRoundDto } from './dto/update-tournament-bracket-round.dto';
@@ -465,6 +466,62 @@ export class TournamentBracketsService {
     });
   }
 
+  async setWinner(
+    organizationId: number,
+    id: number,
+    dto: SetBracketSlotWinnerDto,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id);
+    this.assertWinnerWritable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+
+    const { tournament, ...current } = slot;
+    const { winnerTournamentTeamId } = dto;
+
+    if (
+      winnerTournamentTeamId !== null &&
+      winnerTournamentTeamId !== current.homeTournamentTeamId &&
+      winnerTournamentTeamId !== current.awayTournamentTeamId
+    ) {
+      throw ApiException.unprocessable(
+        'The winner must be one of the slot participants.',
+        'INVALID_SLOT_WINNER',
+      );
+    }
+
+    // The reopen cascade is conditioned on the winner changing, so an
+    // idempotent write must not reopen a completed tournament.
+    if (winnerTournamentTeamId === current.winnerTournamentTeamId) {
+      return current;
+    }
+
+    const shouldReopenTournament =
+      tournament.status === TournamentStatus.COMPLETED;
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.tournamentBracketSlot.update({
+        where: { id },
+        data: { winnerTournamentTeamId },
+        select: tournamentBracketSlotSelect,
+      });
+
+      // A title does not survive a change to the result that produced it.
+      // Both fields are written together: the DB check constraint only
+      // tolerates a champion while the tournament is COMPLETED.
+      if (shouldReopenTournament) {
+        await tx.tournament.update({
+          where: { id: current.tournamentId },
+          data: {
+            status: TournamentStatus.IN_PROGRESS,
+            championTournamentTeamId: null,
+          },
+        });
+      }
+
+      return updated;
+    });
+  }
+
   private toBracketRound(round: BracketRoundReadRow): BracketRoundResponseDto {
     return {
       id: round.id,
@@ -713,6 +770,17 @@ export class TournamentBracketsService {
       status === TournamentStatus.COMPLETED ||
       status === TournamentStatus.CANCELLED
     ) {
+      throw ApiException.conflict(
+        'The tournament structure can no longer be changed.',
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+    }
+  }
+
+  private assertWinnerWritable(status: TournamentStatus): void {
+    // COMPLETED is deliberately allowed here: a winner write is what reopens
+    // a finished tournament. CANCELLED has no route back, so it stays closed.
+    if (status === TournamentStatus.CANCELLED) {
       throw ApiException.conflict(
         'The tournament structure can no longer be changed.',
         'TOURNAMENT_NOT_MUTABLE',

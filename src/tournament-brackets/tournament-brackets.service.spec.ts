@@ -32,7 +32,7 @@ const createTransactionMock = (): TransactionMock =>
   jest.fn<(callback: (tx: unknown) => unknown) => unknown>();
 
 type MockPrisma = {
-  tournament: { findFirst: AsyncMock };
+  tournament: { findFirst: AsyncMock; update: AsyncMock };
   tournamentBracketRound: {
     findMany: AsyncMock;
     findFirst: AsyncMock;
@@ -50,7 +50,7 @@ type MockPrisma = {
 };
 
 const mockPrisma: MockPrisma = {
-  tournament: { findFirst: createAsyncMock() },
+  tournament: { findFirst: createAsyncMock(), update: createAsyncMock() },
   tournamentBracketRound: {
     findMany: createAsyncMock(),
     findFirst: createAsyncMock(),
@@ -1745,6 +1745,250 @@ describe('TournamentBracketsService', () => {
       const error = await captureApiException(service.unlinkMatch(42, 101));
 
       expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
+    });
+  });
+
+  describe('setWinner', () => {
+    it('records the home participant as the winner', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
+      });
+
+      await expect(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 21 }),
+      ).resolves.toMatchObject({ winnerTournamentTeamId: 21 });
+    });
+
+    it('records the away participant as the winner', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 22,
+      });
+
+      await expect(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 22 }),
+      ).resolves.toMatchObject({ winnerTournamentTeamId: 22 });
+    });
+
+    it('clears the winner with null', async () => {
+      arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
+      });
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: null,
+      });
+
+      await expect(
+        service.setWinner(42, 101, { winnerTournamentTeamId: null }),
+      ).resolves.toMatchObject({ winnerTournamentTeamId: null });
+    });
+
+    it('raises INVALID_SLOT_WINNER for a team outside the slot', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+
+      const error = await captureApiException(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 23 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('INVALID_SLOT_WINNER');
+    });
+
+    it('raises INVALID_SLOT_WINNER for any team on a slot with no participants', async () => {
+      arrangeSlotTarget();
+
+      const error = await captureApiException(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 21 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('INVALID_SLOT_WINNER');
+    });
+
+    it('returns the current row when the winner is unchanged', async () => {
+      arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
+      });
+
+      await expect(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 21 }),
+      ).resolves.toEqual({
+        ...slotRow,
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
+      });
+    });
+
+    it('writes nothing when the winner is unchanged', async () => {
+      arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
+      });
+
+      await service.setWinner(42, 101, { winnerTournamentTeamId: 21 });
+
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts a completed tournament', async () => {
+      arrangeSlotTarget(
+        { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
+        TournamentStatus.COMPLETED,
+      );
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        winnerTournamentTeamId: 22,
+      });
+
+      await expect(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 22 }),
+      ).resolves.toMatchObject({ winnerTournamentTeamId: 22 });
+    });
+
+    it('reopens a completed tournament and clears its champion', async () => {
+      arrangeSlotTarget(
+        {
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 22,
+          winnerTournamentTeamId: 21,
+        },
+        TournamentStatus.COMPLETED,
+      );
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        winnerTournamentTeamId: 22,
+      });
+
+      await service.setWinner(42, 101, { winnerTournamentTeamId: 22 });
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith({
+        where: { id: 12 },
+        data: {
+          status: TournamentStatus.IN_PROGRESS,
+          championTournamentTeamId: null,
+        },
+      });
+    });
+
+    it('reopens a completed tournament when the winner is cleared', async () => {
+      arrangeSlotTarget(
+        {
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 22,
+          winnerTournamentTeamId: 21,
+        },
+        TournamentStatus.COMPLETED,
+      );
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        winnerTournamentTeamId: null,
+      });
+
+      await service.setWinner(42, 101, { winnerTournamentTeamId: null });
+
+      expect(mockPrisma.tournament.update).toHaveBeenCalledWith({
+        where: { id: 12 },
+        data: {
+          status: TournamentStatus.IN_PROGRESS,
+          championTournamentTeamId: null,
+        },
+      });
+    });
+
+    it('does not touch a tournament that is already in progress', async () => {
+      arrangeSlotTarget(
+        { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
+        TournamentStatus.IN_PROGRESS,
+      );
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        winnerTournamentTeamId: 21,
+      });
+
+      await service.setWinner(42, 101, { winnerTournamentTeamId: 21 });
+
+      expect(mockPrisma.tournament.update).not.toHaveBeenCalled();
+    });
+
+    it('does not reopen a completed tournament on an unchanged winner', async () => {
+      arrangeSlotTarget(
+        {
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 22,
+          winnerTournamentTeamId: 21,
+        },
+        TournamentStatus.COMPLETED,
+      );
+
+      await service.setWinner(42, 101, { winnerTournamentTeamId: 21 });
+
+      expect(mockPrisma.tournament.update).not.toHaveBeenCalled();
+    });
+
+    it('raises TOURNAMENT_NOT_MUTABLE for a cancelled tournament', async () => {
+      arrangeSlotTarget(
+        { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
+        TournamentStatus.CANCELLED,
+      );
+
+      const error = await captureApiException(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 21 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
+    });
+
+    it('raises INVALID_TOURNAMENT_FORMAT for a league tournament', async () => {
+      arrangeSlotTarget(
+        { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
+        TournamentStatus.REGISTRATION,
+        TournamentFormat.LEAGUE,
+      );
+
+      const error = await captureApiException(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 21 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
+    });
+
+    it('raises 404 for a slot of another organization', async () => {
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+
+      await expect(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 21 }),
+      ).rejects.toMatchObject({ status: HttpStatus.NOT_FOUND });
+    });
+
+    it('accepts a winner that contradicts a linked finished match', async () => {
+      arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        matchId: 501,
+      });
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        matchId: 501,
+        winnerTournamentTeamId: 22,
+      });
+
+      await expect(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 22 }),
+      ).resolves.toMatchObject({ winnerTournamentTeamId: 22 });
     });
   });
 });
