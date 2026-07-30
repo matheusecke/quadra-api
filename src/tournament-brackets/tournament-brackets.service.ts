@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   MatchSide,
+  MatchStatus,
   Prisma,
   TournamentFormat,
   TournamentStatus,
@@ -16,6 +17,7 @@ import {
 } from './dto/bracket-response.dto';
 import { CreateTournamentBracketRoundDto } from './dto/create-tournament-bracket-round.dto';
 import { CreateTournamentBracketSlotDto } from './dto/create-tournament-bracket-slot.dto';
+import { LinkBracketSlotMatchDto } from './dto/link-bracket-slot-match.dto';
 import { TournamentBracketRoundResponseDto } from './dto/tournament-bracket-round-response.dto';
 import { TournamentBracketSlotResponseDto } from './dto/tournament-bracket-slot-response.dto';
 import { UpdateTournamentBracketRoundDto } from './dto/update-tournament-bracket-round.dto';
@@ -104,6 +106,21 @@ export const tournamentBracketSlotTargetSelect = {
   ...tournamentBracketSlotSelect,
   tournament: { select: { status: true, format: true } },
 } satisfies Prisma.TournamentBracketSlotSelect;
+
+export const matchLinkTargetSelect = {
+  id: true,
+  tournamentId: true,
+  tournamentGroupId: true,
+  status: true,
+  teams: {
+    where: { isDeleted: false },
+    select: { tournamentTeamId: true },
+  },
+} satisfies Prisma.MatchSelect;
+
+type MatchLinkTarget = Prisma.MatchGetPayload<{
+  select: typeof matchLinkTargetSelect;
+}>;
 
 type TournamentBracketSlotTarget = Prisma.TournamentBracketSlotGetPayload<{
   select: typeof tournamentBracketSlotTargetSelect;
@@ -314,8 +331,8 @@ export class TournamentBracketsService {
     this.assertMutable(slot.tournament.status);
     this.assertKnockoutFormat(slot.tournament.format);
 
-    // NOTE: no Phase 6 route can set matchId. The guard exists so the Phase 7
-    // unlink cascade cannot be bypassed by deleting the slot instead.
+    // NOTE: the guard exists so the unlink cascade cannot be bypassed by
+    // deleting the slot instead of unlinking the match first.
     if (slot.matchId !== null) {
       throw ApiException.conflict(
         'Unlink the match before deleting the slot.',
@@ -326,6 +343,68 @@ export class TournamentBracketsService {
     await this.prisma.tournamentBracketSlot.update({
       where: { id },
       data: { isDeleted: true },
+    });
+  }
+
+  async linkMatch(
+    organizationId: number,
+    id: number,
+    dto: LinkBracketSlotMatchDto,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id);
+    this.assertMutable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+
+    if (slot.matchId !== null) {
+      throw ApiException.conflict(
+        'Unlink the current match before linking another one.',
+        'SLOT_HAS_MATCH',
+      );
+    }
+
+    const match = await this.findMatchOrThrow(organizationId, dto.matchId);
+
+    if (match.tournamentId !== slot.tournamentId) {
+      throw ApiException.unprocessable(
+        'The bracket slot and match must belong to the same tournament.',
+        'INVALID_BRACKET_ASSIGNMENT',
+      );
+    }
+    // A match belongs to the group stage or to the bracket, never to both.
+    if (match.tournamentGroupId !== null) {
+      throw ApiException.unprocessable(
+        'A group stage match cannot be linked to a bracket slot.',
+        'MATCH_IN_GROUP_STAGE',
+      );
+    }
+    if (match.status === MatchStatus.CANCELLED) {
+      throw ApiException.unprocessable(
+        'A cancelled match cannot be linked to a bracket slot.',
+        'MATCH_CANCELLED',
+      );
+    }
+
+    const linkedElsewhere = await this.prisma.tournamentBracketSlot.findFirst({
+      where: { matchId: match.id, organizationId, isDeleted: false },
+      select: { id: true },
+    });
+    if (linkedElsewhere) {
+      throw ApiException.conflict(
+        'This match is already linked to another bracket slot.',
+        'MATCH_ALREADY_LINKED',
+      );
+    }
+
+    this.assertMatchTeamsMatchSlot(
+      slot.homeTournamentTeamId,
+      slot.awayTournamentTeamId,
+      match.teams,
+    );
+
+    return this.prisma.tournamentBracketSlot.update({
+      where: { id },
+      data: { matchId: match.id },
+      select: tournamentBracketSlotSelect,
     });
   }
 
@@ -504,6 +583,55 @@ export class TournamentBracketsService {
       throw ApiException.unprocessable(
         'The bracket slot and tournament team must belong to the same tournament.',
         'INVALID_BRACKET_ASSIGNMENT',
+      );
+    }
+  }
+
+  private async findLinkedMatch(
+    organizationId: number,
+    matchId: number,
+  ): Promise<MatchLinkTarget | null> {
+    return this.prisma.match.findFirst({
+      where: { id: matchId, organizationId, isDeleted: false },
+      select: matchLinkTargetSelect,
+    });
+  }
+
+  private async findMatchOrThrow(
+    organizationId: number,
+    matchId: number,
+  ): Promise<MatchLinkTarget> {
+    const match = await this.findLinkedMatch(organizationId, matchId);
+    if (!match) throw ApiException.notFound('Match not found');
+    return match;
+  }
+
+  private assertMatchTeamsMatchSlot(
+    homeTournamentTeamId: number | null,
+    awayTournamentTeamId: number | null,
+    matchTeams: { tournamentTeamId: number }[],
+  ): void {
+    // A slot with a bye or with undecided participants is a legal manual
+    // state, so there is nothing to contradict yet.
+    if (homeTournamentTeamId === null || awayTournamentTeamId === null) return;
+
+    // Compared as a set: match HOME/AWAY is home-court logistics, slot
+    // home/away is bracket display order. They need not agree.
+    const slotParticipants = [homeTournamentTeamId, awayTournamentTeamId].sort(
+      (a, b) => a - b,
+    );
+    const matchParticipants = matchTeams
+      .map((team) => team.tournamentTeamId)
+      .sort((a, b) => a - b);
+
+    const isSamePairing =
+      matchParticipants.length === slotParticipants.length &&
+      matchParticipants.every((id, index) => id === slotParticipants[index]);
+
+    if (!isSamePairing) {
+      throw ApiException.unprocessable(
+        'The match participants do not match the bracket slot participants.',
+        'MATCH_TEAMS_MISMATCH',
       );
     }
   }
