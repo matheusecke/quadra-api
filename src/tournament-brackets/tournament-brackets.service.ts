@@ -310,14 +310,32 @@ export class TournamentBracketsService {
       current.tournamentId,
       dto.awayTournamentTeamId,
     );
-    this.assertDistinctParticipants(
+    const mergedHomeTournamentTeamId =
       dto.homeTournamentTeamId !== undefined
         ? dto.homeTournamentTeamId
-        : current.homeTournamentTeamId,
+        : current.homeTournamentTeamId;
+    const mergedAwayTournamentTeamId =
       dto.awayTournamentTeamId !== undefined
         ? dto.awayTournamentTeamId
-        : current.awayTournamentTeamId,
+        : current.awayTournamentTeamId;
+
+    this.assertDistinctParticipants(
+      mergedHomeTournamentTeamId,
+      mergedAwayTournamentTeamId,
     );
+
+    if (current.matchId !== null) {
+      // A soft-deleted match already reads as null in the composite bracket,
+      // so there is nothing left for the patch to contradict.
+      const match = await this.findLinkedMatch(organizationId, current.matchId);
+      if (match) {
+        this.assertMatchTeamsMatchSlot(
+          mergedHomeTournamentTeamId,
+          mergedAwayTournamentTeamId,
+          match.teams,
+        );
+      }
+    }
 
     return this.prisma.tournamentBracketSlot.update({
       where: { id },

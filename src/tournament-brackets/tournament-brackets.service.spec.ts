@@ -1231,6 +1231,72 @@ describe('TournamentBracketsService', () => {
       expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
     });
 
+    it('raises MATCH_TEAMS_MISMATCH when a patch contradicts the linked match', async () => {
+      arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        matchId: 501,
+      });
+      arrangeRegistration({ id: 23 });
+      mockPrisma.match.findFirst.mockResolvedValueOnce({
+        id: 501,
+        tournamentId: 12,
+        tournamentGroupId: null,
+        status: MatchStatus.SCHEDULED,
+        teams: [{ tournamentTeamId: 21 }, { tournamentTeamId: 22 }],
+      });
+
+      const error = await captureApiException(
+        service.updateSlot(42, 101, { awayTournamentTeamId: 23 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('MATCH_TEAMS_MISMATCH');
+    });
+
+    it('accepts a patch that keeps the linked match consistent', async () => {
+      arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        matchId: 501,
+      });
+      mockPrisma.match.findFirst.mockResolvedValueOnce({
+        id: 501,
+        tournamentId: 12,
+        tournamentGroupId: null,
+        status: MatchStatus.SCHEDULED,
+        teams: [{ tournamentTeamId: 21 }, { tournamentTeamId: 22 }],
+      });
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        label: 'Final',
+        matchId: 501,
+      });
+
+      await expect(
+        service.updateSlot(42, 101, { label: 'Final' }),
+      ).resolves.toMatchObject({ label: 'Final' });
+    });
+
+    it('accepts a patch when the linked match row is gone', async () => {
+      arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        matchId: 501,
+      });
+      arrangeRegistration({ id: 23 });
+      mockPrisma.match.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 23,
+        matchId: 501,
+      });
+
+      await expect(
+        service.updateSlot(42, 101, { awayTournamentTeamId: 23 }),
+      ).resolves.toMatchObject({ awayTournamentTeamId: 23 });
+    });
+
     it('rejects a slot update in a format without a knockout stage', async () => {
       arrangeSlotTarget(
         {},
