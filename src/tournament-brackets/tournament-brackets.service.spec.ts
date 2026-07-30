@@ -24,6 +24,13 @@ type AsyncMock = jest.Mock<(input?: unknown) => Promise<unknown>>;
 const createAsyncMock = (): AsyncMock =>
   jest.fn<(input?: unknown) => Promise<unknown>>();
 
+type TransactionMock = jest.Mock<
+  (callback: (tx: unknown) => unknown) => unknown
+>;
+
+const createTransactionMock = (): TransactionMock =>
+  jest.fn<(callback: (tx: unknown) => unknown) => unknown>();
+
 type MockPrisma = {
   tournament: { findFirst: AsyncMock };
   tournamentBracketRound: {
@@ -39,6 +46,7 @@ type MockPrisma = {
   };
   tournamentTeam: { findFirst: AsyncMock };
   match: { findFirst: AsyncMock; update: AsyncMock };
+  $transaction: TransactionMock;
 };
 
 const mockPrisma: MockPrisma = {
@@ -56,6 +64,7 @@ const mockPrisma: MockPrisma = {
   },
   tournamentTeam: { findFirst: createAsyncMock() },
   match: { findFirst: createAsyncMock(), update: createAsyncMock() },
+  $transaction: createTransactionMock(),
 };
 
 type ReadMatchRow = {
@@ -226,6 +235,9 @@ describe('TournamentBracketsService', () => {
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    mockPrisma.$transaction.mockImplementation((callback) =>
+      callback(mockPrisma),
+    );
     const module = await Test.createTestingModule({
       providers: [
         TournamentBracketsService,
@@ -1608,6 +1620,131 @@ describe('TournamentBracketsService', () => {
       await expect(
         service.linkMatch(42, 101, { matchId: 501 }),
       ).resolves.toMatchObject({ matchId: 501 });
+    });
+  });
+
+  describe('unlinkMatch', () => {
+    it('clears the link on the addressed slot', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+      arrangeMatch();
+
+      await service.unlinkMatch(42, 101);
+
+      expect(mockPrisma.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 101 },
+        data: { matchId: null },
+      });
+    });
+
+    it('cancels a scheduled match on unlink', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+      arrangeMatch({ status: MatchStatus.SCHEDULED });
+
+      await service.unlinkMatch(42, 101);
+
+      expect(mockPrisma.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: { status: MatchStatus.CANCELLED },
+      });
+    });
+
+    it('cancels a live match on unlink', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+      arrangeMatch({ status: MatchStatus.LIVE });
+
+      await service.unlinkMatch(42, 101);
+
+      expect(mockPrisma.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: { status: MatchStatus.CANCELLED },
+      });
+    });
+
+    it('cancels a postponed match on unlink', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+      arrangeMatch({ status: MatchStatus.POSTPONED });
+
+      await service.unlinkMatch(42, 101);
+
+      expect(mockPrisma.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: { status: MatchStatus.CANCELLED },
+      });
+    });
+
+    it('leaves an already cancelled match untouched', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+      arrangeMatch({ status: MatchStatus.CANCELLED });
+
+      await service.unlinkMatch(42, 101);
+
+      expect(mockPrisma.match.update).not.toHaveBeenCalled();
+    });
+
+    it('clears the link when the linked match row is gone', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+      mockPrisma.match.findFirst.mockResolvedValueOnce(null);
+
+      await service.unlinkMatch(42, 101);
+
+      expect(mockPrisma.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 101 },
+        data: { matchId: null },
+      });
+    });
+
+    it('raises MATCH_ALREADY_FINISHED for a finished match', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+      arrangeMatch({ status: MatchStatus.FINISHED });
+
+      const error = await captureApiException(service.unlinkMatch(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('MATCH_ALREADY_FINISHED');
+    });
+
+    it('writes nothing when the linked match is finished', async () => {
+      arrangeSlotTarget({ matchId: 501 });
+      arrangeMatch({ status: MatchStatus.FINISHED });
+
+      await captureApiException(service.unlinkMatch(42, 101));
+
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('raises SLOT_HAS_NO_MATCH for a slot with no linked match', async () => {
+      arrangeSlotTarget();
+
+      const error = await captureApiException(service.unlinkMatch(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('SLOT_HAS_NO_MATCH');
+    });
+
+    it('raises 404 for a slot of another organization', async () => {
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+
+      await expect(service.unlinkMatch(42, 101)).rejects.toMatchObject({
+        status: HttpStatus.NOT_FOUND,
+      });
+    });
+
+    it('raises TOURNAMENT_NOT_MUTABLE for a completed tournament', async () => {
+      arrangeSlotTarget({ matchId: 501 }, TournamentStatus.COMPLETED);
+
+      const error = await captureApiException(service.unlinkMatch(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('TOURNAMENT_NOT_MUTABLE');
+    });
+
+    it('raises INVALID_TOURNAMENT_FORMAT for a group stage tournament', async () => {
+      arrangeSlotTarget(
+        { matchId: 501 },
+        TournamentStatus.REGISTRATION,
+        TournamentFormat.GROUP_STAGE,
+      );
+
+      const error = await captureApiException(service.unlinkMatch(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('INVALID_TOURNAMENT_FORMAT');
     });
   });
 });
