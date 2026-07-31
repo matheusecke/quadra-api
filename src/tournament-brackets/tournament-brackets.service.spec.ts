@@ -509,9 +509,7 @@ describe('TournamentBracketsService', () => {
       mockPrisma.tournamentBracketRound.findMany.mockResolvedValue([
         {
           ...readRoundRow,
-          slots: [
-            { ...readSlotRow, match: { ...readMatchRow, teams: [] } },
-          ],
+          slots: [{ ...readSlotRow, match: { ...readMatchRow, teams: [] } }],
         },
       ]);
 
@@ -1195,35 +1193,31 @@ describe('TournamentBracketsService', () => {
       mockPrisma.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
         count: 1,
       });
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(
-        updated,
-      );
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(updated);
 
       await expect(
         service.updateSlot(42, 101, { awayTournamentTeamId: 24 }),
       ).resolves.toEqual(updated);
-      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith(
-        {
-          where: {
-            id: 101,
-            organizationId: 42,
-            isDeleted: false,
-            matchId: null,
-            homeTournamentTeamId: 23,
-            awayTournamentTeamId: null,
-            winnerTournamentTeamId: null,
-            tournament: {
-              is: {
-                organizationId: 42,
-                isDeleted: false,
-                status: TournamentStatus.REGISTRATION,
-                format: TournamentFormat.KNOCKOUT,
-              },
+      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 101,
+          organizationId: 42,
+          isDeleted: false,
+          matchId: null,
+          homeTournamentTeamId: 23,
+          awayTournamentTeamId: null,
+          winnerTournamentTeamId: null,
+          tournament: {
+            is: {
+              organizationId: 42,
+              isDeleted: false,
+              status: TournamentStatus.REGISTRATION,
+              format: TournamentFormat.KNOCKOUT,
             },
           },
-          data: { awayTournamentTeamId: 24 },
         },
-      );
+        data: { awayTournamentTeamId: 24 },
+      });
     });
 
     it('clears both participants when the body sends null and looks up neither', async () => {
@@ -1231,9 +1225,7 @@ describe('TournamentBracketsService', () => {
       mockPrisma.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
         count: 1,
       });
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(
-        slotRow,
-      );
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(slotRow);
 
       await service.updateSlot(42, 101, {
         homeTournamentTeamId: null,
@@ -1241,28 +1233,26 @@ describe('TournamentBracketsService', () => {
       });
 
       expect(mockPrisma.tournamentTeam.findFirst).not.toHaveBeenCalled();
-      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith(
-        {
-          where: {
-            id: 101,
-            organizationId: 42,
-            isDeleted: false,
-            matchId: null,
-            homeTournamentTeamId: 23,
-            awayTournamentTeamId: 24,
-            winnerTournamentTeamId: null,
-            tournament: {
-              is: {
-                organizationId: 42,
-                isDeleted: false,
-                status: TournamentStatus.REGISTRATION,
-                format: TournamentFormat.KNOCKOUT,
-              },
+      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 101,
+          organizationId: 42,
+          isDeleted: false,
+          matchId: null,
+          homeTournamentTeamId: 23,
+          awayTournamentTeamId: 24,
+          winnerTournamentTeamId: null,
+          tournament: {
+            is: {
+              organizationId: 42,
+              isDeleted: false,
+              status: TournamentStatus.REGISTRATION,
+              format: TournamentFormat.KNOCKOUT,
             },
           },
-          data: { homeTournamentTeamId: null, awayTournamentTeamId: null },
         },
-      );
+        data: { homeTournamentTeamId: null, awayTournamentTeamId: null },
+      });
     });
 
     it('writes only position and label when the participant keys are omitted', async () => {
@@ -1283,28 +1273,26 @@ describe('TournamentBracketsService', () => {
         label: 'Disputa de 3º lugar',
       });
 
-      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith(
-        {
-          where: {
-            id: 101,
-            organizationId: 42,
-            isDeleted: false,
-            matchId: null,
-            homeTournamentTeamId: 23,
-            awayTournamentTeamId: null,
-            winnerTournamentTeamId: null,
-            tournament: {
-              is: {
-                organizationId: 42,
-                isDeleted: false,
-                status: TournamentStatus.REGISTRATION,
-                format: TournamentFormat.KNOCKOUT,
-              },
+      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 101,
+          organizationId: 42,
+          isDeleted: false,
+          matchId: null,
+          homeTournamentTeamId: 23,
+          awayTournamentTeamId: null,
+          winnerTournamentTeamId: null,
+          tournament: {
+            is: {
+              organizationId: 42,
+              isDeleted: false,
+              status: TournamentStatus.REGISTRATION,
+              format: TournamentFormat.KNOCKOUT,
             },
           },
-          data: { position: 4, label: 'Disputa de 3º lugar' },
         },
-      );
+        data: { position: 4, label: 'Disputa de 3º lugar' },
+      });
     });
 
     it('returns the current row without writing for an empty patch body', async () => {
@@ -1322,26 +1310,23 @@ describe('TournamentBracketsService', () => {
       mockPrisma.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
         count: 1,
       });
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(
-        slotRow,
-      );
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(slotRow);
 
       await expect(
         service.updateSlot(42, 101, { position: 1 }),
       ).resolves.toEqual(slotRow);
-      expect(mockPrisma.tournamentBracketSlot.findFirst).toHaveBeenNthCalledWith(
-        2,
-        {
-          where: {
-            roundId: 10,
-            organizationId: 42,
-            position: 1,
-            isDeleted: false,
-            id: { not: 101 },
-          },
-          select: { id: true },
+      expect(
+        mockPrisma.tournamentBracketSlot.findFirst,
+      ).toHaveBeenNthCalledWith(2, {
+        where: {
+          roundId: 10,
+          organizationId: 42,
+          position: 1,
+          isDeleted: false,
+          id: { not: 101 },
         },
-      );
+        select: { id: true },
+      });
     });
 
     it('rejects a position held by another active slot of the round', async () => {
@@ -1405,6 +1390,21 @@ describe('TournamentBracketsService', () => {
       expect(mockPrisma.match.findFirst).not.toHaveBeenCalled();
     });
 
+    it('raises 404 for a nonexistent participant before checking the stored winner', async () => {
+      arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
+      });
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValueOnce(null);
+
+      const error = await captureApiException(
+        service.updateSlot(42, 101, { homeTournamentTeamId: 999 }),
+      );
+
+      expect(error.getStatus()).toBe(HttpStatus.NOT_FOUND);
+    });
+
     it('raises INVALID_SLOT_WINNER when PATCH clears the participant that won', async () => {
       arrangeSlotTarget({
         homeTournamentTeamId: 21,
@@ -1456,34 +1456,30 @@ describe('TournamentBracketsService', () => {
       mockPrisma.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
         count: 1,
       });
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(
-        slotRow,
-      );
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(slotRow);
 
       await service.updateSlot(42, 101, { label: 'Final' });
 
-      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith(
-        {
-          where: {
-            id: 101,
-            organizationId: 42,
-            isDeleted: false,
-            matchId: null,
-            homeTournamentTeamId: 21,
-            awayTournamentTeamId: 22,
-            winnerTournamentTeamId: 21,
-            tournament: {
-              is: {
-                organizationId: 42,
-                isDeleted: false,
-                status: TournamentStatus.REGISTRATION,
-                format: TournamentFormat.KNOCKOUT,
-              },
+      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 101,
+          organizationId: 42,
+          isDeleted: false,
+          matchId: null,
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 22,
+          winnerTournamentTeamId: 21,
+          tournament: {
+            is: {
+              organizationId: 42,
+              isDeleted: false,
+              status: TournamentStatus.REGISTRATION,
+              format: TournamentFormat.KNOCKOUT,
             },
           },
-          data: { label: 'Final' },
         },
-      );
+        data: { label: 'Final' },
+      });
     });
 
     it('revalidates a CAS miss and raises MATCH_TEAMS_MISMATCH after a concurrent link', async () => {
@@ -1548,7 +1544,9 @@ describe('TournamentBracketsService', () => {
       expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledTimes(
         2,
       );
-      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenLastCalledWith(
+      expect(
+        mockPrisma.tournamentBracketSlot.updateMany,
+      ).toHaveBeenLastCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ winnerTournamentTeamId: 21 }),
         }),

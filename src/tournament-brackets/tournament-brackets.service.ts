@@ -294,7 +294,7 @@ export class TournamentBracketsService {
 
     const { tournament, ...current } = slot;
 
-    const data: Prisma.TournamentBracketSlotUncheckedUpdateInput = {};
+    const data: Prisma.TournamentBracketSlotUncheckedUpdateManyInput = {};
     if (dto.position !== undefined) data.position = dto.position;
     if (dto.label !== undefined) data.label = dto.label;
     if (dto.homeTournamentTeamId !== undefined) {
@@ -375,7 +375,7 @@ export class TournamentBracketsService {
           },
         },
       },
-      data: data as Prisma.TournamentBracketSlotUncheckedUpdateManyInput,
+      data,
     });
 
     if (result.count === 0) {
@@ -585,16 +585,11 @@ export class TournamentBracketsService {
     const { tournament, ...current } = slot;
     const { winnerTournamentTeamId } = dto;
 
-    if (
-      winnerTournamentTeamId !== null &&
-      winnerTournamentTeamId !== current.homeTournamentTeamId &&
-      winnerTournamentTeamId !== current.awayTournamentTeamId
-    ) {
-      throw ApiException.unprocessable(
-        'The winner must be one of the slot participants.',
-        'INVALID_SLOT_WINNER',
-      );
-    }
+    this.assertStoredWinnerStillParticipant(
+      winnerTournamentTeamId,
+      current.homeTournamentTeamId,
+      current.awayTournamentTeamId,
+    );
 
     // The reopen cascade is conditioned on the winner changing, so an
     // idempotent write must not reopen a completed tournament.
