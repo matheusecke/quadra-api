@@ -378,7 +378,8 @@ export class TournamentBracketsService {
     try {
       // NOTE: the CAS retry depends on Read Committed — each statement
       // re-snapshots, so the fresh read sees the winning commit. Under
-      // Serializable the retry would always miss for the same reason.
+      // Serializable the write would abort with P2034 instead of missing,
+      // so that path needs retry-on-P2034, not this fresh-read retry.
       return await this.prisma.$transaction((tx) =>
         this.linkMatchAttempt(tx, organizationId, id, dto.matchId, true),
       );
