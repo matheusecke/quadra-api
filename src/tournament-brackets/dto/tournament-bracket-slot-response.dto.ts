@@ -25,15 +25,15 @@ export class TournamentBracketSlotResponseDto {
   @ApiProperty({
     example: null,
     nullable: true,
-    description:
-      'Set by the Phase 7 link-match route; always null in this phase.',
+    description: 'Set by the link-match route; null when no match is linked.',
   })
   matchId!: number | null;
 
   @ApiProperty({
     example: null,
     nullable: true,
-    description: 'Set by the Phase 7 winner route; always null in this phase.',
+    description:
+      'Set by the winner route; always one of the slot participants, or null.',
   })
   winnerTournamentTeamId!: number | null;
 

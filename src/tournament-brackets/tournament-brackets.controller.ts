@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -22,11 +23,15 @@ import {
 import { OrgRole } from '@prisma/client';
 import { TournamentBracketsService } from './tournament-brackets.service';
 import { BracketResponseDto } from './dto/bracket-response.dto';
+import { BracketSlotActionQueryDto } from './dto/bracket-slot-action-query.dto';
 import { CreateTournamentBracketRoundDto } from './dto/create-tournament-bracket-round.dto';
 import { CreateTournamentBracketSlotDto } from './dto/create-tournament-bracket-slot.dto';
 import { GetBracketQueryDto } from './dto/get-bracket-query.dto';
+import { LinkBracketSlotMatchDto } from './dto/link-bracket-slot-match.dto';
+import { SetBracketSlotWinnerDto } from './dto/set-bracket-slot-winner.dto';
 import { TournamentBracketRoundResponseDto } from './dto/tournament-bracket-round-response.dto';
 import { TournamentBracketSlotResponseDto } from './dto/tournament-bracket-slot-response.dto';
+import { UnlinkBracketSlotMatchDto } from './dto/unlink-bracket-slot-match.dto';
 import { UpdateTournamentBracketRoundDto } from './dto/update-tournament-bracket-round.dto';
 import { UpdateTournamentBracketSlotDto } from './dto/update-tournament-bracket-slot.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -197,6 +202,78 @@ export class TournamentBracketSlotsController {
     await this.tournamentBracketsService.removeSlot(
       user.organizationId as number,
       id,
+    );
+  }
+
+  @Post(':id/link-match')
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Link an existing match to a bracket slot' })
+  @ApiParam({
+    name: 'id',
+    example: 101,
+    description: 'TournamentBracketSlot id.',
+  })
+  @ApiOkResponse({ type: TournamentBracketSlotResponseDto })
+  linkMatch(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: BracketSlotActionQueryDto,
+    @Body() dto: LinkBracketSlotMatchDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    return this.tournamentBracketsService.linkMatch(
+      user.organizationId as number,
+      id,
+      dto,
+    );
+  }
+
+  @Delete(':id/link-match')
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary:
+      'Unlink the match from a bracket slot, cancelling it when it has not happened yet',
+  })
+  @ApiParam({
+    name: 'id',
+    example: 101,
+    description: 'TournamentBracketSlot id.',
+  })
+  async unlinkMatch(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: BracketSlotActionQueryDto,
+    @Body() _body: UnlinkBracketSlotMatchDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    await this.tournamentBracketsService.unlinkMatch(
+      user.organizationId as number,
+      id,
+    );
+  }
+
+  @Put(':id/winner')
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @ApiOperation({
+    summary:
+      'Declare or clear the bracket slot winner, reopening a completed tournament',
+  })
+  @ApiParam({
+    name: 'id',
+    example: 101,
+    description: 'TournamentBracketSlot id.',
+  })
+  @ApiOkResponse({ type: TournamentBracketSlotResponseDto })
+  setWinner(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: BracketSlotActionQueryDto,
+    @Body() dto: SetBracketSlotWinnerDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    return this.tournamentBracketsService.setWinner(
+      user.organizationId as number,
+      id,
+      dto,
     );
   }
 }

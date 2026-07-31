@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
+  MatchSide,
+  MatchStatus,
   Prisma,
   TournamentFormat,
   TournamentStatus,
@@ -10,10 +12,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   BracketResponseDto,
   BracketRoundResponseDto,
+  BracketSlotMatchResponseDto,
   BracketSlotTeamResponseDto,
 } from './dto/bracket-response.dto';
 import { CreateTournamentBracketRoundDto } from './dto/create-tournament-bracket-round.dto';
 import { CreateTournamentBracketSlotDto } from './dto/create-tournament-bracket-slot.dto';
+import { LinkBracketSlotMatchDto } from './dto/link-bracket-slot-match.dto';
+import { SetBracketSlotWinnerDto } from './dto/set-bracket-slot-winner.dto';
 import { TournamentBracketRoundResponseDto } from './dto/tournament-bracket-round-response.dto';
 import { TournamentBracketSlotResponseDto } from './dto/tournament-bracket-slot-response.dto';
 import { UpdateTournamentBracketRoundDto } from './dto/update-tournament-bracket-round.dto';
@@ -37,6 +42,20 @@ export const bracketReadSelect = {
       position: true,
       label: true,
       winnerTournamentTeamId: true,
+      // NOTE: isDeleted is selected because Prisma cannot filter a to-one
+      // relation; a soft-deleted match is discarded in toSlotMatch instead.
+      match: {
+        select: {
+          id: true,
+          status: true,
+          scheduledAt: true,
+          isDeleted: true,
+          teams: {
+            where: { isDeleted: false },
+            select: { side: true, finalScore: true },
+          },
+        },
+      },
       homeTournamentTeam: { select: bracketSlotTeamSelect },
       awayTournamentTeam: { select: bracketSlotTeamSelect },
     },
@@ -49,6 +68,8 @@ type BracketRoundReadRow = Prisma.TournamentBracketRoundGetPayload<{
 
 type BracketSlotTeamRow =
   BracketRoundReadRow['slots'][number]['homeTournamentTeam'];
+
+type BracketSlotMatchRow = BracketRoundReadRow['slots'][number]['match'];
 
 export const tournamentBracketRoundSelect = {
   id: true,
@@ -87,9 +108,29 @@ export const tournamentBracketSlotTargetSelect = {
   tournament: { select: { status: true, format: true } },
 } satisfies Prisma.TournamentBracketSlotSelect;
 
+export const matchLinkTargetSelect = {
+  id: true,
+  tournamentId: true,
+  tournamentGroupId: true,
+  status: true,
+  teams: {
+    where: { isDeleted: false },
+    select: { tournamentTeamId: true },
+  },
+} satisfies Prisma.MatchSelect;
+
+type MatchLinkTarget = Prisma.MatchGetPayload<{
+  select: typeof matchLinkTargetSelect;
+}>;
+
 type TournamentBracketSlotTarget = Prisma.TournamentBracketSlotGetPayload<{
   select: typeof tournamentBracketSlotTargetSelect;
 }>;
+
+type BracketTransactionClient = Pick<
+  Prisma.TransactionClient,
+  'match' | 'tournament' | 'tournamentBracketSlot' | 'tournamentTeam'
+>;
 
 @Injectable()
 export class TournamentBracketsService {
@@ -238,14 +279,22 @@ export class TournamentBracketsService {
     id: number,
     dto: UpdateTournamentBracketSlotDto,
   ): Promise<TournamentBracketSlotResponseDto> {
+    return this.updateSlotAttempt(organizationId, id, dto, true);
+  }
+
+  private async updateSlotAttempt(
+    organizationId: number,
+    id: number,
+    dto: UpdateTournamentBracketSlotDto,
+    retryOnCasMiss: boolean,
+  ): Promise<TournamentBracketSlotResponseDto> {
     const slot = await this.findSlotOrThrow(organizationId, id);
     this.assertMutable(slot.tournament.status);
     this.assertKnockoutFormat(slot.tournament.format);
 
     const { tournament, ...current } = slot;
-    void tournament;
 
-    const data: Prisma.TournamentBracketSlotUncheckedUpdateInput = {};
+    const data: Prisma.TournamentBracketSlotUncheckedUpdateManyInput = {};
     if (dto.position !== undefined) data.position = dto.position;
     if (dto.label !== undefined) data.label = dto.label;
     if (dto.homeTournamentTeamId !== undefined) {
@@ -275,20 +324,75 @@ export class TournamentBracketsService {
       current.tournamentId,
       dto.awayTournamentTeamId,
     );
-    this.assertDistinctParticipants(
+    const mergedHomeTournamentTeamId =
       dto.homeTournamentTeamId !== undefined
         ? dto.homeTournamentTeamId
-        : current.homeTournamentTeamId,
+        : current.homeTournamentTeamId;
+    const mergedAwayTournamentTeamId =
       dto.awayTournamentTeamId !== undefined
         ? dto.awayTournamentTeamId
-        : current.awayTournamentTeamId,
+        : current.awayTournamentTeamId;
+
+    this.assertDistinctParticipants(
+      mergedHomeTournamentTeamId,
+      mergedAwayTournamentTeamId,
     );
 
-    return this.prisma.tournamentBracketSlot.update({
-      where: { id },
+    this.assertStoredWinnerStillParticipant(
+      current.winnerTournamentTeamId,
+      mergedHomeTournamentTeamId,
+      mergedAwayTournamentTeamId,
+    );
+
+    if (current.matchId !== null) {
+      // A soft-deleted match already reads as null in the composite bracket,
+      // so there is nothing left for the patch to contradict.
+      const match = await this.findLinkedMatch(organizationId, current.matchId);
+      if (match) {
+        this.assertMatchTeamsMatchSlot(
+          mergedHomeTournamentTeamId,
+          mergedAwayTournamentTeamId,
+          match.teams,
+        );
+      }
+    }
+
+    const result = await this.prisma.tournamentBracketSlot.updateMany({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        matchId: current.matchId,
+        homeTournamentTeamId: current.homeTournamentTeamId,
+        awayTournamentTeamId: current.awayTournamentTeamId,
+        winnerTournamentTeamId: current.winnerTournamentTeamId,
+        tournament: {
+          is: {
+            organizationId,
+            isDeleted: false,
+            status: tournament.status,
+            format: tournament.format,
+          },
+        },
+      },
       data,
+    });
+
+    if (result.count === 0) {
+      if (retryOnCasMiss) {
+        return this.updateSlotAttempt(organizationId, id, dto, false);
+      }
+      throw this.concurrentModification();
+    }
+
+    const updated = await this.prisma.tournamentBracketSlot.findFirst({
+      where: { id, organizationId, isDeleted: false },
       select: tournamentBracketSlotSelect,
     });
+    if (!updated) {
+      throw ApiException.notFound('Tournament bracket slot not found');
+    }
+    return updated;
   }
 
   async removeSlot(organizationId: number, id: number): Promise<void> {
@@ -296,8 +400,8 @@ export class TournamentBracketsService {
     this.assertMutable(slot.tournament.status);
     this.assertKnockoutFormat(slot.tournament.format);
 
-    // NOTE: no Phase 6 route can set matchId. The guard exists so the Phase 7
-    // unlink cascade cannot be bypassed by deleting the slot instead.
+    // NOTE: the guard exists so the unlink cascade cannot be bypassed by
+    // deleting the slot instead of unlinking the match first.
     if (slot.matchId !== null) {
       throw ApiException.conflict(
         'Unlink the match before deleting the slot.',
@@ -305,10 +409,316 @@ export class TournamentBracketsService {
       );
     }
 
-    await this.prisma.tournamentBracketSlot.update({
-      where: { id },
+    const removed = await this.prisma.tournamentBracketSlot.updateMany({
+      where: { id, organizationId, isDeleted: false, matchId: null },
       data: { isDeleted: true },
     });
+
+    if (removed.count === 0) {
+      const fresh = await this.findSlotOrThrow(organizationId, id);
+      if (fresh.matchId !== null) {
+        throw ApiException.conflict(
+          'Unlink the match before deleting the slot.',
+          'SLOT_HAS_MATCH',
+        );
+      }
+      throw this.concurrentModification();
+    }
+  }
+
+  async linkMatch(
+    organizationId: number,
+    id: number,
+    dto: LinkBracketSlotMatchDto,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    try {
+      // NOTE: the CAS retry depends on Read Committed — each statement
+      // re-snapshots, so the fresh read sees the winning commit. Under
+      // Serializable the write would abort with P2034 instead of missing,
+      // so that path needs retry-on-P2034, not this fresh-read retry.
+      return await this.prisma.$transaction((tx) =>
+        this.linkMatchAttempt(tx, organizationId, id, dto.matchId, true),
+      );
+    } catch (error) {
+      if (this.isPrismaError(error, 'P2002')) {
+        throw ApiException.conflict(
+          'This match is already linked to another bracket slot.',
+          'MATCH_ALREADY_LINKED',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async linkMatchAttempt(
+    tx: BracketTransactionClient,
+    organizationId: number,
+    id: number,
+    matchId: number,
+    retryOnCasMiss: boolean,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id, tx);
+    this.assertMutable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+
+    if (slot.matchId !== null) {
+      throw ApiException.conflict(
+        'Unlink the current match before linking another one.',
+        'SLOT_HAS_MATCH',
+      );
+    }
+
+    const match = await this.findMatchOrThrow(organizationId, matchId, tx);
+
+    if (match.tournamentId !== slot.tournamentId) {
+      throw ApiException.unprocessable(
+        'The bracket slot and match must belong to the same tournament.',
+        'INVALID_BRACKET_ASSIGNMENT',
+      );
+    }
+    // A match belongs to the group stage or to the bracket, never to both.
+    if (match.tournamentGroupId !== null) {
+      throw ApiException.unprocessable(
+        'A group stage match cannot be linked to a bracket slot.',
+        'MATCH_IN_GROUP_STAGE',
+      );
+    }
+    if (match.status === MatchStatus.CANCELLED) {
+      throw ApiException.unprocessable(
+        'A cancelled match cannot be linked to a bracket slot.',
+        'MATCH_CANCELLED',
+      );
+    }
+
+    const linkedElsewhere = await tx.tournamentBracketSlot.findFirst({
+      where: { matchId: match.id, organizationId, isDeleted: false },
+      select: { id: true },
+    });
+    if (linkedElsewhere) {
+      throw ApiException.conflict(
+        'This match is already linked to another bracket slot.',
+        'MATCH_ALREADY_LINKED',
+      );
+    }
+
+    this.assertMatchTeamsMatchSlot(
+      slot.homeTournamentTeamId,
+      slot.awayTournamentTeamId,
+      match.teams,
+    );
+
+    const result = await tx.tournamentBracketSlot.updateMany({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        matchId: null,
+        homeTournamentTeamId: slot.homeTournamentTeamId,
+        awayTournamentTeamId: slot.awayTournamentTeamId,
+        winnerTournamentTeamId: slot.winnerTournamentTeamId,
+        tournament: {
+          is: {
+            organizationId,
+            isDeleted: false,
+            status: slot.tournament.status,
+            format: slot.tournament.format,
+          },
+        },
+      },
+      data: { matchId },
+    });
+
+    if (result.count === 0) {
+      if (retryOnCasMiss) {
+        return this.linkMatchAttempt(tx, organizationId, id, matchId, false);
+      }
+      throw this.concurrentModification();
+    }
+
+    const updated = await tx.tournamentBracketSlot.findFirst({
+      where: { id, organizationId, isDeleted: false },
+      select: tournamentBracketSlotSelect,
+    });
+    if (!updated) {
+      throw ApiException.notFound('Tournament bracket slot not found');
+    }
+    return updated;
+  }
+
+  async unlinkMatch(organizationId: number, id: number): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const slot = await this.findSlotOrThrow(organizationId, id, tx);
+      this.assertMutable(slot.tournament.status);
+      this.assertKnockoutFormat(slot.tournament.format);
+
+      if (slot.matchId === null) {
+        throw ApiException.notFound(
+          'This bracket slot has no linked match.',
+          'SLOT_HAS_NO_MATCH',
+        );
+      }
+
+      const match = await this.findLinkedMatch(
+        organizationId,
+        slot.matchId,
+        tx,
+      );
+
+      // A knockout match does not exist without a slot, so a match that is
+      // still going to happen is cancelled with the link. The conditional
+      // write only ever transitions a pending match, so it naturally
+      // no-ops when the match is already CANCELLED.
+      if (match) {
+        const cancelled = await tx.match.updateMany({
+          where: {
+            id: match.id,
+            organizationId,
+            isDeleted: false,
+            status: {
+              in: [
+                MatchStatus.SCHEDULED,
+                MatchStatus.LIVE,
+                MatchStatus.POSTPONED,
+              ],
+            },
+          },
+          data: { status: MatchStatus.CANCELLED },
+        });
+
+        if (cancelled.count === 0) {
+          const freshMatch = await this.findLinkedMatch(
+            organizationId,
+            match.id,
+            tx,
+          );
+          if (freshMatch?.status === MatchStatus.FINISHED) {
+            throw ApiException.conflict(
+              'A finished match cannot be unlinked from its bracket slot.',
+              'MATCH_ALREADY_FINISHED',
+            );
+          }
+          if (freshMatch && freshMatch.status !== MatchStatus.CANCELLED) {
+            throw this.concurrentModification();
+          }
+        }
+      }
+
+      const unlinked = await tx.tournamentBracketSlot.updateMany({
+        where: {
+          id,
+          organizationId,
+          isDeleted: false,
+          matchId: slot.matchId,
+        },
+        data: { matchId: null },
+      });
+
+      if (unlinked.count === 0) {
+        const freshSlot = await this.findSlotOrThrow(organizationId, id, tx);
+        if (freshSlot.matchId === null) {
+          throw ApiException.notFound(
+            'This bracket slot has no linked match.',
+            'SLOT_HAS_NO_MATCH',
+          );
+        }
+        throw ApiException.conflict(
+          'This bracket slot is linked to a different match.',
+          'SLOT_HAS_MATCH',
+        );
+      }
+    });
+  }
+
+  async setWinner(
+    organizationId: number,
+    id: number,
+    dto: SetBracketSlotWinnerDto,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id);
+    this.assertWinnerWritable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+    this.assertStoredWinnerStillParticipant(
+      dto.winnerTournamentTeamId,
+      slot.homeTournamentTeamId,
+      slot.awayTournamentTeamId,
+    );
+
+    // The reopen cascade is conditioned on the winner changing, so an
+    // idempotent write must not reopen a completed tournament, and must not
+    // pay for a transaction at all.
+    if (dto.winnerTournamentTeamId === slot.winnerTournamentTeamId) {
+      const { tournament, ...current } = slot;
+      void tournament;
+      return current;
+    }
+
+    return this.runSerializable((tx) =>
+      this.setWinnerTransaction(
+        tx,
+        organizationId,
+        id,
+        dto.winnerTournamentTeamId,
+      ),
+    );
+  }
+
+  private async setWinnerTransaction(
+    tx: BracketTransactionClient,
+    organizationId: number,
+    id: number,
+    winnerTournamentTeamId: number | null,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id, tx);
+    this.assertWinnerWritable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+    this.assertStoredWinnerStillParticipant(
+      winnerTournamentTeamId,
+      slot.homeTournamentTeamId,
+      slot.awayTournamentTeamId,
+    );
+
+    if (winnerTournamentTeamId === slot.winnerTournamentTeamId) {
+      const { tournament, ...current } = slot;
+      void tournament;
+      return current;
+    }
+
+    const updated = await tx.tournamentBracketSlot.update({
+      where: { id },
+      data: { winnerTournamentTeamId },
+      select: tournamentBracketSlotSelect,
+    });
+
+    // A title does not survive a change to the result that produced it.
+    // Both fields are written together: the DB check constraint only
+    // tolerates a champion while the tournament is COMPLETED.
+    if (slot.tournament.status === TournamentStatus.COMPLETED) {
+      await tx.tournament.update({
+        where: { id: slot.tournamentId },
+        data: {
+          status: TournamentStatus.IN_PROGRESS,
+          championTournamentTeamId: null,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  private async runSerializable<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let retry = 0; retry <= 3; retry += 1) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        if (!this.isPrismaError(error, 'P2034')) throw error;
+        if (retry === 3) throw this.concurrentModification();
+      }
+    }
+    throw this.concurrentModification();
   }
 
   private toBracketRound(round: BracketRoundReadRow): BracketRoundResponseDto {
@@ -322,8 +732,7 @@ export class TournamentBracketsService {
         label: slot.label,
         homeTeam: this.toSlotTeam(slot.homeTournamentTeam),
         awayTeam: this.toSlotTeam(slot.awayTournamentTeam),
-        // NOTE: Phase 7 links matches to slots; until then no match projection exists.
-        match: null,
+        match: this.toSlotMatch(slot.match),
         winnerTournamentTeamId: slot.winnerTournamentTeamId,
       })),
     };
@@ -338,6 +747,27 @@ export class TournamentBracketsService {
       name: registration.displayNameSnapshot,
       shortName: registration.team.shortName,
     };
+  }
+
+  private toSlotMatch(
+    match: BracketSlotMatchRow,
+  ): BracketSlotMatchResponseDto | null {
+    if (!match || match.isDeleted) return null;
+    return {
+      id: match.id,
+      status: match.status,
+      date: match.scheduledAt,
+      // NOTE: scores are read as persisted. Result derivation is Phase 9.
+      homeScore: this.findSideScore(match.teams, MatchSide.HOME),
+      awayScore: this.findSideScore(match.teams, MatchSide.AWAY),
+    };
+  }
+
+  private findSideScore(
+    teams: { side: MatchSide; finalScore: number | null }[],
+    side: MatchSide,
+  ): number | null {
+    return teams.find((team) => team.side === side)?.finalScore ?? null;
   }
 
   private async findTournamentOrThrow(
@@ -402,8 +832,9 @@ export class TournamentBracketsService {
   private async findSlotOrThrow(
     organizationId: number,
     id: number,
+    client: BracketTransactionClient = this.prisma,
   ): Promise<TournamentBracketSlotTarget> {
-    const slot = await this.prisma.tournamentBracketSlot.findFirst({
+    const slot = await client.tournamentBracketSlot.findFirst({
       where: {
         id,
         organizationId,
@@ -470,6 +901,71 @@ export class TournamentBracketsService {
     }
   }
 
+  private async findLinkedMatch(
+    organizationId: number,
+    matchId: number,
+    client: BracketTransactionClient = this.prisma,
+  ): Promise<MatchLinkTarget | null> {
+    return client.match.findFirst({
+      where: { id: matchId, organizationId, isDeleted: false },
+      select: matchLinkTargetSelect,
+    });
+  }
+
+  private async findMatchOrThrow(
+    organizationId: number,
+    matchId: number,
+    client: BracketTransactionClient = this.prisma,
+  ): Promise<MatchLinkTarget> {
+    const match = await this.findLinkedMatch(organizationId, matchId, client);
+    if (!match) throw ApiException.notFound('Match not found');
+    return match;
+  }
+
+  private isPrismaError(error: unknown, code: string): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === code
+    );
+  }
+
+  private concurrentModification(): ApiException {
+    return ApiException.conflict(
+      'The resource changed during this operation. Retry the request.',
+      'CONCURRENT_MODIFICATION',
+    );
+  }
+
+  private assertMatchTeamsMatchSlot(
+    homeTournamentTeamId: number | null,
+    awayTournamentTeamId: number | null,
+    matchTeams: { tournamentTeamId: number }[],
+  ): void {
+    // A slot with a bye or with undecided participants is a legal manual
+    // state, so there is nothing to contradict yet.
+    if (homeTournamentTeamId === null || awayTournamentTeamId === null) return;
+
+    // Compared as a set: match HOME/AWAY is home-court logistics, slot
+    // home/away is bracket display order. They need not agree.
+    const slotParticipants = [homeTournamentTeamId, awayTournamentTeamId].sort(
+      (a, b) => a - b,
+    );
+    const matchParticipants = matchTeams
+      .map((team) => team.tournamentTeamId)
+      .sort((a, b) => a - b);
+
+    const isSamePairing =
+      matchParticipants.length === slotParticipants.length &&
+      matchParticipants.every((id, index) => id === slotParticipants[index]);
+
+    if (!isSamePairing) {
+      throw ApiException.unprocessable(
+        'The match participants do not match the bracket slot participants.',
+        'MATCH_TEAMS_MISMATCH',
+      );
+    }
+  }
+
   private assertDistinctParticipants(
     homeTournamentTeamId: number | null,
     awayTournamentTeamId: number | null,
@@ -485,11 +981,39 @@ export class TournamentBracketsService {
     }
   }
 
+  private assertStoredWinnerStillParticipant(
+    winnerTournamentTeamId: number | null,
+    homeTournamentTeamId: number | null,
+    awayTournamentTeamId: number | null,
+  ): void {
+    if (
+      winnerTournamentTeamId !== null &&
+      winnerTournamentTeamId !== homeTournamentTeamId &&
+      winnerTournamentTeamId !== awayTournamentTeamId
+    ) {
+      throw ApiException.unprocessable(
+        'The winner must be one of the slot participants.',
+        'INVALID_SLOT_WINNER',
+      );
+    }
+  }
+
   private assertMutable(status: TournamentStatus): void {
     if (
       status === TournamentStatus.COMPLETED ||
       status === TournamentStatus.CANCELLED
     ) {
+      throw ApiException.conflict(
+        'The tournament structure can no longer be changed.',
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+    }
+  }
+
+  private assertWinnerWritable(status: TournamentStatus): void {
+    // COMPLETED is deliberately allowed here: a winner write is what reopens
+    // a finished tournament. CANCELLED has no route back, so it stays closed.
+    if (status === TournamentStatus.CANCELLED) {
       throw ApiException.conflict(
         'The tournament structure can no longer be changed.',
         'TOURNAMENT_NOT_MUTABLE',

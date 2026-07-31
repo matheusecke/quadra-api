@@ -54,7 +54,8 @@ export class BracketSlotResponseDto {
   @ApiProperty({
     type: BracketSlotMatchResponseDto,
     nullable: true,
-    description: 'Always null until Phase 7 links matches to slots.',
+    description:
+      'The linked match, or null when the slot has none. Scores stay null until a result is recorded.',
   })
   match!: BracketSlotMatchResponseDto | null;
 
