@@ -267,13 +267,6 @@ describe('TournamentBracketsService', () => {
     });
   }
 
-  function arrangeMatch(overrides: Partial<typeof matchTargetRow> = {}): void {
-    mockPrisma.match.findFirst.mockResolvedValueOnce({
-      ...matchTargetRow,
-      ...overrides,
-    });
-  }
-
   function arrangeTxSlotTarget(
     overrides: Partial<typeof slotRow> = {},
     status: TournamentStatus = TournamentStatus.REGISTRATION,
@@ -2226,94 +2219,171 @@ describe('TournamentBracketsService', () => {
 
   describe('unlinkMatch', () => {
     it('clears the link on the addressed slot', async () => {
-      arrangeSlotTarget({ matchId: 501 });
-      arrangeMatch();
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch();
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 1 });
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 1,
+      });
 
       await service.unlinkMatch(42, 101);
 
-      expect(mockTx.tournamentBracketSlot.update).toHaveBeenCalledWith({
-        where: { id: 101 },
+      expect(mockTx.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: { id: 101, organizationId: 42, isDeleted: false, matchId: 501 },
         data: { matchId: null },
       });
+      expect(
+        mockPrisma.tournamentBracketSlot.updateMany,
+      ).not.toHaveBeenCalled();
     });
 
-    it('cancels a scheduled match on unlink', async () => {
-      arrangeSlotTarget({ matchId: 501 });
-      arrangeMatch({ status: MatchStatus.SCHEDULED });
+    it('cancels a scheduled match through a conditional update', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch({ status: MatchStatus.SCHEDULED });
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 1 });
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 1,
+      });
 
       await service.unlinkMatch(42, 101);
 
-      expect(mockTx.match.update).toHaveBeenCalledWith({
-        where: { id: 501 },
+      expect(mockTx.match.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 501,
+          organizationId: 42,
+          isDeleted: false,
+          status: {
+            in: [
+              MatchStatus.SCHEDULED,
+              MatchStatus.LIVE,
+              MatchStatus.POSTPONED,
+            ],
+          },
+        },
         data: { status: MatchStatus.CANCELLED },
       });
     });
 
-    it('cancels a live match on unlink', async () => {
-      arrangeSlotTarget({ matchId: 501 });
-      arrangeMatch({ status: MatchStatus.LIVE });
-
-      await service.unlinkMatch(42, 101);
-
-      expect(mockTx.match.update).toHaveBeenCalledWith({
-        where: { id: 501 },
-        data: { status: MatchStatus.CANCELLED },
+    it('cancels a live match through a conditional update', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch({ status: MatchStatus.LIVE });
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 1 });
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 1,
       });
-    });
-
-    it('cancels a postponed match on unlink', async () => {
-      arrangeSlotTarget({ matchId: 501 });
-      arrangeMatch({ status: MatchStatus.POSTPONED });
 
       await service.unlinkMatch(42, 101);
 
-      expect(mockTx.match.update).toHaveBeenCalledWith({
-        where: { id: 501 },
-        data: { status: MatchStatus.CANCELLED },
+      expect(mockTx.match.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: MatchStatus.CANCELLED } }),
+      );
+    });
+
+    it('cancels a postponed match through a conditional update', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch({ status: MatchStatus.POSTPONED });
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 1 });
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 1,
       });
-    });
-
-    it('leaves an already cancelled match untouched', async () => {
-      arrangeSlotTarget({ matchId: 501 });
-      arrangeMatch({ status: MatchStatus.CANCELLED });
 
       await service.unlinkMatch(42, 101);
 
-      expect(mockTx.match.update).not.toHaveBeenCalled();
+      expect(mockTx.match.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: MatchStatus.CANCELLED } }),
+      );
     });
 
-    it('clears the link when the linked match row is gone', async () => {
-      arrangeSlotTarget({ matchId: 501 });
-      mockPrisma.match.findFirst.mockResolvedValueOnce(null);
-
-      await service.unlinkMatch(42, 101);
-
-      expect(mockTx.tournamentBracketSlot.update).toHaveBeenCalledWith({
-        where: { id: 101 },
-        data: { matchId: null },
-      });
-    });
-
-    it('raises MATCH_ALREADY_FINISHED for a finished match', async () => {
-      arrangeSlotTarget({ matchId: 501 });
-      arrangeMatch({ status: MatchStatus.FINISHED });
+    it('raises MATCH_ALREADY_FINISHED when a concurrent finish wins the cancellation', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch({ status: MatchStatus.SCHEDULED });
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 0 });
+      arrangeTxMatch({ status: MatchStatus.FINISHED });
 
       const error = await captureApiException(service.unlinkMatch(42, 101));
 
       expect(getApiErrorCode(error)).toBe('MATCH_ALREADY_FINISHED');
+      expect(mockTx.tournamentBracketSlot.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.match.updateMany).not.toHaveBeenCalled();
     });
 
-    it('writes nothing when the linked match is finished', async () => {
-      arrangeSlotTarget({ matchId: 501 });
-      arrangeMatch({ status: MatchStatus.FINISHED });
+    it('proceeds to unlink when the match was cancelled by a concurrent request', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch({ status: MatchStatus.SCHEDULED });
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 0 });
+      arrangeTxMatch({ status: MatchStatus.CANCELLED });
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 1,
+      });
 
-      await captureApiException(service.unlinkMatch(42, 101));
+      await service.unlinkMatch(42, 101);
 
-      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(mockTx.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: { id: 101, organizationId: 42, isDeleted: false, matchId: 501 },
+        data: { matchId: null },
+      });
+    });
+
+    it('leaves an already cancelled match untouched and still unlinks', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch({ status: MatchStatus.CANCELLED });
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 0 });
+      arrangeTxMatch({ status: MatchStatus.CANCELLED });
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 1,
+      });
+
+      await service.unlinkMatch(42, 101);
+
+      expect(mockTx.match.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the link when the linked match row is gone', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      mockTx.match.findFirst.mockResolvedValueOnce(null);
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 1,
+      });
+
+      await service.unlinkMatch(42, 101);
+
+      expect(mockTx.match.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: { id: 101, organizationId: 42, isDeleted: false, matchId: 501 },
+        data: { matchId: null },
+      });
+    });
+
+    it('raises SLOT_HAS_NO_MATCH when the link was already cleared concurrently', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch({ status: MatchStatus.SCHEDULED });
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 1 });
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 0,
+      });
+      arrangeTxSlotTarget({ matchId: null });
+
+      const error = await captureApiException(service.unlinkMatch(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('SLOT_HAS_NO_MATCH');
+    });
+
+    it('raises SLOT_HAS_MATCH when a different match was linked before the clear landed', async () => {
+      arrangeTxSlotTarget({ matchId: 501 });
+      arrangeTxMatch({ status: MatchStatus.SCHEDULED });
+      mockTx.match.updateMany.mockResolvedValueOnce({ count: 1 });
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 0,
+      });
+      arrangeTxSlotTarget({ matchId: 502 });
+
+      const error = await captureApiException(service.unlinkMatch(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('SLOT_HAS_MATCH');
     });
 
     it('raises SLOT_HAS_NO_MATCH for a slot with no linked match', async () => {
-      arrangeSlotTarget();
+      arrangeTxSlotTarget();
 
       const error = await captureApiException(service.unlinkMatch(42, 101));
 
@@ -2321,7 +2391,7 @@ describe('TournamentBracketsService', () => {
     });
 
     it('raises 404 for a slot of another organization', async () => {
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      mockTx.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
 
       await expect(service.unlinkMatch(42, 101)).rejects.toMatchObject({
         status: HttpStatus.NOT_FOUND,
@@ -2329,7 +2399,7 @@ describe('TournamentBracketsService', () => {
     });
 
     it('raises TOURNAMENT_NOT_MUTABLE for a completed tournament', async () => {
-      arrangeSlotTarget({ matchId: 501 }, TournamentStatus.COMPLETED);
+      arrangeTxSlotTarget({ matchId: 501 }, TournamentStatus.COMPLETED);
 
       const error = await captureApiException(service.unlinkMatch(42, 101));
 
@@ -2337,7 +2407,7 @@ describe('TournamentBracketsService', () => {
     });
 
     it('raises INVALID_TOURNAMENT_FORMAT for a group stage tournament', async () => {
-      arrangeSlotTarget(
+      arrangeTxSlotTarget(
         { matchId: 501 },
         TournamentStatus.REGISTRATION,
         TournamentFormat.GROUP_STAGE,

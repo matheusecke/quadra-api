@@ -535,40 +535,85 @@ export class TournamentBracketsService {
   }
 
   async unlinkMatch(organizationId: number, id: number): Promise<void> {
-    const slot = await this.findSlotOrThrow(organizationId, id);
-    this.assertMutable(slot.tournament.status);
-    this.assertKnockoutFormat(slot.tournament.format);
-
-    if (slot.matchId === null) {
-      throw ApiException.notFound(
-        'This bracket slot has no linked match.',
-        'SLOT_HAS_NO_MATCH',
-      );
-    }
-
-    const match = await this.findLinkedMatch(organizationId, slot.matchId);
-
-    if (match?.status === MatchStatus.FINISHED) {
-      throw ApiException.conflict(
-        'A finished match cannot be unlinked from its bracket slot.',
-        'MATCH_ALREADY_FINISHED',
-      );
-    }
-
     await this.prisma.$transaction(async (tx) => {
-      await tx.tournamentBracketSlot.update({
-        where: { id },
+      const slot = await this.findSlotOrThrow(organizationId, id, tx);
+      this.assertMutable(slot.tournament.status);
+      this.assertKnockoutFormat(slot.tournament.format);
+
+      if (slot.matchId === null) {
+        throw ApiException.notFound(
+          'This bracket slot has no linked match.',
+          'SLOT_HAS_NO_MATCH',
+        );
+      }
+
+      const match = await this.findLinkedMatch(
+        organizationId,
+        slot.matchId,
+        tx,
+      );
+
+      // A knockout match does not exist without a slot, so a match that is
+      // still going to happen is cancelled with the link. The conditional
+      // write only ever transitions a pending match, so it naturally
+      // no-ops when the match is already CANCELLED.
+      if (match) {
+        const cancelled = await tx.match.updateMany({
+          where: {
+            id: match.id,
+            organizationId,
+            isDeleted: false,
+            status: {
+              in: [
+                MatchStatus.SCHEDULED,
+                MatchStatus.LIVE,
+                MatchStatus.POSTPONED,
+              ],
+            },
+          },
+          data: { status: MatchStatus.CANCELLED },
+        });
+
+        if (cancelled.count === 0) {
+          const freshMatch = await this.findLinkedMatch(
+            organizationId,
+            match.id,
+            tx,
+          );
+          if (freshMatch?.status === MatchStatus.FINISHED) {
+            throw ApiException.conflict(
+              'A finished match cannot be unlinked from its bracket slot.',
+              'MATCH_ALREADY_FINISHED',
+            );
+          }
+          if (freshMatch && freshMatch.status !== MatchStatus.CANCELLED) {
+            throw this.concurrentModification();
+          }
+        }
+      }
+
+      const unlinked = await tx.tournamentBracketSlot.updateMany({
+        where: {
+          id,
+          organizationId,
+          isDeleted: false,
+          matchId: slot.matchId,
+        },
         data: { matchId: null },
       });
 
-      // A knockout match does not exist without a slot, so a match that is
-      // still going to happen is cancelled with the link. CANCELLED is
-      // already terminal and a deleted row has nothing left to cascade to.
-      if (match && match.status !== MatchStatus.CANCELLED) {
-        await tx.match.update({
-          where: { id: match.id },
-          data: { status: MatchStatus.CANCELLED },
-        });
+      if (unlinked.count === 0) {
+        const freshSlot = await this.findSlotOrThrow(organizationId, id, tx);
+        if (freshSlot.matchId === null) {
+          throw ApiException.notFound(
+            'This bracket slot has no linked match.',
+            'SLOT_HAS_NO_MATCH',
+          );
+        }
+        throw ApiException.conflict(
+          'This bracket slot is linked to a different match.',
+          'SLOT_HAS_MATCH',
+        );
       }
     });
   }
