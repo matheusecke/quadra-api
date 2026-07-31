@@ -626,47 +626,88 @@ export class TournamentBracketsService {
     const slot = await this.findSlotOrThrow(organizationId, id);
     this.assertWinnerWritable(slot.tournament.status);
     this.assertKnockoutFormat(slot.tournament.format);
-
-    const { tournament, ...current } = slot;
-    const { winnerTournamentTeamId } = dto;
-
     this.assertStoredWinnerStillParticipant(
-      winnerTournamentTeamId,
-      current.homeTournamentTeamId,
-      current.awayTournamentTeamId,
+      dto.winnerTournamentTeamId,
+      slot.homeTournamentTeamId,
+      slot.awayTournamentTeamId,
     );
 
     // The reopen cascade is conditioned on the winner changing, so an
-    // idempotent write must not reopen a completed tournament.
-    if (winnerTournamentTeamId === current.winnerTournamentTeamId) {
+    // idempotent write must not reopen a completed tournament, and must not
+    // pay for a transaction at all.
+    if (dto.winnerTournamentTeamId === slot.winnerTournamentTeamId) {
+      const { tournament, ...current } = slot;
+      void tournament;
       return current;
     }
 
-    const shouldReopenTournament =
-      tournament.status === TournamentStatus.COMPLETED;
+    return this.runSerializable((tx) =>
+      this.setWinnerTransaction(
+        tx,
+        organizationId,
+        id,
+        dto.winnerTournamentTeamId,
+      ),
+    );
+  }
 
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.tournamentBracketSlot.update({
-        where: { id },
-        data: { winnerTournamentTeamId },
-        select: tournamentBracketSlotSelect,
-      });
+  private async setWinnerTransaction(
+    tx: BracketTransactionClient,
+    organizationId: number,
+    id: number,
+    winnerTournamentTeamId: number | null,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id, tx);
+    this.assertWinnerWritable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+    this.assertStoredWinnerStillParticipant(
+      winnerTournamentTeamId,
+      slot.homeTournamentTeamId,
+      slot.awayTournamentTeamId,
+    );
 
-      // A title does not survive a change to the result that produced it.
-      // Both fields are written together: the DB check constraint only
-      // tolerates a champion while the tournament is COMPLETED.
-      if (shouldReopenTournament) {
-        await tx.tournament.update({
-          where: { id: current.tournamentId },
-          data: {
-            status: TournamentStatus.IN_PROGRESS,
-            championTournamentTeamId: null,
-          },
-        });
-      }
+    if (winnerTournamentTeamId === slot.winnerTournamentTeamId) {
+      const { tournament, ...current } = slot;
+      void tournament;
+      return current;
+    }
 
-      return updated;
+    const updated = await tx.tournamentBracketSlot.update({
+      where: { id },
+      data: { winnerTournamentTeamId },
+      select: tournamentBracketSlotSelect,
     });
+
+    // A title does not survive a change to the result that produced it.
+    // Both fields are written together: the DB check constraint only
+    // tolerates a champion while the tournament is COMPLETED.
+    if (slot.tournament.status === TournamentStatus.COMPLETED) {
+      await tx.tournament.update({
+        where: { id: slot.tournamentId },
+        data: {
+          status: TournamentStatus.IN_PROGRESS,
+          championTournamentTeamId: null,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  private async runSerializable<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let retry = 0; retry <= 3; retry += 1) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        if (!this.isPrismaError(error, 'P2034')) throw error;
+        if (retry === 3) throw this.concurrentModification();
+      }
+    }
+    throw this.concurrentModification();
   }
 
   private toBracketRound(round: BracketRoundReadRow): BracketRoundResponseDto {

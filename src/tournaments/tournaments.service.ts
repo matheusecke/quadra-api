@@ -226,44 +226,83 @@ export class TournamentsService {
     id: number,
     dto: CompleteTournamentDto,
   ): Promise<TournamentResponseDto> {
-    const row = await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.tournament.findFirst({
-        where: { id, organizationId, isDeleted: false },
-        select: { id: true, status: true, format: true },
-      });
-
-      if (!existing) throw ApiException.notFound('Tournament not found');
-
-      if (existing.status !== TournamentStatus.IN_PROGRESS) {
-        throw ApiException.conflict(
-          'Only a tournament in progress can be completed.',
-          'INVALID_STATUS_TRANSITION',
-        );
-      }
-
-      const champion = dto.championTournamentTeamId ?? null;
-      await this.assertChampionForFormat(
-        tx,
-        organizationId,
-        id,
-        existing.format,
-        champion,
-      );
-
-      return tx.tournament.update({
-        where: { id },
-        data: {
-          status: TournamentStatus.COMPLETED,
-          championTournamentTeamId: champion,
-        },
-        select: tournamentSelect,
-      });
-    });
+    const row = await this.runSerializable((tx) =>
+      this.completeTransaction(tx, organizationId, id, dto),
+    );
 
     const matchCounts = await this.loadMatchCounts([row.id]);
     return this.toResponse(
       row,
       matchCounts.get(row.id) ?? { total: 0, finished: 0 },
+    );
+  }
+
+  private async completeTransaction(
+    tx: Prisma.TransactionClient,
+    organizationId: number,
+    id: number,
+    dto: CompleteTournamentDto,
+  ): Promise<TournamentRow> {
+    const existing = await tx.tournament.findFirst({
+      where: { id, organizationId, isDeleted: false },
+      select: { id: true, status: true, format: true },
+    });
+
+    if (!existing) throw ApiException.notFound('Tournament not found');
+
+    if (existing.status !== TournamentStatus.IN_PROGRESS) {
+      throw ApiException.conflict(
+        'Only a tournament in progress can be completed.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+
+    const champion = dto.championTournamentTeamId ?? null;
+    await this.assertChampionForFormat(
+      tx,
+      organizationId,
+      id,
+      existing.format,
+      champion,
+    );
+
+    return tx.tournament.update({
+      where: { id },
+      data: {
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: champion,
+      },
+      select: tournamentSelect,
+    });
+  }
+
+  private async runSerializable<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let retry = 0; retry <= 3; retry += 1) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        if (!this.isPrismaError(error, 'P2034')) throw error;
+        if (retry === 3) throw this.concurrentModification();
+      }
+    }
+    throw this.concurrentModification();
+  }
+
+  private isPrismaError(error: unknown, code: string): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === code
+    );
+  }
+
+  private concurrentModification(): ApiException {
+    return ApiException.conflict(
+      'The resource changed during this operation. Retry the request.',
+      'CONCURRENT_MODIFICATION',
     );
   }
 

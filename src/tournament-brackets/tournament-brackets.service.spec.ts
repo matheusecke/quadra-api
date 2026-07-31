@@ -40,7 +40,7 @@ type TransactionMock = jest.Mock<
   (
     callback: (tx: MockTransactionClient) => unknown,
     options?: { isolationLevel: Prisma.TransactionIsolationLevel },
-  ) => unknown
+  ) => Promise<unknown>
 >;
 
 const createTransactionMock = (): TransactionMock =>
@@ -48,7 +48,7 @@ const createTransactionMock = (): TransactionMock =>
     (
       callback: (tx: MockTransactionClient) => unknown,
       options?: { isolationLevel: Prisma.TransactionIsolationLevel },
-    ) => unknown
+    ) => Promise<unknown>
   >();
 
 type MockPrisma = {
@@ -295,9 +295,18 @@ describe('TournamentBracketsService', () => {
     );
   }
 
+  function p2034Error(): Prisma.PrismaClientKnownRequestError {
+    return new Prisma.PrismaClientKnownRequestError(
+      'Transaction failed due to a write conflict or a deadlock.',
+      { code: 'P2034', clientVersion: '7.7.0' },
+    );
+  }
+
   beforeEach(async () => {
     jest.resetAllMocks();
-    mockPrisma.$transaction.mockImplementation((callback) => callback(mockTx));
+    mockPrisma.$transaction.mockImplementation((callback) =>
+      Promise.resolve(callback(mockTx)),
+    );
     const module = await Test.createTestingModule({
       providers: [
         TournamentBracketsService,
@@ -2422,6 +2431,10 @@ describe('TournamentBracketsService', () => {
   describe('setWinner', () => {
     it('records the home participant as the winner', async () => {
       arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      arrangeTxSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+      });
       mockTx.tournamentBracketSlot.update.mockResolvedValue({
         ...slotRow,
         homeTournamentTeamId: 21,
@@ -2436,6 +2449,10 @@ describe('TournamentBracketsService', () => {
 
     it('records the away participant as the winner', async () => {
       arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      arrangeTxSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+      });
       mockTx.tournamentBracketSlot.update.mockResolvedValue({
         ...slotRow,
         homeTournamentTeamId: 21,
@@ -2450,6 +2467,11 @@ describe('TournamentBracketsService', () => {
 
     it('clears the winner with null', async () => {
       arrangeSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
+      });
+      arrangeTxSlotTarget({
         homeTournamentTeamId: 21,
         awayTournamentTeamId: 22,
         winnerTournamentTeamId: 21,
@@ -2503,7 +2525,7 @@ describe('TournamentBracketsService', () => {
       });
     });
 
-    it('writes nothing when the winner is unchanged', async () => {
+    it('does not enter a transaction for an unchanged winner', async () => {
       arrangeSlotTarget({
         homeTournamentTeamId: 21,
         awayTournamentTeamId: 22,
@@ -2512,11 +2534,16 @@ describe('TournamentBracketsService', () => {
 
       await service.setWinner(42, 101, { winnerTournamentTeamId: 21 });
 
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
       expect(mockTx.tournamentBracketSlot.update).not.toHaveBeenCalled();
     });
 
     it('accepts a completed tournament', async () => {
       arrangeSlotTarget(
+        { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
+        TournamentStatus.COMPLETED,
+      );
+      arrangeTxSlotTarget(
         { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
         TournamentStatus.COMPLETED,
       );
@@ -2532,6 +2559,14 @@ describe('TournamentBracketsService', () => {
 
     it('reopens a completed tournament and clears its champion', async () => {
       arrangeSlotTarget(
+        {
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 22,
+          winnerTournamentTeamId: 21,
+        },
+        TournamentStatus.COMPLETED,
+      );
+      arrangeTxSlotTarget(
         {
           homeTournamentTeamId: 21,
           awayTournamentTeamId: 22,
@@ -2564,6 +2599,14 @@ describe('TournamentBracketsService', () => {
         },
         TournamentStatus.COMPLETED,
       );
+      arrangeTxSlotTarget(
+        {
+          homeTournamentTeamId: 21,
+          awayTournamentTeamId: 22,
+          winnerTournamentTeamId: 21,
+        },
+        TournamentStatus.COMPLETED,
+      );
       mockTx.tournamentBracketSlot.update.mockResolvedValue({
         ...slotRow,
         winnerTournamentTeamId: null,
@@ -2582,6 +2625,10 @@ describe('TournamentBracketsService', () => {
 
     it('does not touch a tournament that is already in progress', async () => {
       arrangeSlotTarget(
+        { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
+        TournamentStatus.IN_PROGRESS,
+      );
+      arrangeTxSlotTarget(
         { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
         TournamentStatus.IN_PROGRESS,
       );
@@ -2651,6 +2698,11 @@ describe('TournamentBracketsService', () => {
         awayTournamentTeamId: 22,
         matchId: 501,
       });
+      arrangeTxSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        matchId: 501,
+      });
       mockTx.tournamentBracketSlot.update.mockResolvedValue({
         ...slotRow,
         matchId: 501,
@@ -2660,6 +2712,110 @@ describe('TournamentBracketsService', () => {
       await expect(
         service.setWinner(42, 101, { winnerTournamentTeamId: 22 }),
       ).resolves.toMatchObject({ winnerTournamentTeamId: 22 });
+    });
+
+    it('uses the transaction client for every changed-winner read and write', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      arrangeTxSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+      });
+      mockTx.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
+      });
+
+      await service.setWinner(42, 101, { winnerTournamentTeamId: 21 });
+
+      expect(mockTx.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 101 },
+        data: { winnerTournamentTeamId: 21 },
+        select: tournamentBracketSlotSelect,
+      });
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      expect(mockPrisma.tournament.update).not.toHaveBeenCalled();
+    });
+
+    it('uses Serializable isolation for the changed-winner transaction', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      arrangeTxSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+      });
+      mockTx.tournamentBracketSlot.update.mockResolvedValue({
+        ...slotRow,
+        winnerTournamentTeamId: 21,
+      });
+
+      await service.setWinner(42, 101, { winnerTournamentTeamId: 21 });
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    });
+
+    it('retries a P2034 write conflict and returns the successful attempt', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      mockPrisma.$transaction.mockRejectedValueOnce(p2034Error());
+      arrangeTxSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+      });
+      mockTx.tournamentBracketSlot.update.mockResolvedValueOnce({
+        ...slotRow,
+        winnerTournamentTeamId: 21,
+      });
+
+      const result = await service.setWinner(42, 101, {
+        winnerTournamentTeamId: 21,
+      });
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(result).toMatchObject({ winnerTournamentTeamId: 21 });
+    });
+
+    it('re-evaluates the tournament status on the retried attempt', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      mockPrisma.$transaction.mockRejectedValueOnce(p2034Error());
+      // The tournament was completed by a concurrent request between the
+      // first attempt and the retry, so the retry must reopen it.
+      arrangeTxSlotTarget(
+        { homeTournamentTeamId: 21, awayTournamentTeamId: 22 },
+        TournamentStatus.COMPLETED,
+      );
+      mockTx.tournamentBracketSlot.update.mockResolvedValueOnce({
+        ...slotRow,
+        winnerTournamentTeamId: 21,
+      });
+
+      await service.setWinner(42, 101, { winnerTournamentTeamId: 21 });
+
+      expect(mockTx.tournament.update).toHaveBeenCalledWith({
+        where: { id: 12 },
+        data: {
+          status: TournamentStatus.IN_PROGRESS,
+          championTournamentTeamId: null,
+        },
+      });
+    });
+
+    it('raises CONCURRENT_MODIFICATION after three retries', async () => {
+      arrangeSlotTarget({ homeTournamentTeamId: 21, awayTournamentTeamId: 22 });
+      mockPrisma.$transaction
+        .mockRejectedValueOnce(p2034Error())
+        .mockRejectedValueOnce(p2034Error())
+        .mockRejectedValueOnce(p2034Error())
+        .mockRejectedValueOnce(p2034Error());
+
+      const error = await captureApiException(
+        service.setWinner(42, 101, { winnerTournamentTeamId: 21 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('CONCURRENT_MODIFICATION');
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
     });
   });
 });

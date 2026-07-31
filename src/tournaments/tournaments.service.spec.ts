@@ -1,12 +1,34 @@
+import { jest } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   MatchStatus,
+  Prisma,
   TournamentFormat,
   TournamentStatus,
   TournamentTeamStatus,
 } from '@prisma/client';
 import { TournamentsService } from './tournaments.service';
 import { PrismaService } from '../prisma/prisma.service';
+
+type AsyncMock = jest.Mock<(input?: unknown) => Promise<unknown>>;
+
+const createAsyncMock = (): AsyncMock =>
+  jest.fn<(input?: unknown) => Promise<unknown>>();
+
+type MockTransactionClient = {
+  tournament: { findFirst: AsyncMock; update: AsyncMock };
+  tournamentTeam: { findFirst: AsyncMock };
+  tournamentBracketSlot: { findFirst: AsyncMock };
+};
+
+// Distinct from mockPrisma so a `complete` write that bypasses the
+// transaction client is caught instead of silently succeeding against the
+// outer mock.
+const mockTx: MockTransactionClient = {
+  tournament: { findFirst: createAsyncMock(), update: createAsyncMock() },
+  tournamentTeam: { findFirst: createAsyncMock() },
+  tournamentBracketSlot: { findFirst: createAsyncMock() },
+};
 
 const mockPrisma: any = {
   tournament: {
@@ -33,9 +55,16 @@ const mockPrisma: any = {
     groupBy: jest.fn(),
   },
   $transaction: jest.fn((callback: (tx: unknown) => unknown) =>
-    callback(mockPrisma),
+    callback(mockTx),
   ),
 };
+
+function p2034Error(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(
+    'Transaction failed due to a write conflict or a deadlock.',
+    { code: 'P2034', clientVersion: '7.7.0' },
+  );
+}
 
 const ORG_ID = 7;
 const USER_ID = 9;
@@ -68,7 +97,7 @@ describe('TournamentsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     mockPrisma.$transaction.mockImplementation(
-      (callback: (tx: unknown) => unknown) => callback(mockPrisma),
+      (callback: (tx: unknown) => unknown) => callback(mockTx),
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -733,7 +762,7 @@ describe('TournamentsService', () => {
 
   describe('complete', () => {
     it('raises 404 for a tournament of another organization', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue(null);
+      mockTx.tournament.findFirst.mockResolvedValue(null);
 
       await expect(service.complete(ORG_ID, 12, {})).rejects.toMatchObject({
         status: 404,
@@ -741,7 +770,7 @@ describe('TournamentsService', () => {
     });
 
     it('rejects a tournament that is not in progress', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.DRAFT,
         format: TournamentFormat.GROUP_STAGE_KNOCKOUT,
@@ -753,7 +782,7 @@ describe('TournamentsService', () => {
     });
 
     it('rejects a champion on a group stage tournament', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.GROUP_STAGE,
@@ -765,12 +794,12 @@ describe('TournamentsService', () => {
     });
 
     it('completes a group stage tournament with no champion', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.GROUP_STAGE,
       });
-      mockPrisma.tournament.update.mockResolvedValue({
+      mockTx.tournament.update.mockResolvedValue({
         ...baseTournamentRow,
         format: TournamentFormat.GROUP_STAGE,
         status: TournamentStatus.COMPLETED,
@@ -787,7 +816,7 @@ describe('TournamentsService', () => {
     });
 
     it('requires a champion for a league tournament', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.LEAGUE,
@@ -799,7 +828,7 @@ describe('TournamentsService', () => {
     });
 
     it('requires a champion for a knockout tournament', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.KNOCKOUT,
@@ -811,12 +840,12 @@ describe('TournamentsService', () => {
     });
 
     it('rejects a champion that is not enrolled in this tournament', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.LEAGUE,
       });
-      mockPrisma.tournamentTeam.findFirst.mockResolvedValue(null);
+      mockTx.tournamentTeam.findFirst.mockResolvedValue(null);
 
       await expect(
         service.complete(ORG_ID, 12, { championTournamentTeamId: 41 }),
@@ -824,18 +853,18 @@ describe('TournamentsService', () => {
     });
 
     it('rejects a withdrawn team as champion', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.LEAGUE,
       });
-      mockPrisma.tournamentTeam.findFirst.mockResolvedValue(null);
+      mockTx.tournamentTeam.findFirst.mockResolvedValue(null);
 
       await expect(
         service.complete(ORG_ID, 12, { championTournamentTeamId: 41 }),
       ).rejects.toMatchObject({ status: 422 });
 
-      expect(mockPrisma.tournamentTeam.findFirst).toHaveBeenCalledWith(
+      expect(mockTx.tournamentTeam.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             status: TournamentTeamStatus.ACTIVE,
@@ -845,13 +874,13 @@ describe('TournamentsService', () => {
     });
 
     it('rejects a knockout champion that won no bracket slot', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.KNOCKOUT,
       });
-      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValue(null);
+      mockTx.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockTx.tournamentBracketSlot.findFirst.mockResolvedValue(null);
 
       await expect(
         service.complete(ORG_ID, 12, { championTournamentTeamId: 41 }),
@@ -859,14 +888,14 @@ describe('TournamentsService', () => {
     });
 
     it('accepts a knockout champion that won any bracket slot', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.KNOCKOUT,
       });
-      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
-      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValue({ id: 5 });
-      mockPrisma.tournament.update.mockResolvedValue({
+      mockTx.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockTx.tournamentBracketSlot.findFirst.mockResolvedValue({ id: 5 });
+      mockTx.tournament.update.mockResolvedValue({
         ...baseTournamentRow,
         format: TournamentFormat.KNOCKOUT,
         status: TournamentStatus.COMPLETED,
@@ -882,13 +911,13 @@ describe('TournamentsService', () => {
     });
 
     it('does not require a bracket slot for a league champion', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.LEAGUE,
       });
-      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
-      mockPrisma.tournament.update.mockResolvedValue({
+      mockTx.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockTx.tournament.update.mockResolvedValue({
         ...baseTournamentRow,
         format: TournamentFormat.LEAGUE,
         status: TournamentStatus.COMPLETED,
@@ -898,17 +927,17 @@ describe('TournamentsService', () => {
 
       await service.complete(ORG_ID, 12, { championTournamentTeamId: 41 });
 
-      expect(mockPrisma.tournamentBracketSlot.findFirst).not.toHaveBeenCalled();
+      expect(mockTx.tournamentBracketSlot.findFirst).not.toHaveBeenCalled();
     });
 
     it('writes status and champion in the same update', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.LEAGUE,
       });
-      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
-      mockPrisma.tournament.update.mockResolvedValue({
+      mockTx.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockTx.tournament.update.mockResolvedValue({
         ...baseTournamentRow,
         format: TournamentFormat.LEAGUE,
         status: TournamentStatus.COMPLETED,
@@ -918,7 +947,7 @@ describe('TournamentsService', () => {
 
       await service.complete(ORG_ID, 12, { championTournamentTeamId: 41 });
 
-      expect(mockPrisma.tournament.update).toHaveBeenCalledWith(
+      expect(mockTx.tournament.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             status: TournamentStatus.COMPLETED,
@@ -929,12 +958,12 @@ describe('TournamentsService', () => {
     });
 
     it('runs the validations and the write inside one transaction', async () => {
-      mockPrisma.tournament.findFirst.mockResolvedValue({
+      mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
         format: TournamentFormat.GROUP_STAGE,
       });
-      mockPrisma.tournament.update.mockResolvedValue({
+      mockTx.tournament.update.mockResolvedValue({
         ...baseTournamentRow,
         format: TournamentFormat.GROUP_STAGE,
         status: TournamentStatus.COMPLETED,
@@ -945,6 +974,110 @@ describe('TournamentsService', () => {
       await service.complete(ORG_ID, 12, {});
 
       expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the transaction client for every read and write', async () => {
+      mockTx.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.GROUP_STAGE,
+      });
+      mockTx.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.GROUP_STAGE,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: null,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.complete(ORG_ID, 12, {});
+
+      expect(mockTx.tournament.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 12 },
+        }),
+      );
+      expect(mockPrisma.tournament.update).not.toHaveBeenCalled();
+    });
+
+    it('uses Serializable isolation for the transaction', async () => {
+      mockTx.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.GROUP_STAGE,
+      });
+      mockTx.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.GROUP_STAGE,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: null,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      await service.complete(ORG_ID, 12, {});
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    });
+
+    it('retries a P2034 write conflict and returns the successful attempt', async () => {
+      mockPrisma.$transaction.mockRejectedValueOnce(p2034Error());
+      mockTx.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.GROUP_STAGE,
+      });
+      mockTx.tournament.update.mockResolvedValue({
+        ...baseTournamentRow,
+        format: TournamentFormat.GROUP_STAGE,
+        status: TournamentStatus.COMPLETED,
+        championTournamentTeamId: null,
+      });
+      mockPrisma.match.groupBy.mockResolvedValue([]);
+
+      const result = await service.complete(ORG_ID, 12, {});
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(result.status).toBe(TournamentStatus.COMPLETED);
+    });
+
+    it('re-evaluates champion validation against fresh bracket state on retry', async () => {
+      mockPrisma.$transaction.mockRejectedValueOnce(p2034Error());
+      mockTx.tournament.findFirst.mockResolvedValue({
+        id: 12,
+        status: TournamentStatus.IN_PROGRESS,
+        format: TournamentFormat.KNOCKOUT,
+      });
+      mockTx.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      // By the retry, a concurrent request cleared the bracket's recorded
+      // winner, so the retry must find this out itself rather than reusing
+      // anything decided by the first, aborted attempt.
+      mockTx.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+
+      const error = await service
+        .complete(ORG_ID, 12, { championTournamentTeamId: 41 })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toMatchObject({ status: 422 });
+    });
+
+    it('raises CONCURRENT_MODIFICATION after three retries', async () => {
+      mockPrisma.$transaction
+        .mockRejectedValueOnce(p2034Error())
+        .mockRejectedValueOnce(p2034Error())
+        .mockRejectedValueOnce(p2034Error())
+        .mockRejectedValueOnce(p2034Error());
+
+      const error = (await service
+        .complete(ORG_ID, 12, {})
+        .catch((caught: unknown) => caught)) as {
+        getResponse: () => { error: { code: string } };
+      };
+
+      expect(error.getResponse().error.code).toBe('CONCURRENT_MODIFICATION');
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
     });
   });
 
