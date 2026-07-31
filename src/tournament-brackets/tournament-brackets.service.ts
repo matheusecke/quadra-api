@@ -409,10 +409,21 @@ export class TournamentBracketsService {
       );
     }
 
-    await this.prisma.tournamentBracketSlot.update({
-      where: { id },
+    const removed = await this.prisma.tournamentBracketSlot.updateMany({
+      where: { id, organizationId, isDeleted: false, matchId: null },
       data: { isDeleted: true },
     });
+
+    if (removed.count === 0) {
+      const fresh = await this.findSlotOrThrow(organizationId, id);
+      if (fresh.matchId !== null) {
+        throw ApiException.conflict(
+          'Unlink the match before deleting the slot.',
+          'SLOT_HAS_MATCH',
+        );
+      }
+      throw this.concurrentModification();
+    }
   }
 
   async linkMatch(

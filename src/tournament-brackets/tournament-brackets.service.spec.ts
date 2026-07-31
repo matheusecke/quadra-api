@@ -1694,11 +1694,29 @@ describe('TournamentBracketsService', () => {
 
     it('soft-deletes an unlinked slot', async () => {
       arrangeSlotTarget();
-      mockPrisma.tournamentBracketSlot.update.mockResolvedValue(slotRow);
+      mockPrisma.tournamentBracketSlot.updateMany.mockResolvedValue({
+        count: 1,
+      });
 
       await expect(service.removeSlot(42, 101)).resolves.toBeUndefined();
-      expect(mockPrisma.tournamentBracketSlot.update).toHaveBeenCalledWith({
-        where: { id: 101 },
+      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: { id: 101, organizationId: 42, isDeleted: false, matchId: null },
+        data: { isDeleted: true },
+      });
+    });
+
+    it('raises SLOT_HAS_MATCH when a concurrent link wins the delete CAS', async () => {
+      arrangeSlotTarget();
+      mockPrisma.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 0,
+      });
+      arrangeSlotTarget({ matchId: 501 });
+
+      const error = await captureApiException(service.removeSlot(42, 101));
+
+      expect(getApiErrorCode(error)).toBe('SLOT_HAS_MATCH');
+      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalledWith({
+        where: { id: 101, organizationId: 42, isDeleted: false, matchId: null },
         data: { isDeleted: true },
       });
     });
@@ -1710,7 +1728,9 @@ describe('TournamentBracketsService', () => {
 
       expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
       expect(getApiErrorCode(error)).toBe('SLOT_HAS_MATCH');
-      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      expect(
+        mockPrisma.tournamentBracketSlot.updateMany,
+      ).not.toHaveBeenCalled();
     });
 
     it('rejects a slot delete in a terminal tournament', async () => {

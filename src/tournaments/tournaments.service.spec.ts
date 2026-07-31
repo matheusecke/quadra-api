@@ -59,6 +59,14 @@ const mockPrisma: any = {
   ),
 };
 
+const completePrismaMock = mockPrisma as {
+  $transaction: jest.Mock<
+    (callback: unknown, options?: unknown) => Promise<unknown>
+  >;
+  match: { groupBy: AsyncMock };
+  tournament: { update: AsyncMock };
+};
+
 function p2034Error(): Prisma.PrismaClientKnownRequestError {
   return new Prisma.PrismaClientKnownRequestError(
     'Transaction failed due to a write conflict or a deadlock.',
@@ -988,7 +996,7 @@ describe('TournamentsService', () => {
         status: TournamentStatus.COMPLETED,
         championTournamentTeamId: null,
       });
-      mockPrisma.match.groupBy.mockResolvedValue([]);
+      completePrismaMock.match.groupBy.mockResolvedValue([]);
 
       await service.complete(ORG_ID, 12, {});
 
@@ -997,7 +1005,7 @@ describe('TournamentsService', () => {
           where: { id: 12 },
         }),
       );
-      expect(mockPrisma.tournament.update).not.toHaveBeenCalled();
+      expect(completePrismaMock.tournament.update).not.toHaveBeenCalled();
     });
 
     it('uses Serializable isolation for the transaction', async () => {
@@ -1012,18 +1020,18 @@ describe('TournamentsService', () => {
         status: TournamentStatus.COMPLETED,
         championTournamentTeamId: null,
       });
-      mockPrisma.match.groupBy.mockResolvedValue([]);
+      completePrismaMock.match.groupBy.mockResolvedValue([]);
 
       await service.complete(ORG_ID, 12, {});
 
-      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
+      expect(completePrismaMock.$transaction).toHaveBeenCalledWith(
         expect.any(Function),
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     });
 
     it('retries a P2034 write conflict and returns the successful attempt', async () => {
-      mockPrisma.$transaction.mockRejectedValueOnce(p2034Error());
+      completePrismaMock.$transaction.mockRejectedValueOnce(p2034Error());
       mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
@@ -1035,16 +1043,16 @@ describe('TournamentsService', () => {
         status: TournamentStatus.COMPLETED,
         championTournamentTeamId: null,
       });
-      mockPrisma.match.groupBy.mockResolvedValue([]);
+      completePrismaMock.match.groupBy.mockResolvedValue([]);
 
       const result = await service.complete(ORG_ID, 12, {});
 
-      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(completePrismaMock.$transaction).toHaveBeenCalledTimes(2);
       expect(result.status).toBe(TournamentStatus.COMPLETED);
     });
 
     it('re-evaluates champion validation against fresh bracket state on retry', async () => {
-      mockPrisma.$transaction.mockRejectedValueOnce(p2034Error());
+      completePrismaMock.$transaction.mockRejectedValueOnce(p2034Error());
       mockTx.tournament.findFirst.mockResolvedValue({
         id: 12,
         status: TournamentStatus.IN_PROGRESS,
@@ -1064,7 +1072,7 @@ describe('TournamentsService', () => {
     });
 
     it('raises CONCURRENT_MODIFICATION after three retries', async () => {
-      mockPrisma.$transaction
+      completePrismaMock.$transaction
         .mockRejectedValueOnce(p2034Error())
         .mockRejectedValueOnce(p2034Error())
         .mockRejectedValueOnce(p2034Error())
@@ -1077,7 +1085,7 @@ describe('TournamentsService', () => {
       };
 
       expect(error.getResponse().error.code).toBe('CONCURRENT_MODIFICATION');
-      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
+      expect(completePrismaMock.$transaction).toHaveBeenCalledTimes(4);
     });
   });
 
