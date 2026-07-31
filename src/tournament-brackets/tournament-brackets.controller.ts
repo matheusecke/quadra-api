@@ -23,6 +23,7 @@ import {
 import { OrgRole } from '@prisma/client';
 import { TournamentBracketsService } from './tournament-brackets.service';
 import { BracketResponseDto } from './dto/bracket-response.dto';
+import { BracketSlotActionQueryDto } from './dto/bracket-slot-action-query.dto';
 import { CreateTournamentBracketRoundDto } from './dto/create-tournament-bracket-round.dto';
 import { CreateTournamentBracketSlotDto } from './dto/create-tournament-bracket-slot.dto';
 import { GetBracketQueryDto } from './dto/get-bracket-query.dto';
@@ -30,6 +31,7 @@ import { LinkBracketSlotMatchDto } from './dto/link-bracket-slot-match.dto';
 import { SetBracketSlotWinnerDto } from './dto/set-bracket-slot-winner.dto';
 import { TournamentBracketRoundResponseDto } from './dto/tournament-bracket-round-response.dto';
 import { TournamentBracketSlotResponseDto } from './dto/tournament-bracket-slot-response.dto';
+import { UnlinkBracketSlotMatchDto } from './dto/unlink-bracket-slot-match.dto';
 import { UpdateTournamentBracketRoundDto } from './dto/update-tournament-bracket-round.dto';
 import { UpdateTournamentBracketSlotDto } from './dto/update-tournament-bracket-slot.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -215,6 +217,7 @@ export class TournamentBracketSlotsController {
   @ApiOkResponse({ type: TournamentBracketSlotResponseDto })
   linkMatch(
     @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: BracketSlotActionQueryDto,
     @Body() dto: LinkBracketSlotMatchDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<TournamentBracketSlotResponseDto> {
@@ -239,6 +242,8 @@ export class TournamentBracketSlotsController {
   })
   async unlinkMatch(
     @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: BracketSlotActionQueryDto,
+    @Body() _body: UnlinkBracketSlotMatchDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
     await this.tournamentBracketsService.unlinkMatch(
@@ -261,6 +266,7 @@ export class TournamentBracketSlotsController {
   @ApiOkResponse({ type: TournamentBracketSlotResponseDto })
   setWinner(
     @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: BracketSlotActionQueryDto,
     @Body() dto: SetBracketSlotWinnerDto,
     @CurrentUser() user: JwtPayload,
   ): Promise<TournamentBracketSlotResponseDto> {

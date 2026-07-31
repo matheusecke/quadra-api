@@ -72,6 +72,10 @@ missing, deleted, and cross-tenant targets return `404`.
   linked to another slot (`MATCH_ALREADY_LINKED`). A slot that already holds a
   match returns `SLOT_HAS_MATCH` — linking never silently replaces.
   `SCHEDULED`, `LIVE`, `POSTPONED`, and `FINISHED` matches are all linkable.
+  Two concurrent requests linking the same match to different slots race on
+  the partial unique index on `matchId`; the loser's write fails with Prisma
+  `P2002`, which is mapped to the same `MATCH_ALREADY_LINKED` response as the
+  pre-check.
 - When the slot has **both** participants set, the match's active `match_teams`
   must be exactly those two registrations, compared as an unordered set;
   otherwise `MATCH_TEAMS_MISMATCH`. A bye slot or an undecided slot links with
@@ -79,18 +83,38 @@ missing, deleted, and cross-tenant targets return `404`.
 - The same check runs on `PATCH /tournament-bracket-slots/:id` whenever the
   resulting slot has both participants and a linked match, so the consistency
   cannot be defeated by patching after linking.
-- `DELETE /link-match` returns `204` and, in the same transaction, cancels a
-  `SCHEDULED`, `LIVE`, or `POSTPONED` match — a knockout match does not exist
-  without a slot. A `CANCELLED` match is only unlinked; a `FINISHED` one
-  returns `MATCH_ALREADY_FINISHED`; a slot with no link returns
-  `SLOT_HAS_NO_MATCH` (`404`).
+- `DELETE /link-match` runs in a transaction and returns `204`. It only
+  cancels the linked match if it is still `SCHEDULED`, `LIVE`, or `POSTPONED`,
+  using a compare-and-set write; a `FINISHED` match cannot be unlinked
+  (`MATCH_ALREADY_FINISHED`), and a match that changed status underneath the
+  request (other than finishing) returns `CONCURRENT_MODIFICATION`. Only after
+  the match state is settled does the slot's own link get cleared, again by
+  compare-and-set against the match id read at the start of the request; a
+  slot with no link returns `SLOT_HAS_NO_MATCH` (`404`), and a slot already
+  relinked to a different match returns `SLOT_HAS_MATCH`.
 - `PUT /winner` requires the key `winnerTournamentTeamId`; the value must be one
   of the slot participants or `null` to clear, otherwise `INVALID_SLOT_WINNER`.
   It is never cross-checked against a linked match's score — the winner of a
-  slot and the result of a match are separate curated facts.
+  slot and the result of a match are separate curated facts. Displacing a
+  participant with `PATCH /tournament-bracket-slots/:id` does not auto-clear a
+  winner recorded for the side being replaced; that stays the caller's
+  responsibility.
 - Writing the winner already stored is a `200` no-op: nothing is written and no
-  cascade fires. Any real change in a `COMPLETED` tournament reopens it in the
-  same transaction (`status → IN_PROGRESS`, champion cleared). The response is
-  the slot row and does not report the reopen; clients refetch the tournament.
+  cascade fires. Any real change runs inside a `Serializable` transaction, so a
+  concurrent winner write and a concurrent tournament completion cannot both
+  succeed against stale state: one of the two transactions aborts with Prisma
+  `P2034` and is retried, up to three times, fully re-reading and
+  re-validating the slot and tournament on every attempt. A fourth conflict
+  returns `CONCURRENT_MODIFICATION`. A real winner change in a `COMPLETED`
+  tournament reopens it in the same transaction (`status → IN_PROGRESS`,
+  champion cleared). The response is the slot row and does not report the
+  reopen; clients refetch the tournament. `POST /tournaments/:id/complete`
+  uses the same `Serializable` retry so a concurrent winner write cannot
+  crown a champion against a bracket state that no longer matches what was
+  validated.
+- `POST /link-match`, `DELETE /link-match`, and `PUT /winner` accept no query
+  parameters; `DELETE /link-match` also accepts no request body. Any unknown
+  key on any of the three is rejected with `400` by the global
+  `ValidationPipe` (`whitelist` + `forbidNonWhitelisted`).
 
 The existing Prisma schema and partial unique indexes are reused unchanged.
