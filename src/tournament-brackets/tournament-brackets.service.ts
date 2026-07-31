@@ -127,6 +127,11 @@ type TournamentBracketSlotTarget = Prisma.TournamentBracketSlotGetPayload<{
   select: typeof tournamentBracketSlotTargetSelect;
 }>;
 
+type BracketTransactionClient = Pick<
+  Prisma.TransactionClient,
+  'match' | 'tournament' | 'tournamentBracketSlot' | 'tournamentTeam'
+>;
+
 @Injectable()
 export class TournamentBracketsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -370,7 +375,29 @@ export class TournamentBracketsService {
     id: number,
     dto: LinkBracketSlotMatchDto,
   ): Promise<TournamentBracketSlotResponseDto> {
-    const slot = await this.findSlotOrThrow(organizationId, id);
+    try {
+      return await this.prisma.$transaction((tx) =>
+        this.linkMatchAttempt(tx, organizationId, id, dto.matchId, true),
+      );
+    } catch (error) {
+      if (this.isPrismaError(error, 'P2002')) {
+        throw ApiException.conflict(
+          'This match is already linked to another bracket slot.',
+          'MATCH_ALREADY_LINKED',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async linkMatchAttempt(
+    tx: BracketTransactionClient,
+    organizationId: number,
+    id: number,
+    matchId: number,
+    retryOnCasMiss: boolean,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id, tx);
     this.assertMutable(slot.tournament.status);
     this.assertKnockoutFormat(slot.tournament.format);
 
@@ -381,7 +408,7 @@ export class TournamentBracketsService {
       );
     }
 
-    const match = await this.findMatchOrThrow(organizationId, dto.matchId);
+    const match = await this.findMatchOrThrow(organizationId, matchId, tx);
 
     if (match.tournamentId !== slot.tournamentId) {
       throw ApiException.unprocessable(
@@ -403,7 +430,7 @@ export class TournamentBracketsService {
       );
     }
 
-    const linkedElsewhere = await this.prisma.tournamentBracketSlot.findFirst({
+    const linkedElsewhere = await tx.tournamentBracketSlot.findFirst({
       where: { matchId: match.id, organizationId, isDeleted: false },
       select: { id: true },
     });
@@ -420,11 +447,42 @@ export class TournamentBracketsService {
       match.teams,
     );
 
-    return this.prisma.tournamentBracketSlot.update({
-      where: { id },
-      data: { matchId: match.id },
+    const result = await tx.tournamentBracketSlot.updateMany({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        matchId: null,
+        homeTournamentTeamId: slot.homeTournamentTeamId,
+        awayTournamentTeamId: slot.awayTournamentTeamId,
+        winnerTournamentTeamId: slot.winnerTournamentTeamId,
+        tournament: {
+          is: {
+            organizationId,
+            isDeleted: false,
+            status: slot.tournament.status,
+            format: slot.tournament.format,
+          },
+        },
+      },
+      data: { matchId },
+    });
+
+    if (result.count === 0) {
+      if (retryOnCasMiss) {
+        return this.linkMatchAttempt(tx, organizationId, id, matchId, false);
+      }
+      throw this.concurrentModification();
+    }
+
+    const updated = await tx.tournamentBracketSlot.findFirst({
+      where: { id, organizationId, isDeleted: false },
       select: tournamentBracketSlotSelect,
     });
+    if (!updated) {
+      throw ApiException.notFound('Tournament bracket slot not found');
+    }
+    return updated;
   }
 
   async unlinkMatch(organizationId: number, id: number): Promise<void> {
@@ -633,8 +691,9 @@ export class TournamentBracketsService {
   private async findSlotOrThrow(
     organizationId: number,
     id: number,
+    client: BracketTransactionClient = this.prisma,
   ): Promise<TournamentBracketSlotTarget> {
-    const slot = await this.prisma.tournamentBracketSlot.findFirst({
+    const slot = await client.tournamentBracketSlot.findFirst({
       where: {
         id,
         organizationId,
@@ -704,8 +763,9 @@ export class TournamentBracketsService {
   private async findLinkedMatch(
     organizationId: number,
     matchId: number,
+    client: BracketTransactionClient = this.prisma,
   ): Promise<MatchLinkTarget | null> {
-    return this.prisma.match.findFirst({
+    return client.match.findFirst({
       where: { id: matchId, organizationId, isDeleted: false },
       select: matchLinkTargetSelect,
     });
@@ -714,10 +774,25 @@ export class TournamentBracketsService {
   private async findMatchOrThrow(
     organizationId: number,
     matchId: number,
+    client: BracketTransactionClient = this.prisma,
   ): Promise<MatchLinkTarget> {
-    const match = await this.findLinkedMatch(organizationId, matchId);
+    const match = await this.findLinkedMatch(organizationId, matchId, client);
     if (!match) throw ApiException.notFound('Match not found');
     return match;
+  }
+
+  private isPrismaError(error: unknown, code: string): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === code
+    );
+  }
+
+  private concurrentModification(): ApiException {
+    return ApiException.conflict(
+      'The resource changed during this operation. Retry the request.',
+      'CONCURRENT_MODIFICATION',
+    );
   }
 
   private assertMatchTeamsMatchSlot(
