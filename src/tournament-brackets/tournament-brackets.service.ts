@@ -279,12 +279,20 @@ export class TournamentBracketsService {
     id: number,
     dto: UpdateTournamentBracketSlotDto,
   ): Promise<TournamentBracketSlotResponseDto> {
+    return this.updateSlotAttempt(organizationId, id, dto, true);
+  }
+
+  private async updateSlotAttempt(
+    organizationId: number,
+    id: number,
+    dto: UpdateTournamentBracketSlotDto,
+    retryOnCasMiss: boolean,
+  ): Promise<TournamentBracketSlotResponseDto> {
     const slot = await this.findSlotOrThrow(organizationId, id);
     this.assertMutable(slot.tournament.status);
     this.assertKnockoutFormat(slot.tournament.format);
 
     const { tournament, ...current } = slot;
-    void tournament;
 
     const data: Prisma.TournamentBracketSlotUncheckedUpdateInput = {};
     if (dto.position !== undefined) data.position = dto.position;
@@ -330,6 +338,12 @@ export class TournamentBracketsService {
       mergedAwayTournamentTeamId,
     );
 
+    this.assertStoredWinnerStillParticipant(
+      current.winnerTournamentTeamId,
+      mergedHomeTournamentTeamId,
+      mergedAwayTournamentTeamId,
+    );
+
     if (current.matchId !== null) {
       // A soft-deleted match already reads as null in the composite bracket,
       // so there is nothing left for the patch to contradict.
@@ -343,11 +357,42 @@ export class TournamentBracketsService {
       }
     }
 
-    return this.prisma.tournamentBracketSlot.update({
-      where: { id },
-      data,
+    const result = await this.prisma.tournamentBracketSlot.updateMany({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        matchId: current.matchId,
+        homeTournamentTeamId: current.homeTournamentTeamId,
+        awayTournamentTeamId: current.awayTournamentTeamId,
+        winnerTournamentTeamId: current.winnerTournamentTeamId,
+        tournament: {
+          is: {
+            organizationId,
+            isDeleted: false,
+            status: tournament.status,
+            format: tournament.format,
+          },
+        },
+      },
+      data: data as Prisma.TournamentBracketSlotUncheckedUpdateManyInput,
+    });
+
+    if (result.count === 0) {
+      if (retryOnCasMiss) {
+        return this.updateSlotAttempt(organizationId, id, dto, false);
+      }
+      throw this.concurrentModification();
+    }
+
+    const updated = await this.prisma.tournamentBracketSlot.findFirst({
+      where: { id, organizationId, isDeleted: false },
       select: tournamentBracketSlotSelect,
     });
+    if (!updated) {
+      throw ApiException.notFound('Tournament bracket slot not found');
+    }
+    return updated;
   }
 
   async removeSlot(organizationId: number, id: number): Promise<void> {
@@ -840,6 +885,23 @@ export class TournamentBracketsService {
       throw ApiException.unprocessable(
         'A slot cannot have the same team on both sides.',
         'SAME_TEAM_IN_SLOT',
+      );
+    }
+  }
+
+  private assertStoredWinnerStillParticipant(
+    winnerTournamentTeamId: number | null,
+    homeTournamentTeamId: number | null,
+    awayTournamentTeamId: number | null,
+  ): void {
+    if (
+      winnerTournamentTeamId !== null &&
+      winnerTournamentTeamId !== homeTournamentTeamId &&
+      winnerTournamentTeamId !== awayTournamentTeamId
+    ) {
+      throw ApiException.unprocessable(
+        'The winner must be one of the slot participants.',
+        'INVALID_SLOT_WINNER',
       );
     }
   }
