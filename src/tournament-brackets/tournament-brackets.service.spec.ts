@@ -1529,7 +1529,13 @@ describe('TournamentBracketsService', () => {
         },
         data: { matchId: 501 },
       });
-      expect(mockPrisma.tournamentBracketSlot.updateMany).not.toHaveBeenCalled();
+      expect(
+        mockPrisma.tournamentBracketSlot.updateMany,
+      ).not.toHaveBeenCalled();
+      expect(mockTx.tournamentBracketSlot.findFirst).toHaveBeenLastCalledWith({
+        where: { id: 101, organizationId: 42, isDeleted: false },
+        select: tournamentBracketSlotSelect,
+      });
     });
 
     it('writes only matchId with the current participant and winner state as the CAS predicate', async () => {
@@ -1589,7 +1595,7 @@ describe('TournamentBracketsService', () => {
       expect(mockTx.tournamentBracketSlot.updateMany).toHaveBeenCalledTimes(1);
     });
 
-    it('revalidates and retries once when fresh state remains valid', async () => {
+    it('revalidates and retries once with the fresh state when it remains valid', async () => {
       arrangeTxSlotTarget({
         homeTournamentTeamId: 21,
         awayTournamentTeamId: 22,
@@ -1599,9 +1605,13 @@ describe('TournamentBracketsService', () => {
       mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
         count: 0,
       });
+      // The fresh read differs in state irrelevant to link validation (the
+      // winner), proving the retry re-reads rather than replaying the first
+      // attempt's stale predicate.
       arrangeTxSlotTarget({
         homeTournamentTeamId: 21,
         awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
       });
       arrangeTxMatch();
       mockTx.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
@@ -1612,18 +1622,53 @@ describe('TournamentBracketsService', () => {
         ...slotRow,
         homeTournamentTeamId: 21,
         awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
         matchId: 501,
       });
 
       const result = await service.linkMatch(42, 101, { matchId: 501 });
 
       expect(mockTx.tournamentBracketSlot.updateMany).toHaveBeenCalledTimes(2);
+      expect(mockTx.tournamentBracketSlot.updateMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ winnerTournamentTeamId: 21 }),
+        }),
+      );
       expect(result).toEqual({
         ...slotRow,
         homeTournamentTeamId: 21,
         awayTournamentTeamId: 22,
+        winnerTournamentTeamId: 21,
         matchId: 501,
       });
+    });
+
+    it('raises MATCH_TEAMS_MISMATCH when a concurrent participant patch invalidates the CAS', async () => {
+      arrangeTxSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 22,
+      });
+      arrangeTxMatch();
+      mockTx.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+      mockTx.tournamentBracketSlot.updateMany.mockResolvedValueOnce({
+        count: 0,
+      });
+      // A concurrent PATCH replaced the away participant between the first
+      // read and the CAS write, so the retry's revalidation must now compare
+      // the fresh participants against the match teams.
+      arrangeTxSlotTarget({
+        homeTournamentTeamId: 21,
+        awayTournamentTeamId: 23,
+      });
+      arrangeTxMatch();
+      mockTx.tournamentBracketSlot.findFirst.mockResolvedValueOnce(null);
+
+      const error = await captureApiException(
+        service.linkMatch(42, 101, { matchId: 501 }),
+      );
+
+      expect(getApiErrorCode(error)).toBe('MATCH_TEAMS_MISMATCH');
+      expect(mockTx.tournamentBracketSlot.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it('raises CONCURRENT_MODIFICATION after a second otherwise-valid CAS miss', async () => {
@@ -1653,7 +1698,8 @@ describe('TournamentBracketsService', () => {
       expect(getApiErrorCode(error)).toBe('CONCURRENT_MODIFICATION');
       expect(error.getResponse()).toMatchObject({
         error: {
-          message: 'The resource changed during this operation. Retry the request.',
+          message:
+            'The resource changed during this operation. Retry the request.',
         },
       });
     });

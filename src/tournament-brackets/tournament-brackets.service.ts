@@ -376,6 +376,9 @@ export class TournamentBracketsService {
     dto: LinkBracketSlotMatchDto,
   ): Promise<TournamentBracketSlotResponseDto> {
     try {
+      // NOTE: the CAS retry depends on Read Committed — each statement
+      // re-snapshots, so the fresh read sees the winning commit. Under
+      // Serializable the retry would always miss for the same reason.
       return await this.prisma.$transaction((tx) =>
         this.linkMatchAttempt(tx, organizationId, id, dto.matchId, true),
       );
