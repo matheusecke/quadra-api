@@ -183,7 +183,7 @@ const updateTargetRow = {
   matchNumber: 18 as number | null,
   scheduledAt,
   venueName: 'Central Arena' as string | null,
-  status: MatchStatus.SCHEDULED,
+  status: MatchStatus.SCHEDULED as MatchStatus,
   tournament: { format: TournamentFormat.GROUP_STAGE },
   teams: [
     { id: 601, side: MatchSide.HOME, tournamentTeamId: 41 },
@@ -944,6 +944,437 @@ describe('MatchesService', () => {
       await service.create(42, 7, { ...dto, tournamentGroupId: null });
       expect(mockPrisma.tournamentGroup.findFirst).not.toHaveBeenCalled();
       expect(mockPrisma.tournamentGroupTeam.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  function arrangeUpdate(
+    overrides: Partial<typeof updateTargetRow> = {},
+  ): void {
+    mockTx.match.findFirst.mockResolvedValue({
+      ...updateTargetRow,
+      ...overrides,
+    });
+    mockTx.match.update.mockResolvedValue({ id: 501 });
+    mockTx.matchTeam.updateMany.mockResolvedValue({ count: 2 });
+    mockTx.matchTeam.update.mockResolvedValue({ id: 601 });
+    mockPrisma.match.findFirst.mockResolvedValue(detailRow);
+  }
+
+  describe('update', () => {
+    it('returns detail for an empty patch without a transaction or write', async () => {
+      mockPrisma.match.findFirst.mockResolvedValue(detailRow);
+      await expect(service.update(42, 501, {})).resolves.toBeDefined();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(mockPrisma.match.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      MatchStatus.SCHEDULED,
+      MatchStatus.POSTPONED,
+      MatchStatus.LIVE,
+      MatchStatus.FINISHED,
+      MatchStatus.CANCELLED,
+    ])('allows matchNumber and venueName while %s', async (status) => {
+      arrangeUpdate({ status });
+      await service.update(42, 501, { matchNumber: null, venueName: null });
+      expect(mockTx.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: { matchNumber: null, venueName: null },
+      });
+    });
+
+    it.each([MatchStatus.SCHEDULED, MatchStatus.POSTPONED, MatchStatus.LIVE])(
+      'allows scheduledAt while %s',
+      async (status) => {
+        arrangeUpdate({ status });
+        await service.update(42, 501, {
+          scheduledAt: '2026-08-18T20:00:00.000Z',
+        });
+        expect(mockTx.match.update).toHaveBeenCalledWith({
+          where: { id: 501 },
+          data: {
+            scheduledAt: new Date('2026-08-18T20:00:00.000Z'),
+            ...(status === MatchStatus.POSTPONED
+              ? { status: MatchStatus.SCHEDULED }
+              : {}),
+          },
+        });
+      },
+    );
+
+    it.each([MatchStatus.FINISHED, MatchStatus.CANCELLED])(
+      'rejects scheduledAt while %s',
+      async (status) => {
+        arrangeUpdate({ status });
+        const error = await captureApiException(
+          service.update(42, 501, {
+            scheduledAt: '2026-08-18T20:00:00.000Z',
+          }),
+        );
+        expect(apiError(error)).toEqual({
+          code: 'INVALID_STATUS_TRANSITION',
+          message:
+            'scheduledAt cannot be changed for a finished or cancelled match.',
+        });
+      },
+    );
+
+    it.each([MatchStatus.LIVE, MatchStatus.FINISHED, MatchStatus.CANCELLED])(
+      'rejects participants and group while %s',
+      async (status) => {
+        for (const patch of [
+          { homeTournamentTeamId: 63 },
+          { tournamentGroupId: null },
+        ]) {
+          jest.clearAllMocks();
+          arrangeUpdate({ status });
+          const error = await captureApiException(
+            service.update(42, 501, patch),
+          );
+          expect(apiError(error)).toEqual({
+            code: 'INVALID_STATUS_TRANSITION',
+            message:
+              'Participants and tournamentGroupId can only be changed for scheduled or postponed matches.',
+          });
+        }
+      },
+    );
+
+    it('reschedules POSTPONED when the scheduledAt key is present even unchanged', async () => {
+      arrangeUpdate({ status: MatchStatus.POSTPONED });
+      await service.update(42, 501, {
+        scheduledAt: '2026-08-15T19:30:00.000Z',
+      });
+      expect(mockTx.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: { scheduledAt, status: MatchStatus.SCHEDULED },
+      });
+    });
+
+    it('keeps POSTPONED when scheduledAt is absent', async () => {
+      arrangeUpdate({ status: MatchStatus.POSTPONED });
+      await service.update(42, 501, { venueName: 'New Arena' });
+      expect(mockTx.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: { venueName: 'New Arena' },
+      });
+    });
+
+    it('validates a one-side edit against the unchanged other side', async () => {
+      arrangeUpdate();
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 63,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      mockTx.tournamentGroup.findFirst.mockResolvedValue({
+        id: 7,
+        tournamentId: 12,
+      });
+      mockTx.tournamentGroupTeam.findFirst.mockResolvedValue({ id: 801 });
+      await service.update(42, 501, { homeTournamentTeamId: 63 });
+      expect(mockTx.tournamentTeam.findFirst).toHaveBeenNthCalledWith(2, {
+        where: { id: 52, organizationId: 42, isDeleted: false },
+        select: { id: true, tournamentId: true, status: true },
+      });
+    });
+
+    it('clears a group after validating the merged participants', async () => {
+      arrangeUpdate();
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 41,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      await service.update(42, 501, { tournamentGroupId: null });
+      expect(mockTx.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: { tournamentGroupId: null },
+      });
+    });
+
+    it('allows a postponed participant edit when all scoresheet relations are empty', async () => {
+      arrangeUpdate({ status: MatchStatus.POSTPONED, tournamentGroupId: null });
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 63,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      mockTx.matchPeriod.findFirst.mockResolvedValue(null);
+      mockTx.matchRoster.findFirst.mockResolvedValue(null);
+      mockTx.playerMatchStatistic.findFirst.mockResolvedValue(null);
+      await expect(
+        service.update(42, 501, { homeTournamentTeamId: 63 }),
+      ).resolves.toBeDefined();
+      expect(mockTx.matchTeam.updateMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns 404 for a missing or cross-tenant patch target', async () => {
+      mockTx.match.findFirst.mockResolvedValue(null);
+      const error = await captureApiException(
+        service.update(42, 501, { venueName: 'New Arena' }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'RECORD_NOT_FOUND',
+        message: 'Match not found',
+      });
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('preserves side row ids while swapping participants', async () => {
+      arrangeUpdate({ tournamentGroupId: null });
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 41,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      await service.update(42, 501, {
+        homeTournamentTeamId: 52,
+        awayTournamentTeamId: 41,
+      });
+      expect(mockTx.matchTeam.updateMany).toHaveBeenNthCalledWith(1, {
+        where: {
+          id: { in: [601, 602] },
+          matchId: 501,
+          organizationId: 42,
+          isDeleted: false,
+        },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 601 },
+        data: { tournamentTeamId: 52 },
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(2, {
+        where: { id: 602 },
+        data: { tournamentTeamId: 41 },
+      });
+      expect(mockTx.matchTeam.updateMany).toHaveBeenNthCalledWith(2, {
+        where: {
+          id: { in: [601, 602] },
+          matchId: 501,
+          organizationId: 42,
+          isDeleted: true,
+        },
+        data: { isDeleted: false },
+      });
+    });
+
+    it.each([
+      ['period', 'matchPeriod'],
+      ['roster', 'matchRoster'],
+      ['statistic', 'playerMatchStatistic'],
+    ] as const)(
+      'rejects a postponed participant edit with an active %s',
+      async (_label, delegate) => {
+        arrangeUpdate({
+          status: MatchStatus.POSTPONED,
+          tournamentGroupId: null,
+        });
+        mockTx.tournamentTeam.findFirst
+          .mockResolvedValueOnce({
+            id: 63,
+            tournamentId: 12,
+            status: TournamentTeamStatus.ACTIVE,
+          })
+          .mockResolvedValueOnce({
+            id: 52,
+            tournamentId: 12,
+            status: TournamentTeamStatus.ACTIVE,
+          });
+        mockTx[delegate].findFirst.mockResolvedValue({ id: 1 });
+        const error = await captureApiException(
+          service.update(42, 501, { homeTournamentTeamId: 63 }),
+        );
+        expect(apiError(error)).toEqual({
+          code: 'MATCH_HAS_SCORESHEET',
+          message:
+            'Match participants cannot be changed after scoresheet data has been recorded.',
+        });
+        expect(mockTx.matchTeam.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects a non-null group on a linked match', async () => {
+      arrangeUpdate({
+        tournamentGroupId: null,
+        bracketSlots: [
+          { id: 101, homeTournamentTeamId: 41, awayTournamentTeamId: 52 },
+        ],
+      });
+      mockTx.tournamentGroup.findFirst.mockResolvedValue({
+        id: 7,
+        tournamentId: 12,
+      });
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 41,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      mockTx.tournamentGroupTeam.findFirst.mockResolvedValue({ id: 801 });
+      const error = await captureApiException(
+        service.update(42, 501, { tournamentGroupId: 7 }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'MATCH_IN_BRACKET',
+        message:
+          'A match linked to a bracket slot cannot belong to a tournament group.',
+      });
+    });
+
+    it('accepts a reversed participant pair for a complete linked slot', async () => {
+      arrangeUpdate({
+        tournamentGroupId: null,
+        bracketSlots: [
+          { id: 101, homeTournamentTeamId: 41, awayTournamentTeamId: 52 },
+        ],
+      });
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 41,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      await expect(
+        service.update(42, 501, {
+          homeTournamentTeamId: 52,
+          awayTournamentTeamId: 41,
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('skips pair comparison for an incomplete linked slot', async () => {
+      arrangeUpdate({
+        tournamentGroupId: null,
+        bracketSlots: [
+          { id: 101, homeTournamentTeamId: 41, awayTournamentTeamId: null },
+        ],
+      });
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 63,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      await expect(
+        service.update(42, 501, { homeTournamentTeamId: 63 }),
+      ).resolves.toBeDefined();
+    });
+
+    it('rejects a complete linked participant mismatch', async () => {
+      arrangeUpdate({
+        tournamentGroupId: null,
+        bracketSlots: [
+          { id: 101, homeTournamentTeamId: 41, awayTournamentTeamId: 52 },
+        ],
+      });
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 63,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      const error = await captureApiException(
+        service.update(42, 501, { homeTournamentTeamId: 63 }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'MATCH_TEAMS_MISMATCH',
+        message:
+          'The match participants do not match the bracket slot participants.',
+      });
+    });
+
+    it('uses Serializable and reloads detail after commit', async () => {
+      arrangeUpdate();
+      await service.update(42, 501, { venueName: 'New Arena' });
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
+      expect(mockPrisma.match.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 501,
+          organizationId: 42,
+          isDeleted: false,
+          tournament: { organizationId: 42, isDeleted: false },
+        },
+        select: matchDetailSelect,
+      });
+    });
+
+    it('retries P2034 and succeeds on the fourth attempt', async () => {
+      arrangeUpdate();
+      mockPrisma.$transaction
+        .mockRejectedValueOnce(p2034())
+        .mockRejectedValueOnce(p2034())
+        .mockRejectedValueOnce(p2034())
+        .mockImplementationOnce((callback) =>
+          Promise.resolve(callback(mockTx)),
+        );
+      await expect(
+        service.update(42, 501, { venueName: 'New Arena' }),
+      ).resolves.toBeDefined();
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
+    });
+
+    it('returns CONCURRENT_MODIFICATION after four P2034 conflicts', async () => {
+      mockPrisma.$transaction.mockRejectedValue(p2034());
+      const error = await captureApiException(
+        service.update(42, 501, { venueName: 'New Arena' }),
+      );
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
+      expect(apiError(error)).toEqual({
+        code: 'CONCURRENT_MODIFICATION',
+        message:
+          'The resource changed during this operation. Retry the request.',
+      });
     });
   });
 });

@@ -15,6 +15,7 @@ import {
   ListTournamentMatchesQueryDto,
 } from './dto/list-matches-query.dto';
 import { CreateMatchDto } from './dto/create-match.dto';
+import { UpdateMatchDto } from './dto/update-match.dto';
 import {
   MatchDetailResponseDto,
   MatchScoreSource,
@@ -595,5 +596,259 @@ export class MatchesService {
         'INVALID_GROUP_ASSIGNMENT',
       );
     }
+  }
+
+  async update(
+    organizationId: number,
+    id: number,
+    dto: UpdateMatchDto,
+  ): Promise<MatchDetailResponseDto> {
+    if (Object.keys(dto).length === 0) return this.findOne(organizationId, id);
+    await this.runSerializable((tx) =>
+      this.updateTransaction(tx, organizationId, id, dto),
+    );
+    return this.findOne(organizationId, id);
+  }
+
+  private async updateTransaction(
+    tx: MatchClient,
+    organizationId: number,
+    id: number,
+    dto: UpdateMatchDto,
+  ): Promise<void> {
+    const current = await this.findUpdateTargetOrThrow(tx, organizationId, id);
+    this.assertPatchAllowed(current.status, dto);
+    const home = current.teams.find((team) => team.side === MatchSide.HOME);
+    const away = current.teams.find((team) => team.side === MatchSide.AWAY);
+    if (!home || !away) {
+      throw new Error('Active HOME/AWAY MatchTeam invariant violated');
+    }
+    const homeId = dto.homeTournamentTeamId ?? home.tournamentTeamId;
+    const awayId = dto.awayTournamentTeamId ?? away.tournamentTeamId;
+    const groupId =
+      dto.tournamentGroupId !== undefined
+        ? dto.tournamentGroupId
+        : current.tournamentGroupId;
+    const changesParticipants =
+      ('homeTournamentTeamId' in dto && homeId !== home.tournamentTeamId) ||
+      ('awayTournamentTeamId' in dto && awayId !== away.tournamentTeamId);
+    const changesStructure =
+      'homeTournamentTeamId' in dto ||
+      'awayTournamentTeamId' in dto ||
+      'tournamentGroupId' in dto;
+
+    if (changesStructure) {
+      await this.validateGroup(
+        tx,
+        organizationId,
+        current.tournamentId,
+        current.tournament.format,
+        groupId,
+      );
+      await this.validateParticipant(
+        tx,
+        organizationId,
+        current.tournamentId,
+        homeId,
+      );
+      await this.validateParticipant(
+        tx,
+        organizationId,
+        current.tournamentId,
+        awayId,
+      );
+      this.assertDistinctParticipants(homeId, awayId);
+      await this.assertGroupMemberships(
+        tx,
+        organizationId,
+        current.tournamentId,
+        groupId,
+        homeId,
+        awayId,
+      );
+      this.assertBracketConsistency(
+        current.bracketSlots[0],
+        groupId,
+        homeId,
+        awayId,
+      );
+    }
+    if (changesParticipants && current.status === MatchStatus.POSTPONED) {
+      await this.assertNoScoresheet(tx, organizationId, id);
+    }
+
+    const data: Prisma.MatchUncheckedUpdateInput = {};
+    if ('tournamentGroupId' in dto) data.tournamentGroupId = groupId;
+    if ('matchNumber' in dto) data.matchNumber = dto.matchNumber;
+    if ('scheduledAt' in dto) {
+      data.scheduledAt = new Date(dto.scheduledAt as string);
+      if (current.status === MatchStatus.POSTPONED) {
+        data.status = MatchStatus.SCHEDULED;
+      }
+    }
+    if ('venueName' in dto) data.venueName = dto.venueName;
+    if (Object.keys(data).length > 0) {
+      await tx.match.update({ where: { id }, data });
+    }
+
+    if (!changesParticipants) return;
+    const sideIds = [home.id, away.id];
+    await tx.matchTeam.updateMany({
+      where: {
+        id: { in: sideIds },
+        matchId: id,
+        organizationId,
+        isDeleted: false,
+      },
+      data: { isDeleted: true },
+    });
+    await tx.matchTeam.update({
+      where: { id: home.id },
+      data: { tournamentTeamId: homeId },
+    });
+    await tx.matchTeam.update({
+      where: { id: away.id },
+      data: { tournamentTeamId: awayId },
+    });
+    await tx.matchTeam.updateMany({
+      where: {
+        id: { in: sideIds },
+        matchId: id,
+        organizationId,
+        isDeleted: true,
+      },
+      data: { isDeleted: false },
+    });
+  }
+
+  private async findUpdateTargetOrThrow(
+    client: MatchClient,
+    organizationId: number,
+    id: number,
+  ): Promise<MatchUpdateTarget> {
+    const match = await client.match.findFirst({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        tournament: { organizationId, isDeleted: false },
+      },
+      select: matchUpdateTargetSelect,
+    });
+    if (!match) throw ApiException.notFound('Match not found');
+    return match;
+  }
+
+  private assertPatchAllowed(status: MatchStatus, dto: UpdateMatchDto): void {
+    if (
+      'scheduledAt' in dto &&
+      (status === MatchStatus.FINISHED || status === MatchStatus.CANCELLED)
+    ) {
+      throw ApiException.conflict(
+        'scheduledAt cannot be changed for a finished or cancelled match.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+    const changesStructure =
+      'homeTournamentTeamId' in dto ||
+      'awayTournamentTeamId' in dto ||
+      'tournamentGroupId' in dto;
+    if (
+      changesStructure &&
+      status !== MatchStatus.SCHEDULED &&
+      status !== MatchStatus.POSTPONED
+    ) {
+      throw ApiException.conflict(
+        'Participants and tournamentGroupId can only be changed for scheduled or postponed matches.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+  }
+
+  private assertBracketConsistency(
+    slot: MatchUpdateTarget['bracketSlots'][number] | undefined,
+    tournamentGroupId: number | null,
+    homeId: number,
+    awayId: number,
+  ): void {
+    if (!slot) return;
+    if (tournamentGroupId !== null) {
+      throw ApiException.unprocessable(
+        'A match linked to a bracket slot cannot belong to a tournament group.',
+        'MATCH_IN_BRACKET',
+      );
+    }
+    if (
+      slot.homeTournamentTeamId === null ||
+      slot.awayTournamentTeamId === null
+    ) {
+      return;
+    }
+    const slotIds = [slot.homeTournamentTeamId, slot.awayTournamentTeamId].sort(
+      (left, right) => left - right,
+    );
+    const matchIds = [homeId, awayId].sort((left, right) => left - right);
+    if (slotIds[0] !== matchIds[0] || slotIds[1] !== matchIds[1]) {
+      throw ApiException.unprocessable(
+        'The match participants do not match the bracket slot participants.',
+        'MATCH_TEAMS_MISMATCH',
+      );
+    }
+  }
+
+  private async assertNoScoresheet(
+    client: MatchClient,
+    organizationId: number,
+    matchId: number,
+  ): Promise<void> {
+    const where = { matchId, organizationId, isDeleted: false };
+    const period = await client.matchPeriod.findFirst({
+      where,
+      select: { id: true },
+    });
+    const roster = await client.matchRoster.findFirst({
+      where,
+      select: { id: true },
+    });
+    const statistic = await client.playerMatchStatistic.findFirst({
+      where,
+      select: { id: true },
+    });
+    if (period || roster || statistic) {
+      throw ApiException.conflict(
+        'Match participants cannot be changed after scoresheet data has been recorded.',
+        'MATCH_HAS_SCORESHEET',
+      );
+    }
+  }
+
+  private async runSerializable<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        if (!this.isPrismaError(error, 'P2034')) throw error;
+        if (attempt === 3) throw this.concurrentModification();
+      }
+    }
+    throw this.concurrentModification();
+  }
+
+  private isPrismaError(error: unknown, code: string): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === code
+    );
+  }
+
+  private concurrentModification(): ApiException {
+    return ApiException.conflict(
+      'The resource changed during this operation. Retry the request.',
+      'CONCURRENT_MODIFICATION',
+    );
   }
 }
