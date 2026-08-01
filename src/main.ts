@@ -112,6 +112,10 @@ async function bootstrap(): Promise<void> {
       'Knockout bracket rounds, slots, participants, and the composite bracket read.',
     )
     .addTag(
+      'matches',
+      'Match scheduling, lifecycle actions, participants, and persisted result reads.',
+    )
+    .addTag(
       'organization-user-affiliations',
       'User membership in organizations: invites, roles, jersey numbers, and status.',
     )
