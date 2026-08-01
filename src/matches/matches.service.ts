@@ -332,9 +332,11 @@ export class MatchesService {
   }
 
   private toDetail(row: MatchDetailRow): MatchDetailResponseDto {
-    const isForfeit = row.teams.some(
-      (team) => team.lossType === LossType.FORFEIT,
-    );
+    // NOTE: gated on FINISHED so a Phase 9 reopen, which leaves the previous
+    // loss type in place, cannot hide the scoresheet of a live match.
+    const isForfeit =
+      row.status === MatchStatus.FINISHED &&
+      row.teams.some((team) => team.lossType === LossType.FORFEIT);
     const periods = isForfeit
       ? []
       : [...row.periods]
@@ -603,7 +605,12 @@ export class MatchesService {
     id: number,
     dto: UpdateMatchDto,
   ): Promise<MatchDetailResponseDto> {
-    if (Object.keys(dto).length === 0) return this.findOne(organizationId, id);
+    // NOTE: declared-but-unsent DTO fields materialize as own properties under
+    // this tsconfig, so key presence cannot stand in for "the client sent it".
+    const isEmptyPatch = Object.values(dto).every(
+      (value) => value === undefined,
+    );
+    if (isEmptyPatch) return this.findOne(organizationId, id);
     await this.runSerializable((tx) =>
       this.updateTransaction(tx, organizationId, id, dto),
     );
@@ -630,14 +637,12 @@ export class MatchesService {
         ? dto.tournamentGroupId
         : current.tournamentGroupId;
     const changesParticipants =
-      ('homeTournamentTeamId' in dto && homeId !== home.tournamentTeamId) ||
-      ('awayTournamentTeamId' in dto && awayId !== away.tournamentTeamId);
-    const changesStructure =
-      'homeTournamentTeamId' in dto ||
-      'awayTournamentTeamId' in dto ||
-      'tournamentGroupId' in dto;
+      (dto.homeTournamentTeamId !== undefined &&
+        homeId !== home.tournamentTeamId) ||
+      (dto.awayTournamentTeamId !== undefined &&
+        awayId !== away.tournamentTeamId);
 
-    if (changesStructure) {
+    if (this.changesStructure(dto)) {
       await this.validateGroup(
         tx,
         organizationId,
@@ -678,20 +683,24 @@ export class MatchesService {
     }
 
     const data: Prisma.MatchUncheckedUpdateInput = {};
-    if ('tournamentGroupId' in dto) data.tournamentGroupId = groupId;
-    if ('matchNumber' in dto) data.matchNumber = dto.matchNumber;
-    if ('scheduledAt' in dto) {
-      data.scheduledAt = new Date(dto.scheduledAt as string);
+    if (dto.tournamentGroupId !== undefined) data.tournamentGroupId = groupId;
+    if (dto.matchNumber !== undefined) data.matchNumber = dto.matchNumber;
+    if (dto.scheduledAt !== undefined) {
+      data.scheduledAt = new Date(dto.scheduledAt);
       if (current.status === MatchStatus.POSTPONED) {
         data.status = MatchStatus.SCHEDULED;
       }
     }
-    if ('venueName' in dto) data.venueName = dto.venueName;
+    if (dto.venueName !== undefined) data.venueName = dto.venueName;
     if (Object.keys(data).length > 0) {
       await tx.match.update({ where: { id }, data });
     }
 
     if (!changesParticipants) return;
+    // NOTE: both rows leave the active partial unique indexes on
+    // match_teams(match_id, side) and match_teams(match_id, tournament_team_id)
+    // before either id is rewritten, so a straight side swap cannot collide
+    // mid-transaction. Do not collapse this into two plain updates.
     const sideIds = [home.id, away.id];
     await tx.matchTeam.updateMany({
       where: {
@@ -739,9 +748,17 @@ export class MatchesService {
     return match;
   }
 
+  private changesStructure(dto: UpdateMatchDto): boolean {
+    return (
+      dto.homeTournamentTeamId !== undefined ||
+      dto.awayTournamentTeamId !== undefined ||
+      dto.tournamentGroupId !== undefined
+    );
+  }
+
   private assertPatchAllowed(status: MatchStatus, dto: UpdateMatchDto): void {
     if (
-      'scheduledAt' in dto &&
+      dto.scheduledAt !== undefined &&
       (status === MatchStatus.FINISHED || status === MatchStatus.CANCELLED)
     ) {
       throw ApiException.conflict(
@@ -749,12 +766,8 @@ export class MatchesService {
         'INVALID_STATUS_TRANSITION',
       );
     }
-    const changesStructure =
-      'homeTournamentTeamId' in dto ||
-      'awayTournamentTeamId' in dto ||
-      'tournamentGroupId' in dto;
     if (
-      changesStructure &&
+      this.changesStructure(dto) &&
       status !== MatchStatus.SCHEDULED &&
       status !== MatchStatus.POSTPONED
     ) {

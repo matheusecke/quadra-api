@@ -12,8 +12,12 @@ import {
   TournamentStatus,
   TournamentTeamStatus,
 } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { ApiException } from '../common/exceptions/api.exception';
 import { PrismaService } from '../prisma/prisma.service';
+import type { MatchDetailResponseDto } from './dto/match-response.dto';
+import { UpdateMatchDto } from './dto/update-match.dto';
 import {
   MatchesService,
   matchDetailSelect,
@@ -669,6 +673,31 @@ describe('MatchesService', () => {
       });
     });
 
+    it('keeps scoresheet relations visible for a stale forfeit on a live match', async () => {
+      mockPrisma.match.findFirst.mockResolvedValue({
+        ...detailRow,
+        status: MatchStatus.LIVE,
+        teams: detailRow.teams.map((team, index) => ({
+          ...team,
+          lossType: index === 0 ? null : LossType.FORFEIT,
+        })),
+        periods: [
+          {
+            id: 701,
+            periodNumber: 1,
+            periodType: PeriodType.REGULAR,
+            homePoints: 20,
+            awayPoints: 18,
+            startedAt: null,
+            endedAt: null,
+          },
+        ],
+      });
+      const result = await service.findOne(42, 501);
+      expect(result.periods).toHaveLength(1);
+      expect(result.scoreSource).toBeNull();
+    });
+
     it('hides persisted result fields while a match is not finished', async () => {
       mockPrisma.match.findFirst.mockResolvedValue({
         ...detailRow,
@@ -960,12 +989,96 @@ describe('MatchesService', () => {
     mockPrisma.match.findFirst.mockResolvedValue(detailRow);
   }
 
+  describe('patch body validation', () => {
+    const validateBody = async (body: object): Promise<string[]> => {
+      const errors = await validate(plainToInstance(UpdateMatchDto, body));
+      return errors.map((error) => error.property);
+    };
+
+    it.each(['scheduledAt', 'homeTournamentTeamId', 'awayTournamentTeamId'])(
+      'rejects an explicit null for %s',
+      async (property) => {
+        await expect(validateBody({ [property]: null })).resolves.toEqual([
+          property,
+        ]);
+      },
+    );
+
+    it.each(['tournamentGroupId', 'matchNumber', 'venueName'])(
+      'accepts an explicit null for %s',
+      async (property) => {
+        await expect(validateBody({ [property]: null })).resolves.toEqual([]);
+      },
+    );
+
+    it('accepts a body that omits every key', async () => {
+      await expect(validateBody({})).resolves.toEqual([]);
+    });
+  });
+
   describe('update', () => {
     it('returns detail for an empty patch without a transaction or write', async () => {
       mockPrisma.match.findFirst.mockResolvedValue(detailRow);
-      await expect(service.update(42, 501, {})).resolves.toBeDefined();
+      await expect(
+        service.update(42, 501, plainToInstance(UpdateMatchDto, {})),
+      ).resolves.toBeDefined();
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
       expect(mockPrisma.match.update).not.toHaveBeenCalled();
+    });
+
+    it('reads the patch target with the tenant-scoped update selector', async () => {
+      arrangeUpdate({});
+      await service.update(42, 501, { venueName: 'New Arena' });
+      expect(mockTx.match.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 501,
+          organizationId: 42,
+          isDeleted: false,
+          tournament: { organizationId: 42, isDeleted: false },
+        },
+        select: matchUpdateTargetSelect,
+      });
+    });
+
+    it('skips the side swap when a participant key repeats the stored id', async () => {
+      arrangeUpdate({ tournamentGroupId: null });
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 41,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      await service.update(42, 501, { homeTournamentTeamId: 41 });
+      expect(mockTx.matchTeam.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.matchTeam.update).not.toHaveBeenCalled();
+    });
+
+    it('skips the scoresheet guard for a scheduled participant edit', async () => {
+      arrangeUpdate({
+        status: MatchStatus.SCHEDULED,
+        tournamentGroupId: null,
+      });
+      mockTx.tournamentTeam.findFirst
+        .mockResolvedValueOnce({
+          id: 63,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        })
+        .mockResolvedValueOnce({
+          id: 52,
+          tournamentId: 12,
+          status: TournamentTeamStatus.ACTIVE,
+        });
+      await service.update(42, 501, { homeTournamentTeamId: 63 });
+      expect(mockTx.matchPeriod.findFirst).not.toHaveBeenCalled();
+      expect(mockTx.matchRoster.findFirst).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.findFirst).not.toHaveBeenCalled();
+      expect(mockTx.matchTeam.updateMany).toHaveBeenCalledTimes(2);
     });
 
     it.each([
@@ -1019,26 +1132,22 @@ describe('MatchesService', () => {
       },
     );
 
-    it.each([MatchStatus.LIVE, MatchStatus.FINISHED, MatchStatus.CANCELLED])(
-      'rejects participants and group while %s',
-      async (status) => {
-        for (const patch of [
-          { homeTournamentTeamId: 63 },
-          { tournamentGroupId: null },
-        ]) {
-          jest.clearAllMocks();
-          arrangeUpdate({ status });
-          const error = await captureApiException(
-            service.update(42, 501, patch),
-          );
-          expect(apiError(error)).toEqual({
-            code: 'INVALID_STATUS_TRANSITION',
-            message:
-              'Participants and tournamentGroupId can only be changed for scheduled or postponed matches.',
-          });
-        }
-      },
-    );
+    it.each(
+      [MatchStatus.LIVE, MatchStatus.FINISHED, MatchStatus.CANCELLED].flatMap(
+        (status) =>
+          [{ homeTournamentTeamId: 63 }, { tournamentGroupId: null }].map(
+            (patch) => ({ status, patch }),
+          ),
+      ),
+    )('rejects $patch while $status', async ({ status, patch }) => {
+      arrangeUpdate({ status });
+      const error = await captureApiException(service.update(42, 501, patch));
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_STATUS_TRANSITION',
+        message:
+          'Participants and tournamentGroupId can only be changed for scheduled or postponed matches.',
+      });
+    });
 
     it('reschedules POSTPONED when the scheduledAt key is present even unchanged', async () => {
       arrangeUpdate({ status: MatchStatus.POSTPONED });
@@ -1379,7 +1488,16 @@ describe('MatchesService', () => {
   });
 
   describe('status actions', () => {
-    const actionCases = [
+    type ActionCase = {
+      name: string;
+      invoke: (target: MatchesService) => Promise<MatchDetailResponseDto>;
+      allowed: MatchStatus[];
+      rejected: MatchStatus[];
+      next: MatchStatus;
+      message: string;
+    };
+
+    const actionCases: ActionCase[] = [
       {
         name: 'postpone',
         invoke: (target: MatchesService) => target.postpone(42, 501),
@@ -1404,51 +1522,69 @@ describe('MatchesService', () => {
         next: MatchStatus.CANCELLED,
         message: 'Only a scheduled, live, or postponed match can be cancelled.',
       },
-    ] as const;
+    ];
 
     it.each(
       actionCases.flatMap((action) =>
         action.allowed.map((status) => ({ action, status })),
       ),
-    )('$action.name transitions $status', async ({ action, status }) => {
-      mockPrisma.match.findFirst
-        .mockResolvedValueOnce({ ...updateTargetRow, status })
-        .mockResolvedValueOnce({ ...detailRow, status: action.next });
-      mockPrisma.match.updateMany.mockResolvedValue({ count: 1 });
-      const result = await action.invoke(service);
-      expect(mockPrisma.match.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: 501,
-          organizationId: 42,
-          isDeleted: false,
-          status: { in: action.allowed },
-        },
-        data: { status: action.next },
-      });
-      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
-      expect(
-        mockPrisma.tournamentBracketSlot.updateMany,
-      ).not.toHaveBeenCalled();
-      expect(result.status).toBe(action.next);
-    });
+    )(
+      '$action.name transitions $status',
+      async ({
+        action,
+        status,
+      }: {
+        action: ActionCase;
+        status: MatchStatus;
+      }) => {
+        mockPrisma.match.findFirst
+          .mockResolvedValueOnce({ ...updateTargetRow, status })
+          .mockResolvedValueOnce({ ...detailRow, status: action.next });
+        mockPrisma.match.updateMany.mockResolvedValue({ count: 1 });
+        const result = await action.invoke(service);
+        expect(mockPrisma.match.updateMany).toHaveBeenCalledWith({
+          where: {
+            id: 501,
+            organizationId: 42,
+            isDeleted: false,
+            status: { in: action.allowed },
+          },
+          data: { status: action.next },
+        });
+        expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+        expect(
+          mockPrisma.tournamentBracketSlot.updateMany,
+        ).not.toHaveBeenCalled();
+        expect(result.status).toBe(action.next);
+      },
+    );
 
     it.each(
       actionCases.flatMap((action) =>
         action.rejected.map((status) => ({ action, status })),
       ),
-    )('$action.name rejects $status', async ({ action, status }) => {
-      mockPrisma.match.findFirst.mockResolvedValue({
-        ...updateTargetRow,
+    )(
+      '$action.name rejects $status',
+      async ({
+        action,
         status,
-      });
-      const error = await captureApiException(action.invoke(service));
-      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
-      expect(apiError(error)).toEqual({
-        code: 'INVALID_STATUS_TRANSITION',
-        message: action.message,
-      });
-      expect(mockPrisma.match.updateMany).not.toHaveBeenCalled();
-    });
+      }: {
+        action: ActionCase;
+        status: MatchStatus;
+      }) => {
+        mockPrisma.match.findFirst.mockResolvedValue({
+          ...updateTargetRow,
+          status,
+        });
+        const error = await captureApiException(action.invoke(service));
+        expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+        expect(apiError(error)).toEqual({
+          code: 'INVALID_STATUS_TRANSITION',
+          message: action.message,
+        });
+        expect(mockPrisma.match.updateMany).not.toHaveBeenCalled();
+      },
+    );
 
     it.each(actionCases)(
       '$name is not idempotent after a conditional-write race',

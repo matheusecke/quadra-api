@@ -36,8 +36,10 @@ Prisma write. Participant ids are `TournamentTeam.id` registrations.
 
 `PATCH /matches/:id` accepts the same fields except immutable `tournamentId`;
 every field is optional. An empty object is a 200 no-op. Nullable group,
-number, and venue values clear those fields. Sending `scheduledAt` for a
-POSTPONED match sets it back to SCHEDULED even when the timestamp is unchanged.
+number, and venue values clear those fields; `scheduledAt` and both participant
+ids reject an explicit `null` with `400 VALIDATION_ERROR`. Sending `scheduledAt`
+for a POSTPONED match sets it back to SCHEDULED even when the timestamp is
+unchanged.
 
 | Status    | Schedule                 | Number/venue | Participants/group              |
 | --------- | ------------------------ | ------------ | ------------------------------- |
@@ -70,7 +72,10 @@ Lists return summary items. Detail and every write add `periods`,
 `TournamentTeam.displayNameSnapshot`. Result fields and `scoreSource` are null
 until FINISHED. `scoreSource` is AWARDED for FORFEIT and for DEFAULT when final
 scores differ from active period sums; otherwise a finished match uses PERIODS.
-Phase 8 reads result relations but never writes them.
+A FINISHED forfeit reads as `periods: []`, `playerStats: []`, and `mvp: null`;
+that masking applies only while the match is FINISHED, so a reopened match still
+exposes its stored scoresheet. Phase 8 reads result relations but never writes
+them.
 
 ## Domain errors
 
