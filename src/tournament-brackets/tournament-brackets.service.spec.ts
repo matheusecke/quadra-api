@@ -9,8 +9,10 @@ import {
   TournamentStatus,
   TournamentTeamStatus,
 } from '@prisma/client';
+import { plainToInstance } from 'class-transformer';
 import { ApiException } from '../common/exceptions/api.exception';
 import { PrismaService } from '../prisma/prisma.service';
+import { UpdateTournamentBracketSlotDto } from './dto/update-tournament-bracket-slot.dto';
 import {
   TournamentBracketsService,
   bracketReadSelect,
@@ -1656,6 +1658,42 @@ describe('TournamentBracketsService', () => {
 
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
       expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalled();
+    });
+
+    it('keeps a real metadata-only DTO instance on the CAS path', async () => {
+      arrangeSlotTarget();
+      mockPrisma.tournamentBracketSlot.findFirst.mockResolvedValueOnce({
+        ...slotRow,
+        label: 'Final',
+      });
+      mockPrisma.tournamentBracketSlot.updateMany.mockResolvedValue({
+        count: 1,
+      });
+
+      await service.updateSlot(
+        42,
+        101,
+        plainToInstance(UpdateTournamentBracketSlotDto, { label: 'Final' }),
+      );
+
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentBracketSlot.updateMany).toHaveBeenCalled();
+    });
+
+    it('writes nothing for a real empty DTO instance', async () => {
+      arrangeSlotTarget();
+
+      await service.updateSlot(
+        42,
+        101,
+        plainToInstance(UpdateTournamentBracketSlotDto, {}),
+      );
+
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(
+        mockPrisma.tournamentBracketSlot.updateMany,
+      ).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
     });
 
     it('rejects a linked slot mismatch inside the transaction before writing', async () => {

@@ -279,8 +279,12 @@ export class TournamentBracketsService {
     id: number,
     dto: UpdateTournamentBracketSlotDto,
   ): Promise<TournamentBracketSlotResponseDto> {
+    // NOTE: key presence cannot be used here — declared-but-unsent DTO fields
+    // materialize as own properties under this tsconfig, which would route
+    // every metadata-only patch through the serializable path.
     const changesParticipants =
-      'homeTournamentTeamId' in dto || 'awayTournamentTeamId' in dto;
+      dto.homeTournamentTeamId !== undefined ||
+      dto.awayTournamentTeamId !== undefined;
     if (changesParticipants) {
       return this.runSerializable((tx) =>
         this.updateSlotTransaction(tx, organizationId, id, dto),
