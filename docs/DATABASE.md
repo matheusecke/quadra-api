@@ -37,7 +37,7 @@ This document is the source of truth for database naming, Prisma mapping, and mi
 
 ## Sports Domain Tables
 
-Added by the `sports_module_schema` migration. `Season`, `TournamentCategory` and `Tournament` now have an application module; the rest are physically present and reflected in Prisma Client, with services/controllers arriving in a later phase.
+Added by the `sports_module_schema` migration. `Season`, `TournamentCategory` and `Tournament` now have an application module. `Match` and `MatchTeam` now have application ownership in `MatchesModule` for scheduling and lifecycle actions. `MatchPeriod`, `MatchRoster`, and `PlayerMatchStatistic` are selected into the detail read model, but Phase 8 does not write them. The schema and migrations are unchanged by Phase 8.
 
 | Prisma model | Database table | Purpose |
 | --- | --- | --- |
@@ -55,11 +55,6 @@ Added by the `sports_module_schema` migration. `Season`, `TournamentCategory` an
 | `MatchPeriod` | `match_periods` | Per-period score |
 | `MatchRoster` | `match_rosters` | Who was dressed for a match (distinct from tournament roster) |
 | `PlayerMatchStatistic` | `player_match_statistics` | Box score per athlete per match (source of truth) |
-
-`Match` and `MatchTeam` now have application ownership in `MatchesModule` for
-scheduling and lifecycle actions. `MatchPeriod`, `MatchRoster`, and
-`PlayerMatchStatistic` are selected into the detail read model, but Phase 8
-does not write them. The schema and migrations are unchanged by Phase 8.
 
 **No `@unique`/`@@unique` on any sports model.** Every uniqueness rule in this domain is a partial unique index (soft-delete aware, sometimes also status/null aware), so none is expressible in the Prisma schema — they all live in the `sports_module_constraints` migration and are declared in the models only as DB-only comment blocks. Consequence for the next phase: `findUnique` is unavailable on those keys; use `findFirst` with an `isDeleted: false` filter and translate `P2002`.
 
