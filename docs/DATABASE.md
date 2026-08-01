@@ -37,7 +37,7 @@ This document is the source of truth for database naming, Prisma mapping, and mi
 
 ## Sports Domain Tables
 
-Added by the `sports_module_schema` migration. `Season`, `TournamentCategory` and `Tournament` now have an application module; the rest are physically present and reflected in Prisma Client, with services/controllers arriving in a later phase.
+Added by the `sports_module_schema` migration. `Season`, `TournamentCategory` and `Tournament` now have an application module. `Match` and `MatchTeam` now have application ownership in `MatchesModule` for scheduling and lifecycle actions. `MatchPeriod`, `MatchRoster`, and `PlayerMatchStatistic` are selected into the detail read model, but Phase 8 does not write them. The schema and migrations are unchanged by Phase 8.
 
 | Prisma model | Database table | Purpose |
 | --- | --- | --- |

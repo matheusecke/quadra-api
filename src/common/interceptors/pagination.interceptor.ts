@@ -40,7 +40,9 @@ export class PaginationInterceptor<T> implements NestInterceptor<
         const meta = new PaginationMeta(count, limit, page);
         const baseUrl = `${request.protocol}://${request.get('host')}${request.path}`;
 
-        const rawQuery = request.query as Record<string, string>;
+        const queryIndex = request.originalUrl.indexOf('?');
+        const rawQuery =
+          queryIndex === -1 ? '' : request.originalUrl.slice(queryIndex + 1);
         const buildLink = (targetPage: number): string => {
           const params = new URLSearchParams(rawQuery);
           params.set('page', String(targetPage));

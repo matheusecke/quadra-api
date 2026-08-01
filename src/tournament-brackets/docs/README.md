@@ -76,13 +76,20 @@ missing, deleted, and cross-tenant targets return `404`.
   the partial unique index on `matchId`; the loser's write fails with Prisma
   `P2002`, which is mapped to the same `MATCH_ALREADY_LINKED` response as the
   pre-check.
+
+  Link validation and the slot write run in a Serializable transaction. Prisma
+  `P2034` serialization conflicts retry up to three times after the first
+  attempt; a fourth conflict returns `CONCURRENT_MODIFICATION`. Every retry
+  re-reads the slot, match, current link, and participant pair.
+
 - When the slot has **both** participants set, the match's active `match_teams`
   must be exactly those two registrations, compared as an unordered set;
   otherwise `MATCH_TEAMS_MISMATCH`. A bye slot or an undecided slot links with
   no check, and nothing is ever auto-filled from the match.
-- The same check runs on `PATCH /tournament-bracket-slots/:id` whenever the
-  resulting slot has both participants and a linked match, so the consistency
-  cannot be defeated by patching after linking.
+- The same unordered-pair check runs on
+  `PATCH /tournament-bracket-slots/:id`. A patch containing either participant
+  key uses the same Serializable retry path as match linking; position/label-only
+  patches retain the existing bounded compare-and-set path.
 - `DELETE /link-match` runs in a transaction and returns `204`. It only
   cancels the linked match if it is still `SCHEDULED`, `LIVE`, or `POSTPONED`,
   using a compare-and-set write; a `FINISHED` match cannot be unlinked

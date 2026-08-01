@@ -14,14 +14,14 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 
 ## Implemented today (snapshot)
 
-- NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`, `SeasonsModule`, `TournamentCategoriesModule`, `TournamentsModule`, `AthletesModule`, `TournamentTeamsModule`, `TournamentRostersModule`, `TournamentGroupsModule`, `TournamentBracketsModule` (`src/app.module.ts`).
+- NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`, `SeasonsModule`, `TournamentCategoriesModule`, `TournamentsModule`, `AthletesModule`, `TournamentTeamsModule`, `TournamentRostersModule`, `TournamentGroupsModule`, `TournamentBracketsModule`, `MatchesModule` (`src/app.module.ts`).
 - Bootstrap: `ValidationPipe`, global exception filters, `cookie-parser`, CORS with credentials, Swagger at `/api`, port `3001` by default (`src/main.ts`).
 - Prisma multi-file schema under `prisma/schema/` covering multi-tenant core + auth persistence: `User`, `Organization`, `Team`, `OrganizationUserAffiliation`, `OrganizationTeamAffiliation`, `RefreshToken`.
-- Sports domain schema: `Season`, `TournamentCategory`, `Tournament`, `TournamentTeam`, `TournamentRoster`, `TournamentGroup`, `TournamentGroupTeam`, `TournamentBracketRound`, and `TournamentBracketSlot` now have application modules (CRUD, slug derivation, completion/reopen, champion suggestion, registration/roster lifecycle, group structure, and assignments); the remaining five models are tables only — no application module yet: `Match`, `MatchTeam`, `MatchPeriod`, `MatchRoster`, `PlayerMatchStatistic`. See [DATABASE.md](./DATABASE.md).
+- Sports domain schema: `Season`, `TournamentCategory`, `Tournament`, `TournamentTeam`, `TournamentRoster`, `TournamentGroup`, `TournamentGroupTeam`, `TournamentBracketRound`, and `TournamentBracketSlot` now have application modules (CRUD, slug derivation, completion/reopen, champion suggestion, registration/roster lifecycle, group structure, and assignments). `Match` and `MatchTeam` have scheduling/read ownership in `MatchesModule`; `MatchPeriod`, `MatchRoster`, and `PlayerMatchStatistic` are read by it but their writes remain unimplemented until Phase 9. See [DATABASE.md](./DATABASE.md).
 - Shared utilities:
   - `src/common/utils/slugify.ts` — slug generation used by `OrganizationsModule` and `TeamsModule`.
   - `src/common/utils/affiliation-token.util.ts` — invite token generation (`crypto.randomBytes(32)`) and SHA-256 hashing used by both affiliation modules.
-- **Derived, never persisted:** `isRegistrationOpen` and the tournament match counters (`TournamentsService`, implemented) — plus standings/classification (FIBA Appendix D) and the match read model, computed by query in a later phase, no columns.
+- **Derived, never persisted:** `isRegistrationOpen` and the tournament match counters (`TournamentsService`, implemented) — plus standings/classification (FIBA Appendix D), no columns.
 
 ## Document map (by concern)
 
@@ -53,6 +53,7 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 | Tournament Rosters             | [`src/tournament-rosters/docs/README.md`](../src/tournament-rosters/docs/README.md)                         | Roster membership, role/jersey, team-scoped writes, deactivation |
 | Tournament Groups              | [`src/tournament-groups/docs/README.md`](../src/tournament-groups/docs/README.md)                           | Group structure, ordering, assignments, and soft deletion        |
 | Tournament Brackets            | [`src/tournament-brackets/docs/README.md`](../src/tournament-brackets/docs/README.md)                       | Knockout rounds, slots, participants, composite bracket read     |
+| Matches                        | [`src/matches/docs/README.md`](../src/matches/docs/README.md)                                               | Scheduling, lifecycle actions, participants, result read model   |
 | Standings                      | [`src/standings/docs/README.md`](../src/standings/docs/README.md)                                           | FIBA classification, tiebreak criteria, recorded draws           |
 
 ## Conventions (high level)

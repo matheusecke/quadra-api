@@ -279,7 +279,86 @@ export class TournamentBracketsService {
     id: number,
     dto: UpdateTournamentBracketSlotDto,
   ): Promise<TournamentBracketSlotResponseDto> {
+    // NOTE: key presence cannot be used here — declared-but-unsent DTO fields
+    // materialize as own properties under this tsconfig, which would route
+    // every metadata-only patch through the serializable path.
+    const changesParticipants =
+      dto.homeTournamentTeamId !== undefined ||
+      dto.awayTournamentTeamId !== undefined;
+    if (changesParticipants) {
+      return this.runSerializable((tx) =>
+        this.updateSlotTransaction(tx, organizationId, id, dto),
+      );
+    }
     return this.updateSlotAttempt(organizationId, id, dto, true);
+  }
+
+  private async updateSlotTransaction(
+    tx: BracketTransactionClient,
+    organizationId: number,
+    id: number,
+    dto: UpdateTournamentBracketSlotDto,
+  ): Promise<TournamentBracketSlotResponseDto> {
+    const slot = await this.findSlotOrThrow(organizationId, id, tx);
+    this.assertMutable(slot.tournament.status);
+    this.assertKnockoutFormat(slot.tournament.format);
+    const homeId =
+      dto.homeTournamentTeamId !== undefined
+        ? dto.homeTournamentTeamId
+        : slot.homeTournamentTeamId;
+    const awayId =
+      dto.awayTournamentTeamId !== undefined
+        ? dto.awayTournamentTeamId
+        : slot.awayTournamentTeamId;
+    if (dto.position !== undefined) {
+      await this.assertSlotPositionAvailable(
+        organizationId,
+        slot.roundId,
+        dto.position,
+        id,
+        tx,
+      );
+    }
+    await this.assertParticipant(
+      organizationId,
+      slot.tournamentId,
+      dto.homeTournamentTeamId,
+      tx,
+    );
+    await this.assertParticipant(
+      organizationId,
+      slot.tournamentId,
+      dto.awayTournamentTeamId,
+      tx,
+    );
+    this.assertDistinctParticipants(homeId, awayId);
+    this.assertStoredWinnerStillParticipant(
+      slot.winnerTournamentTeamId,
+      homeId,
+      awayId,
+    );
+    if (slot.matchId !== null) {
+      const match = await this.findLinkedMatch(
+        organizationId,
+        slot.matchId,
+        tx,
+      );
+      if (match) this.assertMatchTeamsMatchSlot(homeId, awayId, match.teams);
+    }
+    const data: Prisma.TournamentBracketSlotUncheckedUpdateInput = {};
+    if (dto.position !== undefined) data.position = dto.position;
+    if (dto.label !== undefined) data.label = dto.label;
+    if (dto.homeTournamentTeamId !== undefined) {
+      data.homeTournamentTeamId = dto.homeTournamentTeamId;
+    }
+    if (dto.awayTournamentTeamId !== undefined) {
+      data.awayTournamentTeamId = dto.awayTournamentTeamId;
+    }
+    return tx.tournamentBracketSlot.update({
+      where: { id },
+      data,
+      select: tournamentBracketSlotSelect,
+    });
   }
 
   private async updateSlotAttempt(
@@ -432,12 +511,8 @@ export class TournamentBracketsService {
     dto: LinkBracketSlotMatchDto,
   ): Promise<TournamentBracketSlotResponseDto> {
     try {
-      // NOTE: the CAS retry depends on Read Committed — each statement
-      // re-snapshots, so the fresh read sees the winning commit. Under
-      // Serializable the write would abort with P2034 instead of missing,
-      // so that path needs retry-on-P2034, not this fresh-read retry.
-      return await this.prisma.$transaction((tx) =>
-        this.linkMatchAttempt(tx, organizationId, id, dto.matchId, true),
+      return await this.runSerializable((tx) =>
+        this.linkMatchTransaction(tx, organizationId, id, dto.matchId),
       );
     } catch (error) {
       if (this.isPrismaError(error, 'P2002')) {
@@ -450,12 +525,11 @@ export class TournamentBracketsService {
     }
   }
 
-  private async linkMatchAttempt(
+  private async linkMatchTransaction(
     tx: BracketTransactionClient,
     organizationId: number,
     id: number,
     matchId: number,
-    retryOnCasMiss: boolean,
   ): Promise<TournamentBracketSlotResponseDto> {
     const slot = await this.findSlotOrThrow(organizationId, id, tx);
     this.assertMutable(slot.tournament.status);
@@ -507,42 +581,11 @@ export class TournamentBracketsService {
       match.teams,
     );
 
-    const result = await tx.tournamentBracketSlot.updateMany({
-      where: {
-        id,
-        organizationId,
-        isDeleted: false,
-        matchId: null,
-        homeTournamentTeamId: slot.homeTournamentTeamId,
-        awayTournamentTeamId: slot.awayTournamentTeamId,
-        winnerTournamentTeamId: slot.winnerTournamentTeamId,
-        tournament: {
-          is: {
-            organizationId,
-            isDeleted: false,
-            status: slot.tournament.status,
-            format: slot.tournament.format,
-          },
-        },
-      },
+    return tx.tournamentBracketSlot.update({
+      where: { id },
       data: { matchId },
-    });
-
-    if (result.count === 0) {
-      if (retryOnCasMiss) {
-        return this.linkMatchAttempt(tx, organizationId, id, matchId, false);
-      }
-      throw this.concurrentModification();
-    }
-
-    const updated = await tx.tournamentBracketSlot.findFirst({
-      where: { id, organizationId, isDeleted: false },
       select: tournamentBracketSlotSelect,
     });
-    if (!updated) {
-      throw ApiException.notFound('Tournament bracket slot not found');
-    }
-    return updated;
   }
 
   async unlinkMatch(organizationId: number, id: number): Promise<void> {
@@ -854,8 +897,9 @@ export class TournamentBracketsService {
     roundId: number,
     position: number,
     exceptId?: number,
+    client: BracketTransactionClient = this.prisma,
   ): Promise<void> {
-    const duplicate = await this.prisma.tournamentBracketSlot.findFirst({
+    const duplicate = await client.tournamentBracketSlot.findFirst({
       where: {
         roundId,
         organizationId,
@@ -877,10 +921,11 @@ export class TournamentBracketsService {
     organizationId: number,
     tournamentId: number,
     tournamentTeamId: number | null | undefined,
+    client: BracketTransactionClient = this.prisma,
   ): Promise<void> {
     if (tournamentTeamId === undefined || tournamentTeamId === null) return;
 
-    const registration = await this.prisma.tournamentTeam.findFirst({
+    const registration = await client.tournamentTeam.findFirst({
       where: { id: tournamentTeamId, organizationId, isDeleted: false },
       select: { id: true, tournamentId: true, status: true },
     });
