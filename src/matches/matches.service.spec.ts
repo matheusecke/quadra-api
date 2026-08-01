@@ -239,6 +239,34 @@ describe('MatchesService', () => {
     service = module.get(MatchesService);
   });
 
+  function arrangeCreateReferences(
+    format: TournamentFormat = TournamentFormat.GROUP_STAGE,
+    status: TournamentStatus = TournamentStatus.REGISTRATION,
+  ): void {
+    mockPrisma.tournament.findFirst.mockResolvedValue({
+      id: 12,
+      format,
+      status,
+    });
+    mockPrisma.tournamentGroup.findFirst.mockResolvedValue({
+      id: 7,
+      tournamentId: 12,
+    });
+    mockPrisma.tournamentTeam.findFirst
+      .mockResolvedValueOnce({
+        id: 41,
+        tournamentId: 12,
+        status: TournamentTeamStatus.ACTIVE,
+      })
+      .mockResolvedValueOnce({
+        id: 52,
+        tournamentId: 12,
+        status: TournamentTeamStatus.ACTIVE,
+      });
+    mockPrisma.tournamentGroupTeam.findFirst.mockResolvedValue({ id: 801 });
+    mockPrisma.match.create.mockResolvedValue(detailRow);
+  }
+
   describe('reads', () => {
     it('combines tenant scope, filters, pagination, and ordering', async () => {
       mockPrisma.match.count.mockResolvedValue(1);
@@ -669,6 +697,253 @@ describe('MatchesService', () => {
         code: 'RECORD_NOT_FOUND',
         message: 'Match not found',
       });
+    });
+  });
+
+  describe('create', () => {
+    const dto = {
+      tournamentId: 12,
+      tournamentGroupId: 7,
+      matchNumber: 18,
+      scheduledAt: '2026-08-15T19:30:00.000Z',
+      venueName: 'Central Arena',
+      homeTournamentTeamId: 41,
+      awayTournamentTeamId: 52,
+    };
+
+    it('creates one scheduled match and two sides atomically', async () => {
+      arrangeCreateReferences();
+      await service.create(42, 7, dto);
+      expect(mockPrisma.match.create).toHaveBeenCalledWith({
+        data: {
+          organizationId: 42,
+          tournamentId: 12,
+          tournamentGroupId: 7,
+          matchNumber: 18,
+          scheduledAt,
+          venueName: 'Central Arena',
+          status: MatchStatus.SCHEDULED,
+          createdByUserId: 7,
+          teams: {
+            create: [
+              {
+                organizationId: 42,
+                tournamentTeamId: 41,
+                side: MatchSide.HOME,
+              },
+              {
+                organizationId: 42,
+                tournamentTeamId: 52,
+                side: MatchSide.AWAY,
+              },
+            ],
+          },
+        },
+        select: matchDetailSelect,
+      });
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      expect(mockPrisma.matchPeriod.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 before reference validation for a missing tournament', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(null);
+      const error = await captureApiException(service.create(42, 7, dto));
+      expect(apiError(error)).toEqual({
+        code: 'RECORD_NOT_FOUND',
+        message: 'Tournament not found',
+      });
+      expect(mockPrisma.tournamentGroup.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentTeam.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('persists omitted nullable fields as null', async () => {
+      arrangeCreateReferences(TournamentFormat.LEAGUE);
+      await service.create(42, 7, {
+        tournamentId: 12,
+        scheduledAt: dto.scheduledAt,
+        homeTournamentTeamId: 41,
+        awayTournamentTeamId: 52,
+      });
+      expect(mockPrisma.match.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            tournamentGroupId: null,
+            matchNumber: null,
+            venueName: null,
+          }),
+        }),
+      );
+    });
+
+    it.each([
+      TournamentStatus.DRAFT,
+      TournamentStatus.REGISTRATION,
+      TournamentStatus.IN_PROGRESS,
+    ])('creates while the tournament is %s', async (status) => {
+      arrangeCreateReferences(TournamentFormat.GROUP_STAGE, status);
+      await expect(service.create(42, 7, dto)).resolves.toBeDefined();
+    });
+
+    it.each([TournamentStatus.COMPLETED, TournamentStatus.CANCELLED])(
+      'rejects creation while the tournament is %s',
+      async (status) => {
+        arrangeCreateReferences(TournamentFormat.GROUP_STAGE, status);
+        const error = await captureApiException(service.create(42, 7, dto));
+        expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+        expect(apiError(error)).toEqual({
+          code: 'TOURNAMENT_NOT_MUTABLE',
+          message:
+            'Matches cannot be created for a completed or cancelled tournament.',
+        });
+        expect(mockPrisma.match.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([TournamentFormat.LEAGUE, TournamentFormat.KNOCKOUT])(
+      'rejects a group for %s',
+      async (format) => {
+        arrangeCreateReferences(format);
+        const error = await captureApiException(service.create(42, 7, dto));
+        expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+        expect(apiError(error)).toEqual({
+          code: 'INVALID_TOURNAMENT_FORMAT',
+          message: 'This tournament format does not have a group stage.',
+        });
+        expect(mockPrisma.tournamentGroup.findFirst).not.toHaveBeenCalled();
+      },
+    );
+
+    it('returns 404 for a missing or cross-tenant group', async () => {
+      arrangeCreateReferences();
+      mockPrisma.tournamentGroup.findFirst.mockResolvedValue(null);
+      const error = await captureApiException(service.create(42, 7, dto));
+      expect(apiError(error)).toEqual({
+        code: 'RECORD_NOT_FOUND',
+        message: 'Tournament group not found',
+      });
+    });
+
+    it('rejects a group from another tournament', async () => {
+      arrangeCreateReferences();
+      mockPrisma.tournamentGroup.findFirst.mockResolvedValue({
+        id: 7,
+        tournamentId: 99,
+      });
+      const error = await captureApiException(service.create(42, 7, dto));
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_GROUP_ASSIGNMENT',
+        message: 'The tournament group must belong to the match tournament.',
+      });
+    });
+
+    it.each([
+      [
+        'home',
+        null,
+        { id: 52, tournamentId: 12, status: TournamentTeamStatus.ACTIVE },
+      ],
+      [
+        'away',
+        { id: 41, tournamentId: 12, status: TournamentTeamStatus.ACTIVE },
+        null,
+      ],
+    ])(
+      'returns 404 for a missing or cross-tenant %s registration',
+      async (_side, home, away) => {
+        arrangeCreateReferences();
+        mockPrisma.tournamentTeam.findFirst
+          .mockReset()
+          .mockResolvedValueOnce(home)
+          .mockResolvedValueOnce(away);
+        const error = await captureApiException(service.create(42, 7, dto));
+        expect(apiError(error)).toEqual({
+          code: 'RECORD_NOT_FOUND',
+          message: 'Tournament team not found',
+        });
+      },
+    );
+
+    it('rejects a withdrawn registration', async () => {
+      arrangeCreateReferences();
+      mockPrisma.tournamentTeam.findFirst.mockReset().mockResolvedValueOnce({
+        id: 41,
+        tournamentId: 12,
+        status: TournamentTeamStatus.WITHDRAWN,
+      });
+      const error = await captureApiException(service.create(42, 7, dto));
+      expect(apiError(error)).toEqual({
+        code: 'INACTIVE_REGISTRATION',
+        message: 'The tournament team registration is not active.',
+      });
+    });
+
+    it('rejects a registration from another tournament', async () => {
+      arrangeCreateReferences();
+      mockPrisma.tournamentTeam.findFirst.mockReset().mockResolvedValueOnce({
+        id: 41,
+        tournamentId: 99,
+        status: TournamentTeamStatus.ACTIVE,
+      });
+      const error = await captureApiException(service.create(42, 7, dto));
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_MATCH_ASSIGNMENT',
+        message:
+          'The tournament team registration must belong to the match tournament.',
+      });
+    });
+
+    it('rejects identical registrations after validating both references', async () => {
+      arrangeCreateReferences();
+      const error = await captureApiException(
+        service.create(42, 7, {
+          ...dto,
+          awayTournamentTeamId: 41,
+        }),
+      );
+      expect(mockPrisma.tournamentTeam.findFirst).toHaveBeenCalledTimes(2);
+      expect(apiError(error)).toEqual({
+        code: 'SAME_TEAM_IN_MATCH',
+        message: 'A match cannot have the same team on both sides.',
+      });
+    });
+
+    it('requires both memberships for a non-null group', async () => {
+      arrangeCreateReferences();
+      mockPrisma.tournamentGroupTeam.findFirst
+        .mockResolvedValueOnce({ id: 801 })
+        .mockResolvedValueOnce(null);
+      const error = await captureApiException(service.create(42, 7, dto));
+      expect(mockPrisma.tournamentGroupTeam.findFirst).toHaveBeenNthCalledWith(
+        2,
+        {
+          where: {
+            organizationId: 42,
+            tournamentId: 12,
+            tournamentGroupId: 7,
+            tournamentTeamId: 52,
+            isDeleted: false,
+          },
+          select: { id: true },
+        },
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_GROUP_ASSIGNMENT',
+        message:
+          'Both match participants must belong to the selected tournament group.',
+      });
+    });
+
+    it.each([
+      TournamentFormat.LEAGUE,
+      TournamentFormat.GROUP_STAGE,
+      TournamentFormat.KNOCKOUT,
+      TournamentFormat.GROUP_STAGE_KNOCKOUT,
+    ])('accepts an unscoped match for %s', async (format) => {
+      arrangeCreateReferences(format);
+      await service.create(42, 7, { ...dto, tournamentGroupId: null });
+      expect(mockPrisma.tournamentGroup.findFirst).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentGroupTeam.findFirst).not.toHaveBeenCalled();
     });
   });
 });

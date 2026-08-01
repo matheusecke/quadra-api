@@ -14,6 +14,7 @@ import {
   ListMatchesQueryDto,
   ListTournamentMatchesQueryDto,
 } from './dto/list-matches-query.dto';
+import { CreateMatchDto } from './dto/create-match.dto';
 import {
   MatchDetailResponseDto,
   MatchScoreSource,
@@ -412,5 +413,187 @@ export class MatchesService {
       }
     }
     return 'PERIODS';
+  }
+
+  async create(
+    organizationId: number,
+    userId: number,
+    dto: CreateMatchDto,
+  ): Promise<MatchDetailResponseDto> {
+    const tournament = await this.findTournamentOrThrow(
+      organizationId,
+      dto.tournamentId,
+    );
+    this.assertTournamentAcceptsMatches(tournament.status);
+    await this.validateGroup(
+      this.prisma,
+      organizationId,
+      tournament.id,
+      tournament.format,
+      dto.tournamentGroupId ?? null,
+    );
+    await this.validateParticipant(
+      this.prisma,
+      organizationId,
+      tournament.id,
+      dto.homeTournamentTeamId,
+    );
+    await this.validateParticipant(
+      this.prisma,
+      organizationId,
+      tournament.id,
+      dto.awayTournamentTeamId,
+    );
+    this.assertDistinctParticipants(
+      dto.homeTournamentTeamId,
+      dto.awayTournamentTeamId,
+    );
+    await this.assertGroupMemberships(
+      this.prisma,
+      organizationId,
+      tournament.id,
+      dto.tournamentGroupId ?? null,
+      dto.homeTournamentTeamId,
+      dto.awayTournamentTeamId,
+    );
+
+    const row = await this.prisma.match.create({
+      data: {
+        organizationId,
+        tournamentId: dto.tournamentId,
+        tournamentGroupId: dto.tournamentGroupId ?? null,
+        matchNumber: dto.matchNumber ?? null,
+        scheduledAt: new Date(dto.scheduledAt),
+        venueName: dto.venueName ?? null,
+        status: MatchStatus.SCHEDULED,
+        createdByUserId: userId,
+        teams: {
+          create: [
+            {
+              organizationId,
+              tournamentTeamId: dto.homeTournamentTeamId,
+              side: MatchSide.HOME,
+            },
+            {
+              organizationId,
+              tournamentTeamId: dto.awayTournamentTeamId,
+              side: MatchSide.AWAY,
+            },
+          ],
+        },
+      },
+      select: matchDetailSelect,
+    });
+    return this.toDetail(row);
+  }
+
+  private assertTournamentAcceptsMatches(status: TournamentStatus): void {
+    if (
+      status === TournamentStatus.COMPLETED ||
+      status === TournamentStatus.CANCELLED
+    ) {
+      throw ApiException.conflict(
+        'Matches cannot be created for a completed or cancelled tournament.',
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+    }
+  }
+
+  private async validateGroup(
+    client: MatchClient,
+    organizationId: number,
+    tournamentId: number,
+    format: TournamentFormat,
+    tournamentGroupId: number | null,
+  ): Promise<void> {
+    if (tournamentGroupId === null) return;
+    if (
+      format !== TournamentFormat.GROUP_STAGE &&
+      format !== TournamentFormat.GROUP_STAGE_KNOCKOUT
+    ) {
+      throw ApiException.unprocessable(
+        'This tournament format does not have a group stage.',
+        'INVALID_TOURNAMENT_FORMAT',
+      );
+    }
+    const group = await client.tournamentGroup.findFirst({
+      where: { id: tournamentGroupId, organizationId, isDeleted: false },
+      select: { id: true, tournamentId: true },
+    });
+    if (!group) throw ApiException.notFound('Tournament group not found');
+    if (group.tournamentId !== tournamentId) {
+      throw ApiException.unprocessable(
+        'The tournament group must belong to the match tournament.',
+        'INVALID_GROUP_ASSIGNMENT',
+      );
+    }
+  }
+
+  private async validateParticipant(
+    client: MatchClient,
+    organizationId: number,
+    tournamentId: number,
+    tournamentTeamId: number,
+  ): Promise<void> {
+    const registration = await client.tournamentTeam.findFirst({
+      where: { id: tournamentTeamId, organizationId, isDeleted: false },
+      select: { id: true, tournamentId: true, status: true },
+    });
+    if (!registration) {
+      throw ApiException.notFound('Tournament team not found');
+    }
+    if (registration.status !== TournamentTeamStatus.ACTIVE) {
+      throw ApiException.unprocessable(
+        'The tournament team registration is not active.',
+        'INACTIVE_REGISTRATION',
+      );
+    }
+    if (registration.tournamentId !== tournamentId) {
+      throw ApiException.unprocessable(
+        'The tournament team registration must belong to the match tournament.',
+        'INVALID_MATCH_ASSIGNMENT',
+      );
+    }
+  }
+
+  private assertDistinctParticipants(homeId: number, awayId: number): void {
+    if (homeId === awayId) {
+      throw ApiException.unprocessable(
+        'A match cannot have the same team on both sides.',
+        'SAME_TEAM_IN_MATCH',
+      );
+    }
+  }
+
+  private async assertGroupMemberships(
+    client: MatchClient,
+    organizationId: number,
+    tournamentId: number,
+    tournamentGroupId: number | null,
+    homeId: number,
+    awayId: number,
+  ): Promise<void> {
+    if (tournamentGroupId === null) return;
+    const membershipWhere = (tournamentTeamId: number) => ({
+      organizationId,
+      tournamentId,
+      tournamentGroupId,
+      tournamentTeamId,
+      isDeleted: false,
+    });
+    const home = await client.tournamentGroupTeam.findFirst({
+      where: membershipWhere(homeId),
+      select: { id: true },
+    });
+    const away = await client.tournamentGroupTeam.findFirst({
+      where: membershipWhere(awayId),
+      select: { id: true },
+    });
+    if (!home || !away) {
+      throw ApiException.unprocessable(
+        'Both match participants must belong to the selected tournament group.',
+        'INVALID_GROUP_ASSIGNMENT',
+      );
+    }
   }
 }
