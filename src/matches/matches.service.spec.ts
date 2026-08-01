@@ -1377,4 +1377,133 @@ describe('MatchesService', () => {
       });
     });
   });
+
+  describe('status actions', () => {
+    const actionCases = [
+      {
+        name: 'postpone',
+        invoke: (target: MatchesService) => target.postpone(42, 501),
+        allowed: [MatchStatus.SCHEDULED, MatchStatus.LIVE],
+        rejected: [
+          MatchStatus.POSTPONED,
+          MatchStatus.FINISHED,
+          MatchStatus.CANCELLED,
+        ],
+        next: MatchStatus.POSTPONED,
+        message: 'Only a scheduled or live match can be postponed.',
+      },
+      {
+        name: 'cancel',
+        invoke: (target: MatchesService) => target.cancel(42, 501),
+        allowed: [
+          MatchStatus.SCHEDULED,
+          MatchStatus.LIVE,
+          MatchStatus.POSTPONED,
+        ],
+        rejected: [MatchStatus.FINISHED, MatchStatus.CANCELLED],
+        next: MatchStatus.CANCELLED,
+        message: 'Only a scheduled, live, or postponed match can be cancelled.',
+      },
+    ] as const;
+
+    it.each(
+      actionCases.flatMap((action) =>
+        action.allowed.map((status) => ({ action, status })),
+      ),
+    )('$action.name transitions $status', async ({ action, status }) => {
+      mockPrisma.match.findFirst
+        .mockResolvedValueOnce({ ...updateTargetRow, status })
+        .mockResolvedValueOnce({ ...detailRow, status: action.next });
+      mockPrisma.match.updateMany.mockResolvedValue({ count: 1 });
+      const result = await action.invoke(service);
+      expect(mockPrisma.match.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 501,
+          organizationId: 42,
+          isDeleted: false,
+          status: { in: action.allowed },
+        },
+        data: { status: action.next },
+      });
+      expect(mockPrisma.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      expect(
+        mockPrisma.tournamentBracketSlot.updateMany,
+      ).not.toHaveBeenCalled();
+      expect(result.status).toBe(action.next);
+    });
+
+    it.each(
+      actionCases.flatMap((action) =>
+        action.rejected.map((status) => ({ action, status })),
+      ),
+    )('$action.name rejects $status', async ({ action, status }) => {
+      mockPrisma.match.findFirst.mockResolvedValue({
+        ...updateTargetRow,
+        status,
+      });
+      const error = await captureApiException(action.invoke(service));
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_STATUS_TRANSITION',
+        message: action.message,
+      });
+      expect(mockPrisma.match.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each(actionCases)(
+      '$name is not idempotent after a conditional-write race',
+      async (action) => {
+        mockPrisma.match.findFirst
+          .mockResolvedValueOnce({
+            ...updateTargetRow,
+            status: action.allowed[0],
+          })
+          .mockResolvedValueOnce({
+            ...updateTargetRow,
+            status: action.next,
+          });
+        mockPrisma.match.updateMany.mockResolvedValue({ count: 0 });
+        const error = await captureApiException(action.invoke(service));
+        expect(apiError(error)).toEqual({
+          code: 'INVALID_STATUS_TRANSITION',
+          message: action.message,
+        });
+      },
+    );
+
+    it.each(actionCases)(
+      '$name returns 404 before writing for a missing match',
+      async (action) => {
+        mockPrisma.match.findFirst.mockResolvedValue(null);
+        const error = await captureApiException(action.invoke(service));
+        expect(apiError(error)).toEqual({
+          code: 'RECORD_NOT_FOUND',
+          message: 'Match not found',
+        });
+        expect(mockPrisma.match.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(actionCases)(
+      '$name reports a still-allowed zero-count race as concurrent modification',
+      async (action) => {
+        mockPrisma.match.findFirst
+          .mockResolvedValueOnce({
+            ...updateTargetRow,
+            status: action.allowed[0],
+          })
+          .mockResolvedValueOnce({
+            ...updateTargetRow,
+            status: action.allowed[0],
+          });
+        mockPrisma.match.updateMany.mockResolvedValue({ count: 0 });
+        const error = await captureApiException(action.invoke(service));
+        expect(apiError(error)).toEqual({
+          code: 'CONCURRENT_MODIFICATION',
+          message:
+            'The resource changed during this operation. Retry the request.',
+        });
+      },
+    );
+  });
 });

@@ -851,4 +851,65 @@ export class MatchesService {
       'CONCURRENT_MODIFICATION',
     );
   }
+
+  postpone(
+    organizationId: number,
+    id: number,
+  ): Promise<MatchDetailResponseDto> {
+    return this.transitionStatus(
+      organizationId,
+      id,
+      [MatchStatus.SCHEDULED, MatchStatus.LIVE],
+      MatchStatus.POSTPONED,
+      'Only a scheduled or live match can be postponed.',
+    );
+  }
+
+  cancel(organizationId: number, id: number): Promise<MatchDetailResponseDto> {
+    return this.transitionStatus(
+      organizationId,
+      id,
+      [MatchStatus.SCHEDULED, MatchStatus.LIVE, MatchStatus.POSTPONED],
+      MatchStatus.CANCELLED,
+      'Only a scheduled, live, or postponed match can be cancelled.',
+    );
+  }
+
+  private async transitionStatus(
+    organizationId: number,
+    id: number,
+    allowed: MatchStatus[],
+    next: MatchStatus,
+    message: string,
+  ): Promise<MatchDetailResponseDto> {
+    const current = await this.findUpdateTargetOrThrow(
+      this.prisma,
+      organizationId,
+      id,
+    );
+    if (!allowed.includes(current.status)) {
+      throw ApiException.conflict(message, 'INVALID_STATUS_TRANSITION');
+    }
+    const result = await this.prisma.match.updateMany({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        status: { in: allowed },
+      },
+      data: { status: next },
+    });
+    if (result.count === 0) {
+      const fresh = await this.findUpdateTargetOrThrow(
+        this.prisma,
+        organizationId,
+        id,
+      );
+      if (!allowed.includes(fresh.status)) {
+        throw ApiException.conflict(message, 'INVALID_STATUS_TRANSITION');
+      }
+      throw this.concurrentModification();
+    }
+    return this.findOne(organizationId, id);
+  }
 }
