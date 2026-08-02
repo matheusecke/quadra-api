@@ -1,4 +1,4 @@
-import { HttpStatus, Logger } from '@nestjs/common';
+import { HttpStatus, Logger, ValidationPipe } from '@nestjs/common';
 import { expect, jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
 import {
@@ -18,10 +18,10 @@ import {
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ApiException } from '../common/exceptions/api.exception';
+import { validationExceptionFactory } from '../common/pipes/validation.factory';
 import { PrismaService } from '../prisma/prisma.service';
 import type { MatchDetailResponseDto } from './dto/match-response.dto';
 import {
-  MatchPeriodInputDto,
   MatchPlayerStatisticInputDto,
   SaveMatchDraftDto,
   SubmitMatchResultDto,
@@ -2401,10 +2401,28 @@ describe('MatchesService', () => {
       expect(dto.mvpTournamentRosterId).toBe(88);
     });
 
-    it('constructs every scoresheet request class', () => {
-      expect(new MatchPeriodInputDto()).toBeDefined();
-      expect(new SaveMatchDraftDto()).toBeDefined();
-      expect(new SubmitMatchResultDto()).toBeDefined();
+    it('rejects a body carrying derived result fields at the HTTP boundary', async () => {
+      const pipe = new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        exceptionFactory: validationExceptionFactory,
+      });
+      const error = await captureApiException(
+        pipe.transform(
+          {
+            periods: [],
+            playerStats: [],
+            finalScore: 99,
+            isWinner: true,
+            scoreSource: 'PERIODS',
+            lossType: 'NORMAL',
+            result: 'WIN',
+          },
+          { type: 'body', metatype: SaveMatchDraftDto },
+        ),
+      );
+      expect(apiError(error).code).toBe('VALIDATION_ERROR');
     });
   });
 
