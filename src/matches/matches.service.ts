@@ -454,8 +454,8 @@ export class MatchesService {
   }
 
   private toDetail(row: MatchDetailRow): MatchDetailResponseDto {
-    // NOTE: gated on FINISHED so a Phase 9 reopen, which leaves the previous
-    // loss type in place, cannot hide the scoresheet of a live match.
+    // NOTE: only a FINISHED forfeit masks scoresheet rows. Reopen changes the
+    // lifecycle to LIVE and must expose every preserved raw fact.
     const isForfeit =
       row.status === MatchStatus.FINISHED &&
       row.teams.some((team) => team.lossType === LossType.FORFEIT);
@@ -745,6 +745,16 @@ export class MatchesService {
     return this.findOne(organizationId, id);
   }
 
+  async reopen(
+    organizationId: number,
+    id: number,
+  ): Promise<MatchDetailResponseDto> {
+    await this.runSerializable((tx) =>
+      this.reopenMatch(tx, organizationId, id),
+    );
+    return this.findOne(organizationId, id);
+  }
+
   private async saveDraft(
     tx: MatchClient,
     organizationId: number,
@@ -944,6 +954,37 @@ export class MatchesService {
     };
   }
 
+  private async reopenMatch(
+    tx: MatchClient,
+    organizationId: number,
+    id: number,
+  ): Promise<void> {
+    const current = await this.findScoresheetTargetOrThrow(
+      tx,
+      organizationId,
+      id,
+    );
+    this.assertScoresheetTournamentMutable(current.tournament.status);
+    this.assertReopenAllowed(current.status);
+
+    await tx.matchTeam.updateMany({
+      where: { matchId: id, organizationId, isDeleted: false },
+      data: {
+        finalScore: null,
+        result: null,
+        lossType: null,
+        isWinner: null,
+      },
+    });
+    await tx.match.update({
+      where: { id },
+      data: {
+        status: MatchStatus.LIVE,
+        endedAt: null,
+      },
+    });
+  }
+
   private async replacePeriods(
     tx: MatchClient,
     organizationId: number,
@@ -1009,6 +1050,15 @@ export class MatchesService {
     if (status !== MatchStatus.SCHEDULED && status !== MatchStatus.LIVE) {
       throw ApiException.conflict(
         'Results can only be submitted for scheduled or live matches.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+  }
+
+  private assertReopenAllowed(status: MatchStatus): void {
+    if (status !== MatchStatus.FINISHED) {
+      throw ApiException.conflict(
+        'Only a finished match can be reopened.',
         'INVALID_STATUS_TRANSITION',
       );
     }

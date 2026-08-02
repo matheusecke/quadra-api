@@ -340,6 +340,51 @@ const linkedSlot = {
   winnerTournamentTeamId: null as number | null,
 };
 
+const reopenedStartedAt = new Date('2026-08-15T20:00:00.000Z');
+
+const preservedPeriod = {
+  id: 701,
+  periodNumber: 1,
+  periodType: PeriodType.REGULAR,
+  homePoints: 18,
+  awayPoints: 22,
+  startedAt: null,
+  endedAt: null,
+};
+
+const preservedPlayerStatistic = {
+  tournamentRosterId: 88,
+  pts: 18,
+  fgm: null,
+  fga: null,
+  threeFgm: null,
+  threeFga: null,
+  ftm: null,
+  fta: null,
+  reb: null,
+  ast: null,
+  stl: null,
+  blk: null,
+  tov: null,
+  pf: null,
+  minutesSeconds: null,
+  matchTeam: { side: MatchSide.HOME },
+  matchRoster: {
+    displayNameSnapshot: 'Ana Silva',
+    isDeleted: false,
+  },
+  tournamentRoster: {
+    tournamentTeamId: 41,
+    displayNameSnapshot: 'Ana Silva',
+  },
+};
+
+const preservedMvpMatchRoster = {
+  tournamentRosterId: 88,
+  displayNameSnapshot: 'Ana Silva',
+  isDeleted: false,
+};
+
 async function captureApiException(
   promise: Promise<unknown>,
 ): Promise<ApiException> {
@@ -455,6 +500,43 @@ describe('MatchesService', () => {
       status: MatchStatus.FINISHED,
       startedAt: resultNow,
       endedAt: resultNow,
+    });
+  }
+
+  function arrangeReopen(
+    startedAt: Date | null = reopenedStartedAt,
+    overrides: Partial<typeof scoresheetTargetRow> = {},
+  ): void {
+    arrangeDraft({
+      status: MatchStatus.FINISHED,
+      startedAt,
+      ...overrides,
+    });
+    mockTx.matchTeam.updateMany.mockResolvedValue({ count: 2 });
+    mockPrisma.match.findFirst.mockResolvedValue({
+      ...detailRow,
+      status: MatchStatus.LIVE,
+      startedAt,
+      endedAt: null,
+      teams: [
+        {
+          ...detailRow.teams[0],
+          finalScore: 20,
+          result: MatchResult.WIN,
+          lossType: null,
+          isWinner: true,
+        },
+        {
+          ...detailRow.teams[1],
+          finalScore: 0,
+          result: MatchResult.LOSS,
+          lossType: LossType.FORFEIT,
+          isWinner: false,
+        },
+      ],
+      periods: [preservedPeriod],
+      playerStatistics: [preservedPlayerStatistic],
+      mvpMatchRoster: preservedMvpMatchRoster,
     });
   }
 
@@ -1890,6 +1972,203 @@ describe('MatchesService', () => {
         data: { winnerTournamentTeamId: 41 },
       });
       expect(mockTx.tournamentBracketSlot.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reopen', () => {
+    it('uses the tenant-scoped scoresheet target in a serializable transaction', async () => {
+      arrangeReopen();
+      await service.reopen(42, 501);
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+      expect(mockTx.match.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 501,
+          organizationId: 42,
+          isDeleted: false,
+          tournament: { organizationId: 42, isDeleted: false },
+        },
+        select: matchScoresheetTargetSelect,
+      });
+    });
+
+    it.each([
+      MatchStatus.SCHEDULED,
+      MatchStatus.LIVE,
+      MatchStatus.POSTPONED,
+      MatchStatus.CANCELLED,
+    ])('rejects reopen from %s', async (status) => {
+      arrangeReopen(reopenedStartedAt, { status });
+      const error = await captureApiException(service.reopen(42, 501));
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_STATUS_TRANSITION',
+        message: 'Only a finished match can be reopened.',
+      });
+      expect(mockTx.matchTeam.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cancelled tournament before checking the match lifecycle', async () => {
+      arrangeReopen(reopenedStartedAt, {
+        status: MatchStatus.LIVE,
+        tournament: { status: TournamentStatus.CANCELLED },
+      });
+      const error = await captureApiException(service.reopen(42, 501));
+      expect(apiError(error)).toEqual({
+        code: 'TOURNAMENT_NOT_MUTABLE',
+        message:
+          'Match scoresheets cannot be changed for a cancelled tournament.',
+      });
+      expect(mockTx.matchTeam.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('returns the scoped 404 before any write', async () => {
+      arrangeReopen();
+      mockTx.match.findFirst.mockResolvedValue(null);
+      const error = await captureApiException(service.reopen(42, 501));
+      expect(apiError(error)).toEqual({
+        code: 'RECORD_NOT_FOUND',
+        message: 'Match not found',
+      });
+      expect(mockTx.matchTeam.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { name: 'played result', startedAt: reopenedStartedAt },
+      { name: 'forfeit', startedAt: null },
+    ])('clears only derived fields for a $name', async ({ startedAt }) => {
+      arrangeReopen(startedAt);
+      const response = await service.reopen(42, 501);
+      expect(mockTx.matchTeam.updateMany).toHaveBeenCalledWith({
+        where: {
+          matchId: 501,
+          organizationId: 42,
+          isDeleted: false,
+        },
+        data: {
+          finalScore: null,
+          result: null,
+          lossType: null,
+          isWinner: null,
+        },
+      });
+      expect(mockTx.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: {
+          status: MatchStatus.LIVE,
+          endedAt: null,
+        },
+      });
+      expect(response).toMatchObject({
+        status: MatchStatus.LIVE,
+        startedAt,
+        endedAt: null,
+        scoreSource: null,
+        homeTeam: {
+          score: null,
+          result: null,
+          lossType: null,
+          isWinner: null,
+        },
+        awayTeam: {
+          score: null,
+          result: null,
+          lossType: null,
+          isWinner: null,
+        },
+      });
+    });
+
+    it('preserves the scoresheet, rosters, MVP, slot winner, tournament, and champion', async () => {
+      arrangeReopen(reopenedStartedAt, {
+        tournament: { status: TournamentStatus.COMPLETED },
+        bracketSlots: [{ ...linkedSlot, winnerTournamentTeamId: 41 }],
+      });
+      const response = await service.reopen(42, 501);
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.matchPeriod.createMany).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.create).not.toHaveBeenCalled();
+      expect(mockTx.matchRoster.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.matchRoster.create).not.toHaveBeenCalled();
+      expect(mockTx.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      expect(mockTx.tournamentBracketSlot.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.tournament.update).not.toHaveBeenCalled();
+      expect(response.periods).toEqual([
+        {
+          periodNumber: 1,
+          periodType: PeriodType.REGULAR,
+          homePoints: 18,
+          awayPoints: 22,
+          startedAt: null,
+          endedAt: null,
+        },
+      ]);
+      expect(response.playerStats).toEqual([
+        {
+          tournamentRosterId: 88,
+          tournamentTeamId: 41,
+          displayName: 'Ana Silva',
+          pts: 18,
+          fgm: null,
+          fga: null,
+          threeFgm: null,
+          threeFga: null,
+          ftm: null,
+          fta: null,
+          reb: null,
+          ast: null,
+          stl: null,
+          blk: null,
+          tov: null,
+          pf: null,
+          minutesSeconds: null,
+        },
+      ]);
+      expect(response.mvp).toEqual({
+        tournamentRosterId: 88,
+        displayName: 'Ana Silva',
+      });
+    });
+
+    it('retries P2034 and performs the reopen writes once after success', async () => {
+      arrangeReopen();
+      mockPrisma.$transaction
+        .mockRejectedValueOnce(p2034())
+        .mockImplementationOnce((callback) =>
+          Promise.resolve(callback(mockTx)),
+        );
+      await service.reopen(42, 501);
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(mockTx.matchTeam.updateMany).toHaveBeenCalledTimes(1);
+      expect(mockTx.match.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not read a success response when a reopen write fails', async () => {
+      arrangeReopen();
+      mockTx.match.update.mockRejectedValue(new Error('match write failed'));
+      await expect(service.reopen(42, 501)).rejects.toThrow(
+        'match write failed',
+      );
+      expect(mockPrisma.match.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('returns CONCURRENT_MODIFICATION after four P2034 conflicts', async () => {
+      arrangeReopen();
+      mockPrisma.$transaction.mockRejectedValue(p2034());
+      const error = await captureApiException(service.reopen(42, 501));
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
+      expect(apiError(error)).toEqual({
+        code: 'CONCURRENT_MODIFICATION',
+        message:
+          'The resource changed during this operation. Retry the request.',
+      });
+      expect(mockPrisma.match.findFirst).not.toHaveBeenCalled();
     });
   });
 
