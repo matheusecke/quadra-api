@@ -270,7 +270,7 @@ type ResultCommitSummary = {
 // union type, not a namespace, so `LossType.NORMAL` cannot be used in a
 // type position (`LossType.NORMAL | LossType.DEFAULT` is TS2702). This
 // alias expresses the same "played result" subset as a valid type.
-type PlayedResultType = Exclude<LossType, 'FORFEIT'>;
+type PlayedResultType = Exclude<LossType, typeof LossType.FORFEIT>;
 
 type MatchClient = Pick<
   Prisma.TransactionClient,
