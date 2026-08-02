@@ -49,7 +49,7 @@ type MockClient = {
     updateMany: AsyncMock;
   };
   matchTeam: { update: AsyncMock; updateMany: AsyncMock };
-  tournament: { findFirst: AsyncMock };
+  tournament: { findFirst: AsyncMock; update: AsyncMock };
   tournamentGroup: { findFirst: AsyncMock };
   tournamentTeam: { findFirst: AsyncMock };
   tournamentGroupTeam: { findFirst: AsyncMock };
@@ -95,7 +95,7 @@ const makeClient = (): MockClient => ({
     updateMany: asyncMock(),
   },
   matchTeam: { update: asyncMock(), updateMany: asyncMock() },
-  tournament: { findFirst: asyncMock() },
+  tournament: { findFirst: asyncMock(), update: asyncMock() },
   tournamentGroup: { findFirst: asyncMock() },
   tournamentTeam: { findFirst: asyncMock() },
   tournamentGroupTeam: { findFirst: asyncMock() },
@@ -262,6 +262,12 @@ const scoresheetTargetRow = {
     tournamentRosterId: number;
     isDeleted: boolean;
   } | null,
+  bracketSlots: [] as {
+    id: number;
+    homeTournamentTeamId: number | null;
+    awayTournamentTeamId: number | null;
+    winnerTournamentTeamId: number | null;
+  }[],
 };
 
 const homeAthlete = {
@@ -325,6 +331,13 @@ const normalResultDto: SubmitMatchResultDto = {
   periods: normalPeriods,
   playerStats: resultPlayerStats,
   mvpTournamentRosterId: 88,
+};
+
+const linkedSlot = {
+  id: 301,
+  homeTournamentTeamId: 41,
+  awayTournamentTeamId: 52,
+  winnerTournamentTeamId: null as number | null,
 };
 
 async function captureApiException(
@@ -1743,6 +1756,140 @@ describe('MatchesService', () => {
         playerStats: [],
         mvp: null,
       });
+    });
+  });
+
+  describe('result bracket synchronization', () => {
+    it('does nothing to the bracket when the match has no linked slot', async () => {
+      arrangeResult();
+      await service.submitResult(42, 501, normalResultDto);
+      expect(mockTx.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      expect(mockTx.tournament.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'missing HOME participant',
+        slot: { ...linkedSlot, homeTournamentTeamId: null },
+      },
+      {
+        name: 'missing AWAY participant',
+        slot: { ...linkedSlot, awayTournamentTeamId: null },
+      },
+      {
+        name: 'different participant pair',
+        slot: { ...linkedSlot, awayTournamentTeamId: 77 },
+      },
+    ])(
+      'rejects a linked slot with $name before any write',
+      async ({ slot }) => {
+        arrangeResult({ bracketSlots: [slot] });
+        const error = await captureApiException(
+          service.submitResult(42, 501, normalResultDto),
+        );
+        expect(error.getStatus()).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
+        expect(apiError(error)).toEqual({
+          code: 'MATCH_TEAMS_MISMATCH',
+          message:
+            'The match participants do not match the bracket slot participants.',
+        });
+        expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+        expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+        expect(mockTx.matchTeam.update).not.toHaveBeenCalled();
+        expect(mockTx.match.update).not.toHaveBeenCalled();
+        expect(mockTx.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it('accepts reversed slot presentation order and writes the derived winner', async () => {
+      arrangeResult({
+        bracketSlots: [
+          {
+            ...linkedSlot,
+            homeTournamentTeamId: 52,
+            awayTournamentTeamId: 41,
+          },
+        ],
+      });
+      await service.submitResult(42, 501, normalResultDto);
+      expect(mockTx.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 301 },
+        data: { winnerTournamentTeamId: 41 },
+      });
+    });
+
+    it('leaves an unchanged linked winner untouched', async () => {
+      arrangeResult({
+        bracketSlots: [{ ...linkedSlot, winnerTournamentTeamId: 41 }],
+      });
+      await service.submitResult(42, 501, normalResultDto);
+      expect(mockTx.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      expect(mockTx.tournament.update).not.toHaveBeenCalled();
+    });
+
+    it('overwrites a different manually stored winner with the match result', async () => {
+      arrangeResult({
+        bracketSlots: [{ ...linkedSlot, winnerTournamentTeamId: 52 }],
+      });
+      await service.submitResult(42, 501, normalResultDto);
+      expect(mockTx.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 301 },
+        data: { winnerTournamentTeamId: 41 },
+      });
+      expect(mockTx.tournament.update).not.toHaveBeenCalled();
+    });
+
+    it('reopens a completed tournament and clears its champion when winner changes', async () => {
+      arrangeResult({
+        tournament: { status: TournamentStatus.COMPLETED },
+        bracketSlots: [{ ...linkedSlot, winnerTournamentTeamId: 52 }],
+      });
+      await service.submitResult(42, 501, normalResultDto);
+      expect(mockTx.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 301 },
+        data: { winnerTournamentTeamId: 41 },
+      });
+      expect(mockTx.tournament.update).toHaveBeenCalledWith({
+        where: { id: 12 },
+        data: {
+          status: TournamentStatus.IN_PROGRESS,
+          championTournamentTeamId: null,
+        },
+      });
+    });
+
+    it('keeps a completed tournament and champion when winner is unchanged', async () => {
+      arrangeResult({
+        tournament: { status: TournamentStatus.COMPLETED },
+        bracketSlots: [{ ...linkedSlot, winnerTournamentTeamId: 41 }],
+      });
+      await service.submitResult(42, 501, normalResultDto);
+      expect(mockTx.tournamentBracketSlot.update).not.toHaveBeenCalled();
+      expect(mockTx.tournament.update).not.toHaveBeenCalled();
+    });
+
+    it('runs slot synchronization inside the result transaction and skips the post-commit read on failure', async () => {
+      arrangeResult({ bracketSlots: [linkedSlot] });
+      mockTx.tournamentBracketSlot.update.mockRejectedValue(
+        new Error('slot write failed'),
+      );
+      await expect(
+        service.submitResult(42, 501, normalResultDto),
+      ).rejects.toThrow('slot write failed');
+      expect(mockTx.matchPeriod.updateMany).toHaveBeenCalled();
+      expect(mockTx.matchTeam.update).toHaveBeenCalled();
+      expect(mockPrisma.match.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('updates only the current slot and performs no participant propagation', async () => {
+      arrangeResult({ bracketSlots: [linkedSlot] });
+      await service.submitResult(42, 501, normalResultDto);
+      expect(mockTx.tournamentBracketSlot.update).toHaveBeenCalledTimes(1);
+      expect(mockTx.tournamentBracketSlot.update).toHaveBeenCalledWith({
+        where: { id: 301 },
+        data: { winnerTournamentTeamId: 41 },
+      });
+      expect(mockTx.tournamentBracketSlot.updateMany).not.toHaveBeenCalled();
     });
   });
 

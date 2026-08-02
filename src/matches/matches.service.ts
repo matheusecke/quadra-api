@@ -178,6 +178,17 @@ export const matchScoresheetTargetSelect = {
   mvpMatchRoster: {
     select: { tournamentRosterId: true, isDeleted: true },
   },
+  bracketSlots: {
+    where: { isDeleted: false },
+    orderBy: [{ id: 'asc' }],
+    take: 1,
+    select: {
+      id: true,
+      homeTournamentTeamId: true,
+      awayTournamentTeamId: true,
+      winnerTournamentTeamId: true,
+    },
+  },
 } satisfies Prisma.MatchSelect;
 
 type MatchSummaryRow = Prisma.MatchGetPayload<{
@@ -841,6 +852,7 @@ export class MatchesService {
         LossType.FORFEIT,
         'AWARDED',
       );
+      const linkedSlot = this.assertLinkedSlotMatchesParticipants(current);
 
       await this.replacePeriods(tx, organizationId, id, []);
       await this.replacePlayerStatistics(tx, organizationId, current, []);
@@ -855,6 +867,12 @@ export class MatchesService {
           mvpMatchRosterId: null,
         },
       });
+      await this.synchronizeLinkedSlotWinner(
+        tx,
+        current,
+        linkedSlot,
+        result.winnerTournamentTeamId,
+      );
       return { result, playerPoints: null };
     }
     this.assertPlayedResultPayload(dto, resultType);
@@ -887,6 +905,7 @@ export class MatchesService {
       resultType,
       nonOffendingTournamentTeamId,
     );
+    const linkedSlot = this.assertLinkedSlotMatchesParticipants(current);
 
     await this.replacePeriods(tx, organizationId, id, dto.periods);
     const createdRosterIds = await this.replacePlayerStatistics(
@@ -912,6 +931,12 @@ export class MatchesService {
         mvpMatchRosterId,
       },
     });
+    await this.synchronizeLinkedSlotWinner(
+      tx,
+      current,
+      linkedSlot,
+      result.winnerTournamentTeamId,
+    );
 
     return {
       result,
@@ -1437,6 +1462,30 @@ export class MatchesService {
     }
   }
 
+  private async synchronizeLinkedSlotWinner(
+    tx: MatchClient,
+    match: MatchScoresheetTarget,
+    slot: MatchScoresheetTarget['bracketSlots'][number] | undefined,
+    winnerTournamentTeamId: number,
+  ): Promise<void> {
+    if (!slot || slot.winnerTournamentTeamId === winnerTournamentTeamId) {
+      return;
+    }
+    await tx.tournamentBracketSlot.update({
+      where: { id: slot.id },
+      data: { winnerTournamentTeamId },
+    });
+    if (match.tournament.status === TournamentStatus.COMPLETED) {
+      await tx.tournament.update({
+        where: { id: match.tournamentId },
+        data: {
+          status: TournamentStatus.IN_PROGRESS,
+          championTournamentTeamId: null,
+        },
+      });
+    }
+  }
+
   private sumPlayerPoints(
     stats: ResolvedPlayerStatistic[],
     result: DerivedMatchResult,
@@ -1683,11 +1732,42 @@ export class MatchesService {
     );
     const matchIds = [homeId, awayId].sort((left, right) => left - right);
     if (slotIds[0] !== matchIds[0] || slotIds[1] !== matchIds[1]) {
-      throw ApiException.unprocessable(
-        'The match participants do not match the bracket slot participants.',
-        'MATCH_TEAMS_MISMATCH',
-      );
+      throw this.matchTeamsMismatch();
     }
+  }
+
+  private assertLinkedSlotMatchesParticipants(
+    match: MatchScoresheetTarget,
+  ): MatchScoresheetTarget['bracketSlots'][number] | undefined {
+    const slot = match.bracketSlots[0];
+    if (!slot) return undefined;
+    if (
+      slot.homeTournamentTeamId === null ||
+      slot.awayTournamentTeamId === null
+    ) {
+      throw this.matchTeamsMismatch();
+    }
+    const slotIds = [slot.homeTournamentTeamId, slot.awayTournamentTeamId].sort(
+      (left, right) => left - right,
+    );
+    const matchIds = match.teams
+      .map((team) => team.tournamentTeamId)
+      .sort((left, right) => left - right);
+    if (
+      matchIds.length !== 2 ||
+      slotIds[0] !== matchIds[0] ||
+      slotIds[1] !== matchIds[1]
+    ) {
+      throw this.matchTeamsMismatch();
+    }
+    return slot;
+  }
+
+  private matchTeamsMismatch(): ApiException {
+    return ApiException.unprocessable(
+      'The match participants do not match the bracket slot participants.',
+      'MATCH_TEAMS_MISMATCH',
+    );
   }
 
   private async assertNoScoresheet(
