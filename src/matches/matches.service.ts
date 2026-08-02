@@ -1,9 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   LossType,
+  MatchResult,
+  MatchRosterStatus,
   MatchSide,
   MatchStatus,
+  PeriodType,
   Prisma,
+  RosterRole,
   TournamentFormat,
   TournamentStatus,
   TournamentTeamStatus,
@@ -15,6 +19,12 @@ import {
   ListTournamentMatchesQueryDto,
 } from './dto/list-matches-query.dto';
 import { CreateMatchDto } from './dto/create-match.dto';
+import {
+  MatchPeriodInputDto,
+  MatchPlayerStatisticInputDto,
+  SaveMatchDraftDto,
+  SubmitMatchResultDto,
+} from './dto/match-scoresheet.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import {
   MatchDetailResponseDto,
@@ -144,6 +154,43 @@ export const matchUpdateTargetSelect = {
   },
 } satisfies Prisma.MatchSelect;
 
+export const matchScoresheetTargetSelect = {
+  id: true,
+  tournamentId: true,
+  status: true,
+  startedAt: true,
+  mvpMatchRosterId: true,
+  tournament: { select: { status: true } },
+  teams: {
+    where: { isDeleted: false },
+    select: { id: true, side: true, tournamentTeamId: true },
+  },
+  playerStatistics: {
+    where: { isDeleted: false },
+    select: {
+      tournamentRosterId: true,
+      matchRosterId: true,
+      matchRoster: {
+        select: { id: true, status: true, isDeleted: true },
+      },
+    },
+  },
+  mvpMatchRoster: {
+    select: { tournamentRosterId: true, isDeleted: true },
+  },
+  bracketSlots: {
+    where: { isDeleted: false },
+    orderBy: [{ id: 'asc' }],
+    take: 1,
+    select: {
+      id: true,
+      homeTournamentTeamId: true,
+      awayTournamentTeamId: true,
+      winnerTournamentTeamId: true,
+    },
+  },
+} satisfies Prisma.MatchSelect;
+
 type MatchSummaryRow = Prisma.MatchGetPayload<{
   select: typeof matchSummarySelect;
 }>;
@@ -153,6 +200,78 @@ type MatchDetailRow = Prisma.MatchGetPayload<{
 type MatchUpdateTarget = Prisma.MatchGetPayload<{
   select: typeof matchUpdateTargetSelect;
 }>;
+type MatchScoresheetTarget = Prisma.MatchGetPayload<{
+  select: typeof matchScoresheetTargetSelect;
+}>;
+
+const playerStatisticMetricKeys = [
+  'pts',
+  'fgm',
+  'fga',
+  'threeFgm',
+  'threeFga',
+  'ftm',
+  'fta',
+  'reb',
+  'ast',
+  'stl',
+  'blk',
+  'tov',
+  'pf',
+  'minutesSeconds',
+] as const;
+
+type PlayerStatisticMetric = (typeof playerStatisticMetricKeys)[number];
+type NormalizedPlayerStatistic = {
+  tournamentRosterId: number;
+} & Record<PlayerStatisticMetric, number | null>;
+
+const tournamentRosterForMatchSelect = {
+  id: true,
+  tournamentId: true,
+  tournamentTeamId: true,
+  userId: true,
+  role: true,
+  jerseyNumberSnapshot: true,
+  displayNameSnapshot: true,
+} satisfies Prisma.TournamentRosterSelect;
+
+type TournamentRosterForMatch = Prisma.TournamentRosterGetPayload<{
+  select: typeof tournamentRosterForMatchSelect;
+}>;
+
+type ResolvedPlayerStatistic = NormalizedPlayerStatistic & {
+  tournamentRoster: TournamentRosterForMatch;
+  matchTeamId: number;
+};
+
+type DerivedMatchTeamResult = {
+  matchTeamId: number;
+  tournamentTeamId: number;
+  finalScore: number;
+  result: MatchResult;
+  lossType: LossType | null;
+  isWinner: boolean;
+};
+
+type DerivedMatchResult = {
+  home: DerivedMatchTeamResult;
+  away: DerivedMatchTeamResult;
+  winnerTournamentTeamId: number;
+  scoreSource: MatchScoreSource;
+};
+
+type ResultCommitSummary = {
+  result: DerivedMatchResult;
+  playerPoints: Record<MatchSide, number> | null;
+};
+
+// NOTE: Prisma 7 generates enums as a const object plus a string-literal
+// union type, not a namespace, so `LossType.NORMAL` cannot be used in a
+// type position (`LossType.NORMAL | LossType.DEFAULT` is TS2702). This
+// alias expresses the same "played result" subset as a valid type.
+type PlayedResultType = Exclude<LossType, typeof LossType.FORFEIT>;
+
 type MatchClient = Pick<
   Prisma.TransactionClient,
   | 'match'
@@ -161,6 +280,7 @@ type MatchClient = Pick<
   | 'tournamentGroup'
   | 'tournamentTeam'
   | 'tournamentGroupTeam'
+  | 'tournamentRoster'
   | 'tournamentBracketSlot'
   | 'matchPeriod'
   | 'matchRoster'
@@ -169,6 +289,8 @@ type MatchClient = Pick<
 
 @Injectable()
 export class MatchesService {
+  private readonly logger = new Logger(MatchesService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(
@@ -332,8 +454,8 @@ export class MatchesService {
   }
 
   private toDetail(row: MatchDetailRow): MatchDetailResponseDto {
-    // NOTE: gated on FINISHED so a Phase 9 reopen, which leaves the previous
-    // loss type in place, cannot hide the scoresheet of a live match.
+    // NOTE: only a FINISHED forfeit masks scoresheet rows. Reopen changes the
+    // lifecycle to LIVE and must expose every preserved raw fact.
     const isForfeit =
       row.status === MatchStatus.FINISHED &&
       row.teams.some((team) => team.lossType === LossType.FORFEIT);
@@ -600,6 +722,864 @@ export class MatchesService {
     }
   }
 
+  async draft(
+    organizationId: number,
+    id: number,
+    dto: SaveMatchDraftDto,
+  ): Promise<MatchDetailResponseDto> {
+    await this.runSerializable((tx) =>
+      this.saveDraft(tx, organizationId, id, dto),
+    );
+    return this.findOne(organizationId, id);
+  }
+
+  async submitResult(
+    organizationId: number,
+    id: number,
+    dto: SubmitMatchResultDto,
+  ): Promise<MatchDetailResponseDto> {
+    const summary = await this.runSerializable((tx) =>
+      this.saveResult(tx, organizationId, id, dto),
+    );
+    this.warnPointsMismatch(id, summary);
+    return this.findOne(organizationId, id);
+  }
+
+  async reopen(
+    organizationId: number,
+    id: number,
+  ): Promise<MatchDetailResponseDto> {
+    await this.runSerializable((tx) =>
+      this.reopenMatch(tx, organizationId, id),
+    );
+    return this.findOne(organizationId, id);
+  }
+
+  private async saveDraft(
+    tx: MatchClient,
+    organizationId: number,
+    id: number,
+    dto: SaveMatchDraftDto,
+  ): Promise<void> {
+    const current = await this.findScoresheetTargetOrThrow(
+      tx,
+      organizationId,
+      id,
+    );
+    this.assertScoresheetTournamentMutable(current.tournament.status);
+    this.assertDraftAllowed(current.status);
+    this.assertPeriodStructure(dto.periods);
+
+    const normalizedStats =
+      dto.playerStats === undefined
+        ? undefined
+        : this.normalizePlayerStatistics(dto.playerStats);
+    const resolvedStats =
+      normalizedStats === undefined
+        ? undefined
+        : await this.resolvePlayerStatistics(
+            tx,
+            organizationId,
+            current,
+            normalizedStats,
+          );
+    const updatesMvp =
+      dto.playerStats !== undefined || dto.mvpTournamentRosterId !== undefined;
+    const resultingMvpTournamentRosterId = updatesMvp
+      ? this.resolveResultingMvpTournamentRosterId(
+          current,
+          dto.mvpTournamentRosterId,
+          normalizedStats,
+        )
+      : null;
+    const existingMvpMatchRosterId =
+      updatesMvp && normalizedStats === undefined
+        ? this.findExistingMvpMatchRosterId(
+            current,
+            resultingMvpTournamentRosterId,
+          )
+        : null;
+
+    if (dto.periods !== undefined) {
+      await this.replacePeriods(tx, organizationId, id, dto.periods);
+    }
+
+    const createdRosterIds =
+      resolvedStats === undefined
+        ? undefined
+        : await this.replacePlayerStatistics(
+            tx,
+            organizationId,
+            current,
+            resolvedStats,
+          );
+    const mvpMatchRosterId =
+      resultingMvpTournamentRosterId === null
+        ? null
+        : (createdRosterIds?.get(resultingMvpTournamentRosterId) ??
+          existingMvpMatchRosterId);
+    const now = new Date();
+    await tx.match.update({
+      where: { id },
+      data: {
+        status: MatchStatus.LIVE,
+        startedAt: current.startedAt ?? now,
+        endedAt: null,
+        ...(updatesMvp ? { mvpMatchRosterId } : {}),
+      },
+    });
+  }
+
+  private async saveResult(
+    tx: MatchClient,
+    organizationId: number,
+    id: number,
+    dto: SubmitMatchResultDto,
+  ): Promise<ResultCommitSummary> {
+    const current = await this.findScoresheetTargetOrThrow(
+      tx,
+      organizationId,
+      id,
+    );
+    this.assertScoresheetTournamentMutable(current.tournament.status);
+    this.assertResultAllowed(current.status);
+
+    const resultType = dto.resultType ?? LossType.NORMAL;
+    if (resultType === LossType.FORFEIT) {
+      this.assertForfeitResultPayload(dto);
+      const winnerTournamentTeamId = this.findNonOffendingTournamentTeamId(
+        current,
+        dto.offendingTournamentTeamId,
+      );
+      const home = this.findMatchSide(current, MatchSide.HOME);
+      const away = this.findMatchSide(current, MatchSide.AWAY);
+      const result = this.buildDerivedResult(
+        home,
+        away,
+        winnerTournamentTeamId === home.tournamentTeamId ? 20 : 0,
+        winnerTournamentTeamId === away.tournamentTeamId ? 20 : 0,
+        winnerTournamentTeamId,
+        LossType.FORFEIT,
+        'AWARDED',
+      );
+      const linkedSlot = this.assertLinkedSlotMatchesParticipants(current);
+
+      await this.replacePeriods(tx, organizationId, id, []);
+      await this.replacePlayerStatistics(tx, organizationId, current, []);
+      await this.writeOfficialResult(tx, result);
+      const now = new Date();
+      await tx.match.update({
+        where: { id },
+        data: {
+          status: MatchStatus.FINISHED,
+          startedAt: null,
+          endedAt: now,
+          mvpMatchRosterId: null,
+        },
+      });
+      await this.synchronizeLinkedSlotWinner(
+        tx,
+        current,
+        linkedSlot,
+        result.winnerTournamentTeamId,
+      );
+      return { result, playerPoints: null };
+    }
+    this.assertPlayedResultPayload(dto, resultType);
+    this.assertPeriodStructure(dto.periods);
+    this.assertPlayedResultPeriods(dto.periods, resultType);
+    const nonOffendingTournamentTeamId =
+      resultType === LossType.DEFAULT
+        ? this.findNonOffendingTournamentTeamId(
+            current,
+            dto.offendingTournamentTeamId,
+          )
+        : undefined;
+
+    const normalizedStats = this.normalizePlayerStatistics(dto.playerStats);
+    const resolvedStats = await this.resolvePlayerStatistics(
+      tx,
+      organizationId,
+      current,
+      normalizedStats,
+    );
+    const resultingMvpTournamentRosterId =
+      this.resolveResultingMvpTournamentRosterId(
+        current,
+        dto.mvpTournamentRosterId,
+        normalizedStats,
+      );
+    const result = this.derivePlayedResult(
+      current,
+      dto.periods,
+      resultType,
+      nonOffendingTournamentTeamId,
+    );
+    const linkedSlot = this.assertLinkedSlotMatchesParticipants(current);
+
+    await this.replacePeriods(tx, organizationId, id, dto.periods);
+    const createdRosterIds = await this.replacePlayerStatistics(
+      tx,
+      organizationId,
+      current,
+      resolvedStats,
+    );
+    const mvpMatchRosterId =
+      resultingMvpTournamentRosterId === null
+        ? null
+        : (createdRosterIds.get(resultingMvpTournamentRosterId) ??
+          this.invalidMvp());
+
+    await this.writeOfficialResult(tx, result);
+    const now = new Date();
+    await tx.match.update({
+      where: { id },
+      data: {
+        status: MatchStatus.FINISHED,
+        startedAt: current.startedAt ?? now,
+        endedAt: now,
+        mvpMatchRosterId,
+      },
+    });
+    await this.synchronizeLinkedSlotWinner(
+      tx,
+      current,
+      linkedSlot,
+      result.winnerTournamentTeamId,
+    );
+
+    return {
+      result,
+      playerPoints: this.sumPlayerPoints(resolvedStats, result),
+    };
+  }
+
+  private async reopenMatch(
+    tx: MatchClient,
+    organizationId: number,
+    id: number,
+  ): Promise<void> {
+    const current = await this.findScoresheetTargetOrThrow(
+      tx,
+      organizationId,
+      id,
+    );
+    this.assertScoresheetTournamentMutable(current.tournament.status);
+    this.assertReopenAllowed(current.status);
+
+    await tx.matchTeam.updateMany({
+      where: { matchId: id, organizationId, isDeleted: false },
+      data: {
+        finalScore: null,
+        result: null,
+        lossType: null,
+        isWinner: null,
+      },
+    });
+    await tx.match.update({
+      where: { id },
+      data: {
+        status: MatchStatus.LIVE,
+        endedAt: null,
+      },
+    });
+  }
+
+  private async replacePeriods(
+    tx: MatchClient,
+    organizationId: number,
+    matchId: number,
+    periods: MatchPeriodInputDto[],
+  ): Promise<void> {
+    await tx.matchPeriod.updateMany({
+      where: { matchId, organizationId, isDeleted: false },
+      data: { isDeleted: true },
+    });
+    if (periods.length === 0) return;
+    await tx.matchPeriod.createMany({
+      data: periods.map((period) => ({
+        organizationId,
+        matchId,
+        periodNumber: period.periodNumber,
+        periodType: period.periodType,
+        homePoints: period.homePoints,
+        awayPoints: period.awayPoints,
+        startedAt: null,
+        endedAt: null,
+      })),
+    });
+  }
+
+  private async findScoresheetTargetOrThrow(
+    client: MatchClient,
+    organizationId: number,
+    id: number,
+  ): Promise<MatchScoresheetTarget> {
+    const match = await client.match.findFirst({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        tournament: { organizationId, isDeleted: false },
+      },
+      select: matchScoresheetTargetSelect,
+    });
+    if (!match) throw ApiException.notFound('Match not found');
+    return match;
+  }
+
+  private assertScoresheetTournamentMutable(status: TournamentStatus): void {
+    if (status === TournamentStatus.CANCELLED) {
+      throw ApiException.conflict(
+        'Match scoresheets cannot be changed for a cancelled tournament.',
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+    }
+  }
+
+  private assertDraftAllowed(status: MatchStatus): void {
+    if (status !== MatchStatus.SCHEDULED && status !== MatchStatus.LIVE) {
+      throw ApiException.conflict(
+        'Drafts can only be saved for scheduled or live matches.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+  }
+
+  private assertResultAllowed(status: MatchStatus): void {
+    if (status !== MatchStatus.SCHEDULED && status !== MatchStatus.LIVE) {
+      throw ApiException.conflict(
+        'Results can only be submitted for scheduled or live matches.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+  }
+
+  private assertReopenAllowed(status: MatchStatus): void {
+    if (status !== MatchStatus.FINISHED) {
+      throw ApiException.conflict(
+        'Only a finished match can be reopened.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+  }
+
+  private assertPlayedResultPayload(
+    dto: SubmitMatchResultDto,
+    resultType: PlayedResultType,
+  ): asserts dto is SubmitMatchResultDto & {
+    periods: MatchPeriodInputDto[];
+    playerStats: MatchPlayerStatisticInputDto[];
+  } {
+    if (
+      dto.periods === undefined ||
+      dto.playerStats === undefined ||
+      (resultType === LossType.NORMAL &&
+        dto.offendingTournamentTeamId !== undefined) ||
+      (resultType === LossType.DEFAULT &&
+        dto.offendingTournamentTeamId === undefined)
+    ) {
+      throw this.invalidResultPayload();
+    }
+  }
+
+  private assertForfeitResultPayload(
+    dto: SubmitMatchResultDto,
+  ): asserts dto is SubmitMatchResultDto & {
+    offendingTournamentTeamId: number;
+  } {
+    if (
+      dto.offendingTournamentTeamId === undefined ||
+      dto.periods !== undefined ||
+      dto.playerStats !== undefined ||
+      dto.mvpTournamentRosterId !== undefined
+    ) {
+      throw this.invalidResultPayload();
+    }
+  }
+
+  private invalidResultPayload(): ApiException {
+    return ApiException.badRequest(
+      'Invalid data in request.',
+      'VALIDATION_ERROR',
+    );
+  }
+
+  private assertPlayedResultPeriods(
+    periods: MatchPeriodInputDto[],
+    resultType: PlayedResultType,
+  ): void {
+    const { homePoints, awayPoints } = this.sumPeriods(periods);
+    if (
+      resultType === LossType.NORMAL &&
+      (periods.length < 4 || homePoints === awayPoints)
+    ) {
+      throw ApiException.unprocessable(
+        'A normal result requires four complete regular periods and a non-tied score.',
+        'INVALID_MATCH_PERIODS',
+      );
+    }
+    if (resultType === LossType.DEFAULT && periods.length === 0) {
+      throw ApiException.unprocessable(
+        'A default result requires at least one period.',
+        'INVALID_MATCH_PERIODS',
+      );
+    }
+  }
+
+  private findNonOffendingTournamentTeamId(
+    match: MatchScoresheetTarget,
+    offendingTournamentTeamId: number | undefined,
+  ): number {
+    const offender = match.teams.find(
+      (team) => team.tournamentTeamId === offendingTournamentTeamId,
+    );
+    const nonOffender = match.teams.find(
+      (team) => team.tournamentTeamId !== offendingTournamentTeamId,
+    );
+    if (!offender || !nonOffender || match.teams.length !== 2) {
+      throw ApiException.unprocessable(
+        'The offending team must be one of the match participants.',
+        'INVALID_OFFENDING_TEAM',
+      );
+    }
+    return nonOffender.tournamentTeamId;
+  }
+
+  private assertPeriodStructure(periods?: MatchPeriodInputDto[]): void {
+    if (!periods || periods.length === 0) return;
+    const ordered = [...periods].sort(
+      (left, right) => left.periodNumber - right.periodNumber,
+    );
+    const invalid = ordered.some((period, index) => {
+      const expectedNumber = index + 1;
+      const expectedType =
+        expectedNumber <= 4 ? PeriodType.REGULAR : PeriodType.OVERTIME;
+      return (
+        period.periodNumber !== expectedNumber ||
+        period.periodType !== expectedType
+      );
+    });
+    if (invalid) {
+      throw ApiException.unprocessable(
+        'Periods must be contiguous and use the type required by their number.',
+        'INVALID_MATCH_PERIODS',
+      );
+    }
+  }
+
+  private normalizePlayerStatistics(
+    input: MatchPlayerStatisticInputDto[],
+  ): NormalizedPlayerStatistic[] {
+    const rosterIds = new Set<number>();
+    const normalized = input.map((stat) => {
+      if (rosterIds.has(stat.tournamentRosterId)) {
+        throw ApiException.unprocessable(
+          'Each player can appear only once in match statistics.',
+          'INVALID_PLAYER_STATS',
+        );
+      }
+      rosterIds.add(stat.tournamentRosterId);
+      return {
+        tournamentRosterId: stat.tournamentRosterId,
+        ...Object.fromEntries(
+          playerStatisticMetricKeys.map((key) => [key, stat[key] ?? null]),
+        ),
+      } as NormalizedPlayerStatistic;
+    });
+
+    for (const key of playerStatisticMetricKeys) {
+      const tracked = normalized.filter((stat) => stat[key] !== null).length;
+      if (tracked !== 0 && tracked !== normalized.length) {
+        throw ApiException.unprocessable(
+          'Each tracked statistic must be provided for every player or be null for every player.',
+          'INVALID_PLAYER_STATS',
+        );
+      }
+    }
+    for (const stat of normalized) {
+      if (
+        (stat.fgm !== null && stat.fga !== null && stat.fgm > stat.fga) ||
+        (stat.threeFgm !== null &&
+          stat.threeFga !== null &&
+          stat.threeFgm > stat.threeFga) ||
+        (stat.ftm !== null && stat.fta !== null && stat.ftm > stat.fta)
+      ) {
+        throw ApiException.unprocessable(
+          'Made shots cannot exceed attempted shots.',
+          'INVALID_PLAYER_STATS',
+        );
+      }
+    }
+    return normalized;
+  }
+
+  private async resolvePlayerStatistics(
+    tx: MatchClient,
+    organizationId: number,
+    match: MatchScoresheetTarget,
+    stats: NormalizedPlayerStatistic[],
+  ): Promise<ResolvedPlayerStatistic[]> {
+    if (stats.length === 0) return [];
+    const ids = stats.map((stat) => stat.tournamentRosterId);
+    const rosters = await tx.tournamentRoster.findMany({
+      where: { id: { in: ids }, organizationId, isDeleted: false },
+      select: tournamentRosterForMatchSelect,
+    });
+    if (rosters.length !== ids.length) {
+      throw ApiException.notFound('Tournament roster not found');
+    }
+    const rosterById = new Map(rosters.map((roster) => [roster.id, roster]));
+    const matchTeamByTournamentTeamId = new Map(
+      match.teams.map((team) => [team.tournamentTeamId, team.id]),
+    );
+    const users = new Set<number>();
+    return stats.map((stat) => {
+      const roster = rosterById.get(stat.tournamentRosterId);
+      if (!roster) throw ApiException.notFound('Tournament roster not found');
+      const matchTeamId = matchTeamByTournamentTeamId.get(
+        roster.tournamentTeamId,
+      );
+      if (
+        roster.tournamentId !== match.tournamentId ||
+        roster.role !== RosterRole.ATHLETE ||
+        matchTeamId === undefined
+      ) {
+        throw ApiException.unprocessable(
+          'Every player statistic must reference an athlete from one of the match teams.',
+          'INVALID_MATCH_ROSTER',
+        );
+      }
+      if (users.has(roster.userId)) {
+        throw ApiException.unprocessable(
+          'Each player can appear only once in match statistics.',
+          'INVALID_PLAYER_STATS',
+        );
+      }
+      users.add(roster.userId);
+      return { ...stat, tournamentRoster: roster, matchTeamId };
+    });
+  }
+
+  private resolveResultingMvpTournamentRosterId(
+    match: MatchScoresheetTarget,
+    requestedMvpTournamentRosterId: number | null | undefined,
+    replacementStats: NormalizedPlayerStatistic[] | undefined,
+  ): number | null {
+    const currentMvpTournamentRosterId =
+      match.mvpMatchRoster && !match.mvpMatchRoster.isDeleted
+        ? match.mvpMatchRoster.tournamentRosterId
+        : null;
+    const resultingMvpTournamentRosterId =
+      requestedMvpTournamentRosterId === undefined
+        ? currentMvpTournamentRosterId
+        : requestedMvpTournamentRosterId;
+    if (resultingMvpTournamentRosterId === null) return null;
+    const resultingPlayerTournamentRosterIds = new Set(
+      (replacementStats ?? match.playerStatistics).map(
+        (stat: { tournamentRosterId: number }) => stat.tournamentRosterId,
+      ),
+    );
+    if (
+      !resultingPlayerTournamentRosterIds.has(resultingMvpTournamentRosterId)
+    ) {
+      this.invalidMvp();
+    }
+    return resultingMvpTournamentRosterId;
+  }
+
+  private findExistingMvpMatchRosterId(
+    match: MatchScoresheetTarget,
+    resultingMvpTournamentRosterId: number | null,
+  ): number | null {
+    if (resultingMvpTournamentRosterId === null) return null;
+    const statistic = match.playerStatistics.find(
+      (candidate) =>
+        candidate.tournamentRosterId === resultingMvpTournamentRosterId &&
+        candidate.matchRoster !== null &&
+        !candidate.matchRoster.isDeleted &&
+        candidate.matchRoster.status === MatchRosterStatus.AVAILABLE,
+    );
+    if (
+      statistic?.matchRosterId === null ||
+      statistic?.matchRosterId === undefined
+    ) {
+      return this.invalidMvp();
+    }
+    return statistic.matchRosterId;
+  }
+
+  private invalidMvp(): never {
+    throw ApiException.unprocessable(
+      'The match MVP must be present in the resulting player statistics.',
+      'INVALID_MATCH_MVP',
+    );
+  }
+
+  private async replacePlayerStatistics(
+    tx: MatchClient,
+    organizationId: number,
+    match: MatchScoresheetTarget,
+    stats: ResolvedPlayerStatistic[],
+  ): Promise<Map<number, number>> {
+    if (match.mvpMatchRosterId !== null) {
+      await tx.match.update({
+        where: { id: match.id },
+        data: { mvpMatchRosterId: null },
+      });
+    }
+    await tx.playerMatchStatistic.updateMany({
+      where: { matchId: match.id, organizationId, isDeleted: false },
+      data: { isDeleted: true },
+    });
+    const backingRosterIds = [
+      ...new Set(
+        match.playerStatistics
+          .map((stat) => stat.matchRosterId)
+          .filter((id): id is number => id !== null),
+      ),
+    ];
+    if (backingRosterIds.length > 0) {
+      await tx.matchRoster.updateMany({
+        where: {
+          id: { in: backingRosterIds },
+          matchId: match.id,
+          organizationId,
+          status: MatchRosterStatus.AVAILABLE,
+          isDeleted: false,
+        },
+        data: { isDeleted: true },
+      });
+    }
+
+    const createdRosterIds = new Map<number, number>();
+    for (const stat of stats) {
+      const { tournamentRoster, matchTeamId, tournamentRosterId, ...metrics } =
+        stat;
+      const matchRoster = await tx.matchRoster.create({
+        data: {
+          organizationId,
+          matchId: match.id,
+          matchTeamId,
+          tournamentRosterId,
+          userId: tournamentRoster.userId,
+          role: tournamentRoster.role,
+          jerseyNumberSnapshot: tournamentRoster.jerseyNumberSnapshot,
+          displayNameSnapshot: tournamentRoster.displayNameSnapshot,
+          status: MatchRosterStatus.AVAILABLE,
+        },
+        select: { id: true },
+      });
+      createdRosterIds.set(tournamentRosterId, matchRoster.id);
+      await tx.playerMatchStatistic.create({
+        data: {
+          organizationId,
+          matchId: match.id,
+          matchTeamId,
+          matchRosterId: matchRoster.id,
+          tournamentRosterId,
+          userId: tournamentRoster.userId,
+          ...metrics,
+        },
+      });
+    }
+    return createdRosterIds;
+  }
+
+  private sumPeriods(periods: MatchPeriodInputDto[]): {
+    homePoints: number;
+    awayPoints: number;
+  } {
+    return periods.reduce(
+      (total, period) => ({
+        homePoints: total.homePoints + period.homePoints,
+        awayPoints: total.awayPoints + period.awayPoints,
+      }),
+      { homePoints: 0, awayPoints: 0 },
+    );
+  }
+
+  private derivePlayedResult(
+    match: MatchScoresheetTarget,
+    periods: MatchPeriodInputDto[],
+    resultType: PlayedResultType,
+    nonOffendingTournamentTeamId: number | undefined,
+  ): DerivedMatchResult {
+    const court = this.sumPeriods(periods);
+    const home = this.findMatchSide(match, MatchSide.HOME);
+    const away = this.findMatchSide(match, MatchSide.AWAY);
+
+    if (resultType === LossType.NORMAL) {
+      const winnerTournamentTeamId =
+        court.homePoints > court.awayPoints
+          ? home.tournamentTeamId
+          : away.tournamentTeamId;
+      return this.buildDerivedResult(
+        home,
+        away,
+        court.homePoints,
+        court.awayPoints,
+        winnerTournamentTeamId,
+        LossType.NORMAL,
+        'PERIODS',
+      );
+    }
+
+    if (nonOffendingTournamentTeamId === undefined) {
+      throw new Error('DEFAULT offender validation invariant violated');
+    }
+    const winnerTournamentTeamId = nonOffendingTournamentTeamId;
+    const nonOffenderIsAhead =
+      winnerTournamentTeamId === home.tournamentTeamId
+        ? court.homePoints > court.awayPoints
+        : court.awayPoints > court.homePoints;
+    const homeScore = nonOffenderIsAhead
+      ? court.homePoints
+      : winnerTournamentTeamId === home.tournamentTeamId
+        ? 2
+        : 0;
+    const awayScore = nonOffenderIsAhead
+      ? court.awayPoints
+      : winnerTournamentTeamId === away.tournamentTeamId
+        ? 2
+        : 0;
+
+    return this.buildDerivedResult(
+      home,
+      away,
+      homeScore,
+      awayScore,
+      winnerTournamentTeamId,
+      LossType.DEFAULT,
+      nonOffenderIsAhead ? 'PERIODS' : 'AWARDED',
+    );
+  }
+
+  private findMatchSide(
+    match: MatchScoresheetTarget,
+    side: MatchSide,
+  ): MatchScoresheetTarget['teams'][number] {
+    const team = match.teams.find((candidate) => candidate.side === side);
+    if (!team) throw new Error(`Active ${side} MatchTeam invariant violated`);
+    return team;
+  }
+
+  private buildDerivedResult(
+    home: MatchScoresheetTarget['teams'][number],
+    away: MatchScoresheetTarget['teams'][number],
+    homeScore: number,
+    awayScore: number,
+    winnerTournamentTeamId: number,
+    lossType: LossType,
+    scoreSource: MatchScoreSource,
+  ): DerivedMatchResult {
+    const sideResult = (
+      team: MatchScoresheetTarget['teams'][number],
+      finalScore: number,
+    ): DerivedMatchTeamResult => {
+      const isWinner = team.tournamentTeamId === winnerTournamentTeamId;
+      return {
+        matchTeamId: team.id,
+        tournamentTeamId: team.tournamentTeamId,
+        finalScore,
+        result: isWinner ? MatchResult.WIN : MatchResult.LOSS,
+        lossType: isWinner ? null : lossType,
+        isWinner,
+      };
+    };
+    return {
+      home: sideResult(home, homeScore),
+      away: sideResult(away, awayScore),
+      winnerTournamentTeamId,
+      scoreSource,
+    };
+  }
+
+  private async writeOfficialResult(
+    tx: MatchClient,
+    result: DerivedMatchResult,
+  ): Promise<void> {
+    for (const team of [result.home, result.away]) {
+      await tx.matchTeam.update({
+        where: { id: team.matchTeamId },
+        data: {
+          finalScore: team.finalScore,
+          result: team.result,
+          lossType: team.lossType,
+          isWinner: team.isWinner,
+        },
+      });
+    }
+  }
+
+  private async synchronizeLinkedSlotWinner(
+    tx: MatchClient,
+    match: MatchScoresheetTarget,
+    slot: MatchScoresheetTarget['bracketSlots'][number] | undefined,
+    winnerTournamentTeamId: number,
+  ): Promise<void> {
+    if (!slot || slot.winnerTournamentTeamId === winnerTournamentTeamId) {
+      return;
+    }
+    await tx.tournamentBracketSlot.update({
+      where: { id: slot.id },
+      data: { winnerTournamentTeamId },
+    });
+    if (match.tournament.status === TournamentStatus.COMPLETED) {
+      await tx.tournament.update({
+        where: { id: match.tournamentId },
+        data: {
+          status: TournamentStatus.IN_PROGRESS,
+          championTournamentTeamId: null,
+        },
+      });
+    }
+  }
+
+  private sumPlayerPoints(
+    stats: ResolvedPlayerStatistic[],
+    result: DerivedMatchResult,
+  ): Record<MatchSide, number> | null {
+    if (stats.length === 0 || stats.some((stat) => stat.pts === null)) {
+      return null;
+    }
+    return {
+      [MatchSide.HOME]: stats
+        .filter((stat) => stat.matchTeamId === result.home.matchTeamId)
+        .reduce((sum, stat) => sum + (stat.pts ?? 0), 0),
+      [MatchSide.AWAY]: stats
+        .filter((stat) => stat.matchTeamId === result.away.matchTeamId)
+        .reduce((sum, stat) => sum + (stat.pts ?? 0), 0),
+    };
+  }
+
+  private warnPointsMismatch(
+    matchId: number,
+    summary: ResultCommitSummary,
+  ): void {
+    if (
+      summary.result.scoreSource !== 'PERIODS' ||
+      summary.playerPoints === null
+    ) {
+      return;
+    }
+    const sides = [
+      { side: MatchSide.HOME, result: summary.result.home },
+      { side: MatchSide.AWAY, result: summary.result.away },
+    ];
+    for (const entry of sides) {
+      const playerPoints = summary.playerPoints[entry.side];
+      if (playerPoints === entry.result.finalScore) continue;
+      this.logger.warn({
+        event: 'match_player_points_mismatch',
+        matchId,
+        side: entry.side,
+        playerPoints,
+        officialScore: entry.result.finalScore,
+      });
+    }
+  }
+
   async update(
     organizationId: number,
     id: number,
@@ -802,11 +1782,42 @@ export class MatchesService {
     );
     const matchIds = [homeId, awayId].sort((left, right) => left - right);
     if (slotIds[0] !== matchIds[0] || slotIds[1] !== matchIds[1]) {
-      throw ApiException.unprocessable(
-        'The match participants do not match the bracket slot participants.',
-        'MATCH_TEAMS_MISMATCH',
-      );
+      throw this.matchTeamsMismatch();
     }
+  }
+
+  private assertLinkedSlotMatchesParticipants(
+    match: MatchScoresheetTarget,
+  ): MatchScoresheetTarget['bracketSlots'][number] | undefined {
+    const slot = match.bracketSlots[0];
+    if (!slot) return undefined;
+    if (
+      slot.homeTournamentTeamId === null ||
+      slot.awayTournamentTeamId === null
+    ) {
+      throw this.matchTeamsMismatch();
+    }
+    const slotIds = [slot.homeTournamentTeamId, slot.awayTournamentTeamId].sort(
+      (left, right) => left - right,
+    );
+    const matchIds = match.teams
+      .map((team) => team.tournamentTeamId)
+      .sort((left, right) => left - right);
+    if (
+      matchIds.length !== 2 ||
+      slotIds[0] !== matchIds[0] ||
+      slotIds[1] !== matchIds[1]
+    ) {
+      throw this.matchTeamsMismatch();
+    }
+    return slot;
+  }
+
+  private matchTeamsMismatch(): ApiException {
+    return ApiException.unprocessable(
+      'The match participants do not match the bracket slot participants.',
+      'MATCH_TEAMS_MISMATCH',
+    );
   }
 
   private async assertNoScoresheet(

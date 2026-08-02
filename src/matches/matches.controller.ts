@@ -39,6 +39,10 @@ import {
   MatchDetailResponseDto,
   MatchSummaryResponseDto,
 } from './dto/match-response.dto';
+import {
+  SaveMatchDraftDto,
+  SubmitMatchResultDto,
+} from './dto/match-scoresheet.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import { MatchesService } from './matches.service';
 
@@ -104,6 +108,55 @@ export class MatchesController {
     @CurrentUser() user: JwtPayload,
   ): Promise<MatchDetailResponseDto> {
     return this.matchesService.update(user.organizationId as number, id, dto);
+  }
+
+  @Post(':id/draft')
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Save a match scoresheet draft' })
+  @ApiParam({ name: 'id', example: 501, description: 'Match id.' })
+  @ApiOkResponse({ type: MatchDetailResponseDto })
+  draft(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: MatchActionDto,
+    @Body() dto: SaveMatchDraftDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<MatchDetailResponseDto> {
+    return this.matchesService.draft(user.organizationId as number, id, dto);
+  }
+
+  @Post(':id/result')
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit a match result' })
+  @ApiParam({ name: 'id', example: 501, description: 'Match id.' })
+  @ApiOkResponse({ type: MatchDetailResponseDto })
+  submitResult(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: MatchActionDto,
+    @Body() dto: SubmitMatchResultDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<MatchDetailResponseDto> {
+    return this.matchesService.submitResult(
+      user.organizationId as number,
+      id,
+      dto,
+    );
+  }
+
+  @Post(':id/reopen')
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reopen a finished match for correction' })
+  @ApiParam({ name: 'id', example: 501, description: 'Match id.' })
+  @ApiOkResponse({ type: MatchDetailResponseDto })
+  reopen(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Query() _query: MatchActionDto,
+    @Body() _body: MatchActionDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<MatchDetailResponseDto> {
+    return this.matchesService.reopen(user.organizationId as number, id);
   }
 
   @Post(':id/postpone')
