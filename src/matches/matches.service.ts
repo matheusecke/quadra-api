@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   LossType,
+  MatchResult,
   MatchRosterStatus,
   MatchSide,
   MatchStatus,
@@ -22,6 +23,7 @@ import {
   MatchPeriodInputDto,
   MatchPlayerStatisticInputDto,
   SaveMatchDraftDto,
+  SubmitMatchResultDto,
 } from './dto/match-scoresheet.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import {
@@ -161,7 +163,7 @@ export const matchScoresheetTargetSelect = {
   tournament: { select: { status: true } },
   teams: {
     where: { isDeleted: false },
-    select: { id: true, tournamentTeamId: true },
+    select: { id: true, side: true, tournamentTeamId: true },
   },
   playerStatistics: {
     where: { isDeleted: false },
@@ -231,6 +233,33 @@ type ResolvedPlayerStatistic = NormalizedPlayerStatistic & {
   tournamentRoster: TournamentRosterForMatch;
   matchTeamId: number;
 };
+
+type DerivedMatchTeamResult = {
+  matchTeamId: number;
+  tournamentTeamId: number;
+  finalScore: number;
+  result: MatchResult;
+  lossType: LossType | null;
+  isWinner: boolean;
+};
+
+type DerivedMatchResult = {
+  home: DerivedMatchTeamResult;
+  away: DerivedMatchTeamResult;
+  winnerTournamentTeamId: number;
+  scoreSource: MatchScoreSource;
+};
+
+type ResultCommitSummary = {
+  result: DerivedMatchResult;
+  playerPoints: Record<MatchSide, number> | null;
+};
+
+// NOTE: Prisma 7 generates enums as a const object plus a string-literal
+// union type, not a namespace, so `LossType.NORMAL` cannot be used in a
+// type position (`LossType.NORMAL | LossType.DEFAULT` is TS2702). This
+// alias expresses the same "played result" subset as a valid type.
+type PlayedResultType = Exclude<LossType, 'FORFEIT'>;
 
 type MatchClient = Pick<
   Prisma.TransactionClient,
@@ -691,6 +720,17 @@ export class MatchesService {
     return this.findOne(organizationId, id);
   }
 
+  async submitResult(
+    organizationId: number,
+    id: number,
+    dto: SubmitMatchResultDto,
+  ): Promise<MatchDetailResponseDto> {
+    await this.runSerializable((tx) =>
+      this.saveResult(tx, organizationId, id, dto),
+    );
+    return this.findOne(organizationId, id);
+  }
+
   private async saveDraft(
     tx: MatchClient,
     organizationId: number,
@@ -766,6 +806,86 @@ export class MatchesService {
     });
   }
 
+  private async saveResult(
+    tx: MatchClient,
+    organizationId: number,
+    id: number,
+    dto: SubmitMatchResultDto,
+  ): Promise<ResultCommitSummary> {
+    const current = await this.findScoresheetTargetOrThrow(
+      tx,
+      organizationId,
+      id,
+    );
+    this.assertScoresheetTournamentMutable(current.tournament.status);
+    this.assertResultAllowed(current.status);
+
+    const resultType = dto.resultType ?? LossType.NORMAL;
+    if (resultType === LossType.FORFEIT) {
+      throw this.invalidResultPayload();
+    }
+    this.assertPlayedResultPayload(dto, resultType);
+    this.assertPeriodStructure(dto.periods);
+    this.assertPlayedResultPeriods(dto.periods, resultType);
+    const nonOffendingTournamentTeamId =
+      resultType === LossType.DEFAULT
+        ? this.findNonOffendingTournamentTeamId(
+            current,
+            dto.offendingTournamentTeamId,
+          )
+        : undefined;
+
+    const normalizedStats = this.normalizePlayerStatistics(dto.playerStats);
+    const resolvedStats = await this.resolvePlayerStatistics(
+      tx,
+      organizationId,
+      current,
+      normalizedStats,
+    );
+    const resultingMvpTournamentRosterId =
+      this.resolveResultingMvpTournamentRosterId(
+        current,
+        dto.mvpTournamentRosterId,
+        normalizedStats,
+      );
+    const result = this.derivePlayedResult(
+      current,
+      dto.periods,
+      resultType,
+      nonOffendingTournamentTeamId,
+    );
+
+    await this.replacePeriods(tx, organizationId, id, dto.periods);
+    const createdRosterIds = await this.replacePlayerStatistics(
+      tx,
+      organizationId,
+      current,
+      resolvedStats,
+    );
+    const mvpMatchRosterId =
+      resultingMvpTournamentRosterId === null
+        ? null
+        : (createdRosterIds.get(resultingMvpTournamentRosterId) ??
+          this.invalidMvp());
+
+    await this.writeOfficialResult(tx, result);
+    const now = new Date();
+    await tx.match.update({
+      where: { id },
+      data: {
+        status: MatchStatus.FINISHED,
+        startedAt: current.startedAt ?? now,
+        endedAt: now,
+        mvpMatchRosterId,
+      },
+    });
+
+    return {
+      result,
+      playerPoints: this.sumPlayerPoints(resolvedStats, result),
+    };
+  }
+
   private async replacePeriods(
     tx: MatchClient,
     organizationId: number,
@@ -825,6 +945,82 @@ export class MatchesService {
         'INVALID_STATUS_TRANSITION',
       );
     }
+  }
+
+  private assertResultAllowed(status: MatchStatus): void {
+    if (status !== MatchStatus.SCHEDULED && status !== MatchStatus.LIVE) {
+      throw ApiException.conflict(
+        'Results can only be submitted for scheduled or live matches.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+  }
+
+  private assertPlayedResultPayload(
+    dto: SubmitMatchResultDto,
+    resultType: PlayedResultType,
+  ): asserts dto is SubmitMatchResultDto & {
+    periods: MatchPeriodInputDto[];
+    playerStats: MatchPlayerStatisticInputDto[];
+  } {
+    if (
+      dto.periods === undefined ||
+      dto.playerStats === undefined ||
+      (resultType === LossType.NORMAL &&
+        dto.offendingTournamentTeamId !== undefined) ||
+      (resultType === LossType.DEFAULT &&
+        dto.offendingTournamentTeamId === undefined)
+    ) {
+      throw this.invalidResultPayload();
+    }
+  }
+
+  private invalidResultPayload(): ApiException {
+    return ApiException.badRequest(
+      'Invalid data in request.',
+      'VALIDATION_ERROR',
+    );
+  }
+
+  private assertPlayedResultPeriods(
+    periods: MatchPeriodInputDto[],
+    resultType: PlayedResultType,
+  ): void {
+    const { homePoints, awayPoints } = this.sumPeriods(periods);
+    if (
+      resultType === LossType.NORMAL &&
+      (periods.length < 4 || homePoints === awayPoints)
+    ) {
+      throw ApiException.unprocessable(
+        'A normal result requires four complete regular periods and a non-tied score.',
+        'INVALID_MATCH_PERIODS',
+      );
+    }
+    if (resultType === LossType.DEFAULT && periods.length === 0) {
+      throw ApiException.unprocessable(
+        'A default result requires at least one period.',
+        'INVALID_MATCH_PERIODS',
+      );
+    }
+  }
+
+  private findNonOffendingTournamentTeamId(
+    match: MatchScoresheetTarget,
+    offendingTournamentTeamId: number | undefined,
+  ): number {
+    const offender = match.teams.find(
+      (team) => team.tournamentTeamId === offendingTournamentTeamId,
+    );
+    const nonOffender = match.teams.find(
+      (team) => team.tournamentTeamId !== offendingTournamentTeamId,
+    );
+    if (!offender || !nonOffender || match.teams.length !== 2) {
+      throw ApiException.unprocessable(
+        'The offending team must be one of the match participants.',
+        'INVALID_OFFENDING_TEAM',
+      );
+    }
+    return nonOffender.tournamentTeamId;
   }
 
   private assertPeriodStructure(periods?: MatchPeriodInputDto[]): void {
@@ -1065,6 +1261,149 @@ export class MatchesService {
       });
     }
     return createdRosterIds;
+  }
+
+  private sumPeriods(periods: MatchPeriodInputDto[]): {
+    homePoints: number;
+    awayPoints: number;
+  } {
+    return periods.reduce(
+      (total, period) => ({
+        homePoints: total.homePoints + period.homePoints,
+        awayPoints: total.awayPoints + period.awayPoints,
+      }),
+      { homePoints: 0, awayPoints: 0 },
+    );
+  }
+
+  private derivePlayedResult(
+    match: MatchScoresheetTarget,
+    periods: MatchPeriodInputDto[],
+    resultType: PlayedResultType,
+    nonOffendingTournamentTeamId: number | undefined,
+  ): DerivedMatchResult {
+    const court = this.sumPeriods(periods);
+    const home = this.findMatchSide(match, MatchSide.HOME);
+    const away = this.findMatchSide(match, MatchSide.AWAY);
+
+    if (resultType === LossType.NORMAL) {
+      const winnerTournamentTeamId =
+        court.homePoints > court.awayPoints
+          ? home.tournamentTeamId
+          : away.tournamentTeamId;
+      return this.buildDerivedResult(
+        home,
+        away,
+        court.homePoints,
+        court.awayPoints,
+        winnerTournamentTeamId,
+        LossType.NORMAL,
+        'PERIODS',
+      );
+    }
+
+    if (nonOffendingTournamentTeamId === undefined) {
+      throw new Error('DEFAULT offender validation invariant violated');
+    }
+    const winnerTournamentTeamId = nonOffendingTournamentTeamId;
+    const nonOffenderIsAhead =
+      winnerTournamentTeamId === home.tournamentTeamId
+        ? court.homePoints > court.awayPoints
+        : court.awayPoints > court.homePoints;
+    const homeScore = nonOffenderIsAhead
+      ? court.homePoints
+      : winnerTournamentTeamId === home.tournamentTeamId
+        ? 2
+        : 0;
+    const awayScore = nonOffenderIsAhead
+      ? court.awayPoints
+      : winnerTournamentTeamId === away.tournamentTeamId
+        ? 2
+        : 0;
+
+    return this.buildDerivedResult(
+      home,
+      away,
+      homeScore,
+      awayScore,
+      winnerTournamentTeamId,
+      LossType.DEFAULT,
+      nonOffenderIsAhead ? 'PERIODS' : 'AWARDED',
+    );
+  }
+
+  private findMatchSide(
+    match: MatchScoresheetTarget,
+    side: MatchSide,
+  ): MatchScoresheetTarget['teams'][number] {
+    const team = match.teams.find((candidate) => candidate.side === side);
+    if (!team) throw new Error(`Active ${side} MatchTeam invariant violated`);
+    return team;
+  }
+
+  private buildDerivedResult(
+    home: MatchScoresheetTarget['teams'][number],
+    away: MatchScoresheetTarget['teams'][number],
+    homeScore: number,
+    awayScore: number,
+    winnerTournamentTeamId: number,
+    lossType: LossType,
+    scoreSource: MatchScoreSource,
+  ): DerivedMatchResult {
+    const sideResult = (
+      team: MatchScoresheetTarget['teams'][number],
+      finalScore: number,
+    ): DerivedMatchTeamResult => {
+      const isWinner = team.tournamentTeamId === winnerTournamentTeamId;
+      return {
+        matchTeamId: team.id,
+        tournamentTeamId: team.tournamentTeamId,
+        finalScore,
+        result: isWinner ? MatchResult.WIN : MatchResult.LOSS,
+        lossType: isWinner ? null : lossType,
+        isWinner,
+      };
+    };
+    return {
+      home: sideResult(home, homeScore),
+      away: sideResult(away, awayScore),
+      winnerTournamentTeamId,
+      scoreSource,
+    };
+  }
+
+  private async writeOfficialResult(
+    tx: MatchClient,
+    result: DerivedMatchResult,
+  ): Promise<void> {
+    for (const team of [result.home, result.away]) {
+      await tx.matchTeam.update({
+        where: { id: team.matchTeamId },
+        data: {
+          finalScore: team.finalScore,
+          result: team.result,
+          lossType: team.lossType,
+          isWinner: team.isWinner,
+        },
+      });
+    }
+  }
+
+  private sumPlayerPoints(
+    stats: ResolvedPlayerStatistic[],
+    result: DerivedMatchResult,
+  ): Record<MatchSide, number> | null {
+    if (stats.length === 0 || stats.some((stat) => stat.pts === null)) {
+      return null;
+    }
+    return {
+      [MatchSide.HOME]: stats
+        .filter((stat) => stat.matchTeamId === result.home.matchTeamId)
+        .reduce((sum, stat) => sum + (stat.pts ?? 0), 0),
+      [MatchSide.AWAY]: stats
+        .filter((stat) => stat.matchTeamId === result.away.matchTeamId)
+        .reduce((sum, stat) => sum + (stat.pts ?? 0), 0),
+    };
   }
 
   async update(

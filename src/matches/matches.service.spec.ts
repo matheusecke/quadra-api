@@ -246,8 +246,8 @@ const scoresheetTargetRow = {
   mvpMatchRosterId: null as number | null,
   tournament: { status: TournamentStatus.IN_PROGRESS as TournamentStatus },
   teams: [
-    { id: 601, tournamentTeamId: 41 },
-    { id: 602, tournamentTeamId: 52 },
+    { id: 601, side: MatchSide.HOME, tournamentTeamId: 41 },
+    { id: 602, side: MatchSide.AWAY, tournamentTeamId: 52 },
   ],
   playerStatistics: [] as {
     tournamentRosterId: number;
@@ -284,6 +284,47 @@ const awayAthlete = {
   status: RosterStatus.ACTIVE,
   jerseyNumberSnapshot: 12,
   displayNameSnapshot: 'Beatriz Lima',
+};
+
+const resultNow = new Date('2026-08-15T21:08:44.000Z');
+
+const normalPeriods = [
+  {
+    periodNumber: 1,
+    periodType: PeriodType.REGULAR,
+    homePoints: 18,
+    awayPoints: 15,
+  },
+  {
+    periodNumber: 2,
+    periodType: PeriodType.REGULAR,
+    homePoints: 20,
+    awayPoints: 17,
+  },
+  {
+    periodNumber: 3,
+    periodType: PeriodType.REGULAR,
+    homePoints: 16,
+    awayPoints: 18,
+  },
+  {
+    periodNumber: 4,
+    periodType: PeriodType.REGULAR,
+    homePoints: 18,
+    awayPoints: 18,
+  },
+];
+
+const resultPlayerStats = [
+  { tournamentRosterId: 88, pts: 72 },
+  { tournamentRosterId: 91, pts: 68 },
+];
+
+const normalResultDto: SubmitMatchResultDto = {
+  resultType: LossType.NORMAL,
+  periods: normalPeriods,
+  playerStats: resultPlayerStats,
+  mvpTournamentRosterId: 88,
 };
 
 async function captureApiException(
@@ -390,6 +431,18 @@ describe('MatchesService', () => {
       .mockResolvedValueOnce({ id: 701 })
       .mockResolvedValueOnce({ id: 702 });
     mockTx.playerMatchStatistic.create.mockResolvedValue({ id: 801 });
+  }
+
+  function arrangeResult(
+    overrides: Partial<typeof scoresheetTargetRow> = {},
+  ): void {
+    arrangeDraft(overrides);
+    mockPrisma.match.findFirst.mockResolvedValue({
+      ...detailRow,
+      status: MatchStatus.FINISHED,
+      startedAt: resultNow,
+      endedAt: resultNow,
+    });
   }
 
   describe('draft periods', () => {
@@ -1067,6 +1120,402 @@ describe('MatchesService', () => {
           status: MatchStatus.LIVE,
           startedAt: expect.any(Date),
           endedAt: null,
+        },
+      });
+    });
+  });
+
+  describe('played results', () => {
+    it.each([
+      MatchStatus.FINISHED,
+      MatchStatus.POSTPONED,
+      MatchStatus.CANCELLED,
+    ])('rejects result submission from %s', async (status) => {
+      arrangeResult({ status });
+      const error = await captureApiException(
+        service.submitResult(42, 501, normalResultDto),
+      );
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_STATUS_TRANSITION',
+        message: 'Results can only be submitted for scheduled or live matches.',
+      });
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a result for a cancelled tournament before any write', async () => {
+      arrangeResult({
+        tournament: { status: TournamentStatus.CANCELLED },
+      });
+      const error = await captureApiException(
+        service.submitResult(42, 501, normalResultDto),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'TOURNAMENT_NOT_MUTABLE',
+        message:
+          'Match scoresheets cannot be changed for a cancelled tournament.',
+      });
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { name: 'periods omitted', dto: { playerStats: [] } },
+      { name: 'playerStats omitted', dto: { periods: normalPeriods } },
+      {
+        name: 'DEFAULT playerStats omitted',
+        dto: {
+          resultType: LossType.DEFAULT,
+          offendingTournamentTeamId: 52,
+          periods: normalPeriods.slice(0, 1),
+        },
+      },
+    ])('rejects an incomplete played payload: $name', async ({ dto }) => {
+      arrangeResult();
+      const error = await captureApiException(
+        service.submitResult(42, 501, dto),
+      );
+      expect(error.getStatus()).toBe(HttpStatus.BAD_REQUEST);
+      expect(apiError(error)).toEqual({
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid data in request.',
+      });
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects offendingTournamentTeamId for NORMAL', async () => {
+      arrangeResult();
+      const error = await captureApiException(
+        service.submitResult(42, 501, {
+          ...normalResultDto,
+          offendingTournamentTeamId: 52,
+        }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid data in request.',
+      });
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'fewer than four periods',
+        periods: normalPeriods.slice(0, 3),
+      },
+      {
+        name: 'tied final court score',
+        periods: normalPeriods.map((period) => ({
+          ...period,
+          homePoints: 10,
+          awayPoints: 10,
+        })),
+      },
+    ])('rejects an incomplete NORMAL result: $name', async ({ periods }) => {
+      arrangeResult();
+      const error = await captureApiException(
+        service.submitResult(42, 501, {
+          resultType: LossType.NORMAL,
+          periods,
+          playerStats: [],
+        }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_MATCH_PERIODS',
+        message:
+          'A normal result requires four complete regular periods and a non-tied score.',
+      });
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('defaults an omitted resultType to NORMAL', async () => {
+      arrangeResult();
+      await service.submitResult(42, 501, {
+        periods: normalPeriods,
+        playerStats: resultPlayerStats,
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses one timestamp for direct SCHEDULED to FINISHED entry', async () => {
+      jest.useFakeTimers({ now: resultNow });
+      try {
+        arrangeResult();
+        await service.submitResult(42, 501, normalResultDto);
+        expect(mockTx.match.update).toHaveBeenLastCalledWith({
+          where: { id: 501 },
+          data: {
+            status: MatchStatus.FINISHED,
+            startedAt: resultNow,
+            endedAt: resultNow,
+            mvpMatchRosterId: 701,
+          },
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('preserves a LIVE startedAt and sets endedAt to now', async () => {
+      const startedAt = new Date('2026-08-15T20:00:00.000Z');
+      jest.useFakeTimers({ now: resultNow });
+      try {
+        arrangeResult({ status: MatchStatus.LIVE, startedAt });
+        await service.submitResult(42, 501, normalResultDto);
+        expect(mockTx.match.update).toHaveBeenLastCalledWith({
+          where: { id: 501 },
+          data: {
+            status: MatchStatus.FINISHED,
+            startedAt,
+            endedAt: resultNow,
+            mvpMatchRosterId: 701,
+          },
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('repairs a null LIVE startedAt with the result timestamp', async () => {
+      jest.useFakeTimers({ now: resultNow });
+      try {
+        arrangeResult({ status: MatchStatus.LIVE, startedAt: null });
+        await service.submitResult(42, 501, normalResultDto);
+        expect(mockTx.match.update).toHaveBeenLastCalledWith({
+          where: { id: 501 },
+          data: {
+            status: MatchStatus.FINISHED,
+            startedAt: resultNow,
+            endedAt: resultNow,
+            mvpMatchRosterId: 701,
+          },
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('fully replaces the scoresheet and derives a NORMAL home win', async () => {
+      arrangeResult();
+      await service.submitResult(42, 501, normalResultDto);
+
+      expect(mockTx.matchPeriod.updateMany).toHaveBeenCalledWith({
+        where: { matchId: 501, organizationId: 42, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchPeriod.createMany).toHaveBeenCalledWith({
+        data: normalPeriods.map((period) => ({
+          organizationId: 42,
+          matchId: 501,
+          ...period,
+          startedAt: null,
+          endedAt: null,
+        })),
+      });
+      expect(mockTx.playerMatchStatistic.updateMany).toHaveBeenCalledTimes(1);
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 601 },
+        data: {
+          finalScore: 72,
+          result: MatchResult.WIN,
+          lossType: null,
+          isWinner: true,
+        },
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(2, {
+        where: { id: 602 },
+        data: {
+          finalScore: 68,
+          result: MatchResult.LOSS,
+          lossType: LossType.NORMAL,
+          isWinner: false,
+        },
+      });
+    });
+
+    it('validates all played-result statistics before replacing periods', async () => {
+      arrangeResult();
+      const error = await captureApiException(
+        service.submitResult(42, 501, {
+          periods: normalPeriods,
+          playerStats: [
+            { tournamentRosterId: 88, pts: 72 },
+            { tournamentRosterId: 91, pts: null },
+          ],
+        }),
+      );
+      expect(apiError(error).code).toBe('INVALID_PLAYER_STATS');
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.matchTeam.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'missing offender',
+        dto: {
+          resultType: LossType.DEFAULT,
+          periods: normalPeriods.slice(0, 1),
+          playerStats: [],
+        },
+        expectedCode: 'VALIDATION_ERROR',
+        expectedMessage: 'Invalid data in request.',
+      },
+      {
+        name: 'non-participant offender',
+        dto: {
+          resultType: LossType.DEFAULT,
+          offendingTournamentTeamId: 999,
+          periods: normalPeriods.slice(0, 1),
+          playerStats: [],
+        },
+        expectedCode: 'INVALID_OFFENDING_TEAM',
+        expectedMessage:
+          'The offending team must be one of the match participants.',
+      },
+      {
+        name: 'empty period set',
+        dto: {
+          resultType: LossType.DEFAULT,
+          offendingTournamentTeamId: 52,
+          periods: [],
+          playerStats: [],
+        },
+        expectedCode: 'INVALID_MATCH_PERIODS',
+        expectedMessage: 'A default result requires at least one period.',
+      },
+    ])(
+      'rejects DEFAULT with $name',
+      async ({ dto, expectedCode, expectedMessage }) => {
+        arrangeResult();
+        const error = await captureApiException(
+          service.submitResult(42, 501, dto),
+        );
+        expect(apiError(error)).toEqual({
+          code: expectedCode,
+          message: expectedMessage,
+        });
+        expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('preserves the court score when the DEFAULT non-offender is ahead', async () => {
+      arrangeResult();
+      await service.submitResult(42, 501, {
+        resultType: LossType.DEFAULT,
+        offendingTournamentTeamId: 41,
+        periods: [
+          {
+            periodNumber: 1,
+            periodType: PeriodType.REGULAR,
+            homePoints: 18,
+            awayPoints: 22,
+          },
+        ],
+        playerStats: [],
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 601 },
+        data: {
+          finalScore: 18,
+          result: MatchResult.LOSS,
+          lossType: LossType.DEFAULT,
+          isWinner: false,
+        },
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(2, {
+        where: { id: 602 },
+        data: {
+          finalScore: 22,
+          result: MatchResult.WIN,
+          lossType: null,
+          isWinner: true,
+        },
+      });
+    });
+
+    it.each([
+      { homePoints: 18, awayPoints: 22 },
+      { homePoints: 22, awayPoints: 22 },
+    ])(
+      'awards an oriented 2-0 DEFAULT when the non-offender is not ahead: %o',
+      async ({ homePoints, awayPoints }) => {
+        arrangeResult();
+        await service.submitResult(42, 501, {
+          resultType: LossType.DEFAULT,
+          offendingTournamentTeamId: 52,
+          periods: [
+            {
+              periodNumber: 1,
+              periodType: PeriodType.REGULAR,
+              homePoints,
+              awayPoints,
+            },
+          ],
+          playerStats: [],
+        });
+        expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(1, {
+          where: { id: 601 },
+          data: {
+            finalScore: 2,
+            result: MatchResult.WIN,
+            lossType: null,
+            isWinner: true,
+          },
+        });
+        expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(2, {
+          where: { id: 602 },
+          data: {
+            finalScore: 0,
+            result: MatchResult.LOSS,
+            lossType: LossType.DEFAULT,
+            isWinner: false,
+          },
+        });
+      },
+    );
+
+    it('returns the existing Phase 8 detail model after commit', async () => {
+      arrangeResult();
+      mockPrisma.match.findFirst.mockResolvedValue({
+        ...detailRow,
+        status: MatchStatus.FINISHED,
+        startedAt: resultNow,
+        endedAt: resultNow,
+        periods: normalPeriods.map((period, index) => ({
+          id: index + 1,
+          ...period,
+          startedAt: null,
+          endedAt: null,
+        })),
+        teams: [
+          {
+            ...detailRow.teams[0],
+            finalScore: 72,
+            result: MatchResult.WIN,
+            isWinner: true,
+          },
+          {
+            ...detailRow.teams[1],
+            finalScore: 68,
+            result: MatchResult.LOSS,
+            lossType: LossType.NORMAL,
+            isWinner: false,
+          },
+        ],
+      });
+      const response = await service.submitResult(42, 501, normalResultDto);
+      expect(response).toMatchObject({
+        id: 501,
+        status: MatchStatus.FINISHED,
+        scoreSource: 'PERIODS',
+        homeTeam: { score: 72, result: MatchResult.WIN, isWinner: true },
+        awayTeam: {
+          score: 68,
+          result: MatchResult.LOSS,
+          lossType: LossType.NORMAL,
+          isWinner: false,
         },
       });
     });
