@@ -1,4 +1,4 @@
-import { HttpStatus } from '@nestjs/common';
+import { HttpStatus, Logger } from '@nestjs/common';
 import { expect, jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
 import {
@@ -1518,6 +1518,374 @@ describe('MatchesService', () => {
           isWinner: false,
         },
       });
+    });
+  });
+
+  describe('forfeit results', () => {
+    const forfeitDto: SubmitMatchResultDto = {
+      resultType: LossType.FORFEIT,
+      offendingTournamentTeamId: 52,
+    };
+
+    it.each([
+      { name: 'periods', extra: { periods: [] } },
+      { name: 'playerStats', extra: { playerStats: [] } },
+      { name: 'MVP', extra: { mvpTournamentRosterId: null } },
+    ])(
+      'rejects prohibited $name even when empty or null',
+      async ({ extra }) => {
+        arrangeResult();
+        const error = await captureApiException(
+          service.submitResult(42, 501, { ...forfeitDto, ...extra }),
+        );
+        expect(error.getStatus()).toBe(HttpStatus.BAD_REQUEST);
+        expect(apiError(error)).toEqual({
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid data in request.',
+        });
+        expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+        expect(mockTx.match.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { name: 'missing', offendingTournamentTeamId: undefined },
+      { name: 'not a participant', offendingTournamentTeamId: 999 },
+    ])('rejects a $name offender', async ({ offendingTournamentTeamId }) => {
+      arrangeResult();
+      const dto: SubmitMatchResultDto = {
+        resultType: LossType.FORFEIT,
+        ...(offendingTournamentTeamId === undefined
+          ? {}
+          : { offendingTournamentTeamId }),
+      };
+      const error = await captureApiException(
+        service.submitResult(42, 501, dto),
+      );
+      expect(apiError(error)).toEqual(
+        offendingTournamentTeamId === undefined
+          ? { code: 'VALIDATION_ERROR', message: 'Invalid data in request.' }
+          : {
+              code: 'INVALID_OFFENDING_TEAM',
+              message:
+                'The offending team must be one of the match participants.',
+            },
+      );
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('awards 20-0 to HOME and marks the AWAY offender as the loser', async () => {
+      arrangeResult();
+      await service.submitResult(42, 501, forfeitDto);
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 601 },
+        data: {
+          finalScore: 20,
+          result: MatchResult.WIN,
+          lossType: null,
+          isWinner: true,
+        },
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(2, {
+        where: { id: 602 },
+        data: {
+          finalScore: 0,
+          result: MatchResult.LOSS,
+          lossType: LossType.FORFEIT,
+          isWinner: false,
+        },
+      });
+    });
+
+    it('orients 20-0 to AWAY when HOME forfeits', async () => {
+      arrangeResult();
+      await service.submitResult(42, 501, {
+        resultType: LossType.FORFEIT,
+        offendingTournamentTeamId: 41,
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 601 },
+        data: {
+          finalScore: 0,
+          result: MatchResult.LOSS,
+          lossType: LossType.FORFEIT,
+          isWinner: false,
+        },
+      });
+      expect(mockTx.matchTeam.update).toHaveBeenNthCalledWith(2, {
+        where: { id: 602 },
+        data: {
+          finalScore: 20,
+          result: MatchResult.WIN,
+          lossType: null,
+          isWinner: true,
+        },
+      });
+    });
+
+    it('clears an earlier draft and only its statistic-backed AVAILABLE rosters', async () => {
+      arrangeResult({
+        mvpMatchRosterId: 710,
+        mvpMatchRoster: { tournamentRosterId: 88, isDeleted: false },
+        playerStatistics: [
+          {
+            tournamentRosterId: 88,
+            matchRosterId: 710,
+            matchRoster: {
+              id: 710,
+              status: MatchRosterStatus.AVAILABLE,
+              isDeleted: false,
+            },
+          },
+        ],
+      });
+      await service.submitResult(42, 501, forfeitDto);
+      expect(mockTx.matchPeriod.updateMany).toHaveBeenCalledWith({
+        where: { matchId: 501, organizationId: 42, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchPeriod.createMany).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.updateMany).toHaveBeenCalledWith({
+        where: { matchId: 501, organizationId: 42, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchRoster.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: [710] },
+          matchId: 501,
+          organizationId: 42,
+          status: MatchRosterStatus.AVAILABLE,
+          isDeleted: false,
+        },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchRoster.create).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.create).not.toHaveBeenCalled();
+    });
+
+    it('does not query or mutate unrelated standalone DNP rows', async () => {
+      arrangeResult({ playerStatistics: [] });
+      await service.submitResult(42, 501, forfeitDto);
+      expect(mockTx.matchRoster.findFirst).not.toHaveBeenCalled();
+      expect(mockTx.matchRoster.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each([MatchStatus.SCHEDULED, MatchStatus.LIVE])(
+      'sets startedAt null and endedAt now from %s',
+      async (status) => {
+        jest.useFakeTimers({ now: resultNow });
+        try {
+          arrangeResult({
+            status,
+            startedAt: new Date('2026-08-15T20:00:00.000Z'),
+          });
+          await service.submitResult(42, 501, forfeitDto);
+          expect(mockTx.match.update).toHaveBeenLastCalledWith({
+            where: { id: 501 },
+            data: {
+              status: MatchStatus.FINISHED,
+              startedAt: null,
+              endedAt: resultNow,
+              mvpMatchRosterId: null,
+            },
+          });
+        } finally {
+          jest.useRealTimers();
+        }
+      },
+    );
+
+    it('returns the Phase 8 awarded detail shape with no scoresheet or MVP', async () => {
+      arrangeResult();
+      mockPrisma.match.findFirst.mockResolvedValue({
+        ...detailRow,
+        status: MatchStatus.FINISHED,
+        startedAt: null,
+        endedAt: resultNow,
+        periods: [
+          {
+            id: 1,
+            periodNumber: 1,
+            periodType: PeriodType.REGULAR,
+            homePoints: 18,
+            awayPoints: 22,
+            startedAt: null,
+            endedAt: null,
+          },
+        ],
+        mvpMatchRoster: {
+          tournamentRosterId: 88,
+          displayNameSnapshot: 'Ana Silva',
+          isDeleted: false,
+        },
+        teams: [
+          {
+            ...detailRow.teams[0],
+            finalScore: 20,
+            result: MatchResult.WIN,
+            isWinner: true,
+          },
+          {
+            ...detailRow.teams[1],
+            finalScore: 0,
+            result: MatchResult.LOSS,
+            lossType: LossType.FORFEIT,
+            isWinner: false,
+          },
+        ],
+      });
+      const response = await service.submitResult(42, 501, forfeitDto);
+      expect(response).toMatchObject({
+        status: MatchStatus.FINISHED,
+        startedAt: null,
+        scoreSource: 'AWARDED',
+        periods: [],
+        playerStats: [],
+        mvp: null,
+      });
+    });
+  });
+
+  describe('result points warning', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    function watchWarnings() {
+      return jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+    }
+
+    it('warns once for each PERIODS side whose player points differ', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      await service.submitResult(42, 501, {
+        ...normalResultDto,
+        playerStats: [
+          { tournamentRosterId: 88, pts: 71 },
+          { tournamentRosterId: 91, pts: 67 },
+        ],
+      });
+      expect(warn).toHaveBeenNthCalledWith(1, {
+        event: 'match_player_points_mismatch',
+        matchId: 501,
+        side: MatchSide.HOME,
+        playerPoints: 71,
+        officialScore: 72,
+      });
+      expect(warn).toHaveBeenNthCalledWith(2, {
+        event: 'match_player_points_mismatch',
+        matchId: 501,
+        side: MatchSide.AWAY,
+        playerPoints: 67,
+        officialScore: 68,
+      });
+      expect(warn).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not warn when both PERIODS totals match', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      await service.submitResult(42, 501, normalResultDto);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for an AWARDED DEFAULT', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      await service.submitResult(42, 501, {
+        resultType: LossType.DEFAULT,
+        offendingTournamentTeamId: 52,
+        periods: [
+          {
+            periodNumber: 1,
+            periodType: PeriodType.REGULAR,
+            homePoints: 18,
+            awayPoints: 22,
+          },
+        ],
+        playerStats: [
+          { tournamentRosterId: 88, pts: 18 },
+          { tournamentRosterId: 91, pts: 22 },
+        ],
+      });
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for a FORFEIT', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      await service.submitResult(42, 501, {
+        resultType: LossType.FORFEIT,
+        offendingTournamentTeamId: 52,
+      });
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for empty playerStats', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      await service.submitResult(42, 501, {
+        periods: normalPeriods,
+        playerStats: [],
+      });
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when pts is untracked for every player', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      await service.submitResult(42, 501, {
+        periods: normalPeriods,
+        playerStats: [
+          { tournamentRosterId: 88, pts: null },
+          { tournamentRosterId: 91, pts: null },
+        ],
+      });
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('logs once only after a P2034 retry succeeds', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      mockPrisma.$transaction
+        .mockRejectedValueOnce(p2034())
+        .mockImplementationOnce((callback) =>
+          Promise.resolve(callback(mockTx)),
+        );
+      await service.submitResult(42, 501, {
+        ...normalResultDto,
+        playerStats: [
+          { tournamentRosterId: 88, pts: 71 },
+          { tournamentRosterId: 91, pts: 68 },
+        ],
+      });
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not warn when the transaction fails', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      mockPrisma.$transaction.mockRejectedValue(
+        new Error('database unavailable'),
+      );
+      await expect(
+        service.submitResult(42, 501, normalResultDto),
+      ).rejects.toThrow('database unavailable');
+      expect(warn).not.toHaveBeenCalled();
+      expect(mockPrisma.match.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('does not warn after four P2034 conflicts', async () => {
+      const warn = watchWarnings();
+      arrangeResult();
+      mockPrisma.$transaction.mockRejectedValue(p2034());
+      const error = await captureApiException(
+        service.submitResult(42, 501, normalResultDto),
+      );
+      expect(apiError(error).code).toBe('CONCURRENT_MODIFICATION');
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
+      expect(warn).not.toHaveBeenCalled();
     });
   });
 

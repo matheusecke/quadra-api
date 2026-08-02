@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   LossType,
   MatchResult,
@@ -278,6 +278,8 @@ type MatchClient = Pick<
 
 @Injectable()
 export class MatchesService {
+  private readonly logger = new Logger(MatchesService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(
@@ -725,9 +727,10 @@ export class MatchesService {
     id: number,
     dto: SubmitMatchResultDto,
   ): Promise<MatchDetailResponseDto> {
-    await this.runSerializable((tx) =>
+    const summary = await this.runSerializable((tx) =>
       this.saveResult(tx, organizationId, id, dto),
     );
+    this.warnPointsMismatch(id, summary);
     return this.findOne(organizationId, id);
   }
 
@@ -822,7 +825,37 @@ export class MatchesService {
 
     const resultType = dto.resultType ?? LossType.NORMAL;
     if (resultType === LossType.FORFEIT) {
-      throw this.invalidResultPayload();
+      this.assertForfeitResultPayload(dto);
+      const winnerTournamentTeamId = this.findNonOffendingTournamentTeamId(
+        current,
+        dto.offendingTournamentTeamId,
+      );
+      const home = this.findMatchSide(current, MatchSide.HOME);
+      const away = this.findMatchSide(current, MatchSide.AWAY);
+      const result = this.buildDerivedResult(
+        home,
+        away,
+        winnerTournamentTeamId === home.tournamentTeamId ? 20 : 0,
+        winnerTournamentTeamId === away.tournamentTeamId ? 20 : 0,
+        winnerTournamentTeamId,
+        LossType.FORFEIT,
+        'AWARDED',
+      );
+
+      await this.replacePeriods(tx, organizationId, id, []);
+      await this.replacePlayerStatistics(tx, organizationId, current, []);
+      await this.writeOfficialResult(tx, result);
+      const now = new Date();
+      await tx.match.update({
+        where: { id },
+        data: {
+          status: MatchStatus.FINISHED,
+          startedAt: null,
+          endedAt: now,
+          mvpMatchRosterId: null,
+        },
+      });
+      return { result, playerPoints: null };
     }
     this.assertPlayedResultPayload(dto, resultType);
     this.assertPeriodStructure(dto.periods);
@@ -970,6 +1003,21 @@ export class MatchesService {
         dto.offendingTournamentTeamId !== undefined) ||
       (resultType === LossType.DEFAULT &&
         dto.offendingTournamentTeamId === undefined)
+    ) {
+      throw this.invalidResultPayload();
+    }
+  }
+
+  private assertForfeitResultPayload(
+    dto: SubmitMatchResultDto,
+  ): asserts dto is SubmitMatchResultDto & {
+    offendingTournamentTeamId: number;
+  } {
+    if (
+      dto.offendingTournamentTeamId === undefined ||
+      dto.periods !== undefined ||
+      dto.playerStats !== undefined ||
+      dto.mvpTournamentRosterId !== undefined
     ) {
       throw this.invalidResultPayload();
     }
@@ -1404,6 +1452,33 @@ export class MatchesService {
         .filter((stat) => stat.matchTeamId === result.away.matchTeamId)
         .reduce((sum, stat) => sum + (stat.pts ?? 0), 0),
     };
+  }
+
+  private warnPointsMismatch(
+    matchId: number,
+    summary: ResultCommitSummary,
+  ): void {
+    if (
+      summary.result.scoreSource !== 'PERIODS' ||
+      summary.playerPoints === null
+    ) {
+      return;
+    }
+    const sides = [
+      { side: MatchSide.HOME, result: summary.result.home },
+      { side: MatchSide.AWAY, result: summary.result.away },
+    ];
+    for (const entry of sides) {
+      const playerPoints = summary.playerPoints[entry.side];
+      if (playerPoints === entry.result.finalScore) continue;
+      this.logger.warn({
+        event: 'match_player_points_mismatch',
+        matchId,
+        side: entry.side,
+        playerPoints,
+        officialScore: entry.result.finalScore,
+      });
+    }
   }
 
   async update(
