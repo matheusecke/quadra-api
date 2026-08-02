@@ -17,10 +17,17 @@ import { validate } from 'class-validator';
 import { ApiException } from '../common/exceptions/api.exception';
 import { PrismaService } from '../prisma/prisma.service';
 import type { MatchDetailResponseDto } from './dto/match-response.dto';
+import {
+  MatchPeriodInputDto,
+  MatchPlayerStatisticInputDto,
+  SaveMatchDraftDto,
+  SubmitMatchResultDto,
+} from './dto/match-scoresheet.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import {
   MatchesService,
   matchDetailSelect,
+  matchScoresheetTargetSelect,
   matchSummarySelect,
   matchUpdateTargetSelect,
 } from './matches.service';
@@ -48,7 +55,11 @@ type MockClient = {
     update: AsyncMock;
     updateMany: AsyncMock;
   };
-  matchPeriod: { findFirst: AsyncMock };
+  matchPeriod: {
+    findFirst: AsyncMock;
+    updateMany: AsyncMock;
+    createMany: AsyncMock;
+  };
   matchRoster: { findFirst: AsyncMock };
   playerMatchStatistic: { findFirst: AsyncMock };
 };
@@ -81,7 +92,11 @@ const makeClient = (): MockClient => ({
     update: asyncMock(),
     updateMany: asyncMock(),
   },
-  matchPeriod: { findFirst: asyncMock() },
+  matchPeriod: {
+    findFirst: asyncMock(),
+    updateMany: asyncMock(),
+    createMany: asyncMock(),
+  },
   matchRoster: { findFirst: asyncMock() },
   playerMatchStatistic: { findFirst: asyncMock() },
 });
@@ -200,6 +215,16 @@ const updateTargetRow = {
   }[],
 };
 
+const draftNow = new Date('2026-08-15T21:08:44.000Z');
+
+const scoresheetTargetRow = {
+  id: 501,
+  tournamentId: 12,
+  status: MatchStatus.SCHEDULED as MatchStatus,
+  startedAt: null as Date | null,
+  tournament: { status: TournamentStatus.IN_PROGRESS },
+};
+
 async function captureApiException(
   promise: Promise<unknown>,
 ): Promise<ApiException> {
@@ -224,6 +249,14 @@ function p2034(): Prisma.PrismaClientKnownRequestError {
     code: 'P2034',
     clientVersion: '7.7.0',
   });
+}
+
+async function invalidProperties<T extends object>(
+  type: new () => T,
+  body: object,
+): Promise<string[]> {
+  const errors = await validate(plainToInstance(type, body));
+  return errors.map((error) => error.property);
 }
 
 describe('MatchesService', () => {
@@ -270,6 +303,366 @@ describe('MatchesService', () => {
     mockPrisma.tournamentGroupTeam.findFirst.mockResolvedValue({ id: 801 });
     mockPrisma.match.create.mockResolvedValue(detailRow);
   }
+
+  function arrangeDraft(
+    overrides: Partial<typeof scoresheetTargetRow> = {},
+  ): void {
+    mockTx.match.findFirst.mockResolvedValue({
+      ...scoresheetTargetRow,
+      ...overrides,
+    });
+    mockTx.match.update.mockResolvedValue({ id: 501 });
+    mockTx.matchPeriod.updateMany.mockResolvedValue({ count: 0 });
+    mockTx.matchPeriod.createMany.mockResolvedValue({ count: 0 });
+    mockPrisma.match.findFirst.mockResolvedValue({
+      ...detailRow,
+      status: MatchStatus.LIVE,
+      startedAt: draftNow,
+    });
+  }
+
+  describe('draft periods', () => {
+    it('uses the tenant-scoped scoresheet selector in a serializable transaction', async () => {
+      arrangeDraft();
+      await service.draft(42, 501, {});
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+      expect(mockTx.match.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 501,
+          organizationId: 42,
+          isDeleted: false,
+          tournament: { organizationId: 42, isDeleted: false },
+        },
+        select: matchScoresheetTargetSelect,
+      });
+    });
+
+    it('starts a scheduled match with one transaction-scoped timestamp', async () => {
+      jest.useFakeTimers({ now: draftNow });
+      try {
+        arrangeDraft();
+        await service.draft(42, 501, {});
+        expect(mockTx.match.update).toHaveBeenCalledWith({
+          where: { id: 501 },
+          data: {
+            status: MatchStatus.LIVE,
+            startedAt: draftNow,
+            endedAt: null,
+          },
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('preserves a live match start timestamp', async () => {
+      const startedAt = new Date('2026-08-15T20:00:00.000Z');
+      arrangeDraft({ status: MatchStatus.LIVE, startedAt });
+      await service.draft(42, 501, {});
+      expect(mockTx.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: {
+          status: MatchStatus.LIVE,
+          startedAt,
+          endedAt: null,
+        },
+      });
+    });
+
+    it('repairs a null start timestamp while a match is live', async () => {
+      jest.useFakeTimers({ now: draftNow });
+      try {
+        arrangeDraft({ status: MatchStatus.LIVE, startedAt: null });
+        await service.draft(42, 501, {});
+        expect(mockTx.match.update).toHaveBeenCalledWith({
+          where: { id: 501 },
+          data: {
+            status: MatchStatus.LIVE,
+            startedAt: draftNow,
+            endedAt: null,
+          },
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it.each([
+      MatchStatus.POSTPONED,
+      MatchStatus.FINISHED,
+      MatchStatus.CANCELLED,
+    ])('rejects draft from %s', async (status) => {
+      arrangeDraft({ status });
+      const error = await captureApiException(service.draft(42, 501, {}));
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_STATUS_TRANSITION',
+        message: 'Drafts can only be saved for scheduled or live matches.',
+      });
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cancelled tournament before any write', async () => {
+      arrangeDraft({ tournament: { status: TournamentStatus.CANCELLED } });
+      const error = await captureApiException(service.draft(42, 501, {}));
+      expect(apiError(error)).toEqual({
+        code: 'TOURNAMENT_NOT_MUTABLE',
+        message:
+          'Match scoresheets cannot be changed for a cancelled tournament.',
+      });
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('returns the scoped 404 before any write', async () => {
+      mockTx.match.findFirst.mockResolvedValue(null);
+      const error = await captureApiException(service.draft(42, 501, {}));
+      expect(apiError(error)).toEqual({
+        code: 'RECORD_NOT_FOUND',
+        message: 'Match not found',
+      });
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('preserves periods when the key is omitted', async () => {
+      arrangeDraft();
+      await service.draft(42, 501, {});
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.matchPeriod.createMany).not.toHaveBeenCalled();
+    });
+
+    it('clears periods when an empty array is supplied', async () => {
+      arrangeDraft();
+      await service.draft(42, 501, { periods: [] });
+      expect(mockTx.matchPeriod.updateMany).toHaveBeenCalledWith({
+        where: { matchId: 501, organizationId: 42, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchPeriod.createMany).not.toHaveBeenCalled();
+    });
+
+    it('fully replaces periods and leaves period timestamps null', async () => {
+      arrangeDraft();
+      const periods = [
+        {
+          periodNumber: 1,
+          periodType: PeriodType.REGULAR,
+          homePoints: 18,
+          awayPoints: 22,
+        },
+        {
+          periodNumber: 2,
+          periodType: PeriodType.REGULAR,
+          homePoints: 20,
+          awayPoints: 17,
+        },
+      ];
+      await service.draft(42, 501, { periods });
+      expect(mockTx.matchPeriod.updateMany).toHaveBeenCalledWith({
+        where: { matchId: 501, organizationId: 42, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchPeriod.createMany).toHaveBeenCalledWith({
+        data: periods.map((period) => ({
+          organizationId: 42,
+          matchId: 501,
+          ...period,
+          startedAt: null,
+          endedAt: null,
+        })),
+      });
+    });
+
+    it.each([
+      {
+        name: 'duplicate number',
+        periods: [
+          {
+            periodNumber: 1,
+            periodType: PeriodType.REGULAR,
+            homePoints: 1,
+            awayPoints: 0,
+          },
+          {
+            periodNumber: 1,
+            periodType: PeriodType.REGULAR,
+            homePoints: 0,
+            awayPoints: 1,
+          },
+        ],
+      },
+      {
+        name: 'gap',
+        periods: [
+          {
+            periodNumber: 1,
+            periodType: PeriodType.REGULAR,
+            homePoints: 1,
+            awayPoints: 0,
+          },
+          {
+            periodNumber: 3,
+            periodType: PeriodType.REGULAR,
+            homePoints: 0,
+            awayPoints: 1,
+          },
+        ],
+      },
+      {
+        name: 'overtime before period five',
+        periods: [
+          {
+            periodNumber: 1,
+            periodType: PeriodType.OVERTIME,
+            homePoints: 1,
+            awayPoints: 0,
+          },
+        ],
+      },
+      {
+        name: 'regular period after period four',
+        periods: [1, 2, 3, 4, 5].map((periodNumber) => ({
+          periodNumber,
+          periodType: PeriodType.REGULAR,
+          homePoints: 1,
+          awayPoints: 0,
+        })),
+      },
+    ])('rejects structurally invalid periods: $name', async ({ periods }) => {
+      arrangeDraft();
+      const error = await captureApiException(
+        service.draft(42, 501, { periods }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_MATCH_PERIODS',
+        message:
+          'Periods must be contiguous and use the type required by their number.',
+      });
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts a contiguous partial prefix with period five as overtime', async () => {
+      arrangeDraft();
+      const periods = [1, 2, 3, 4, 5].map((periodNumber) => ({
+        periodNumber,
+        periodType:
+          periodNumber <= 4 ? PeriodType.REGULAR : PeriodType.OVERTIME,
+        homePoints: periodNumber,
+        awayPoints: periodNumber,
+      }));
+      await expect(service.draft(42, 501, { periods })).resolves.toBeDefined();
+      expect(mockTx.matchPeriod.createMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries a P2034 before saving the draft once', async () => {
+      arrangeDraft();
+      mockPrisma.$transaction
+        .mockRejectedValueOnce(p2034())
+        .mockImplementationOnce((callback) =>
+          Promise.resolve(callback(mockTx)),
+        );
+      await service.draft(42, 501, {});
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(mockTx.match.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('scoresheet DTO validation', () => {
+    it('accepts an empty draft body', async () => {
+      await expect(invalidProperties(SaveMatchDraftDto, {})).resolves.toEqual(
+        [],
+      );
+    });
+
+    it('validates nested period primitives', async () => {
+      await expect(
+        invalidProperties(SaveMatchDraftDto, {
+          periods: [
+            {
+              periodNumber: 0,
+              periodType: 'INVALID',
+              homePoints: -1,
+              awayPoints: 2.5,
+            },
+          ],
+        }),
+      ).resolves.toEqual(['periods']);
+    });
+
+    it('accepts null and omitted player metrics but rejects negatives', async () => {
+      await expect(
+        invalidProperties(MatchPlayerStatisticInputDto, {
+          tournamentRosterId: 88,
+          pts: null,
+        }),
+      ).resolves.toEqual([]);
+      await expect(
+        invalidProperties(MatchPlayerStatisticInputDto, {
+          tournamentRosterId: 88,
+        }),
+      ).resolves.toEqual([]);
+      await expect(
+        invalidProperties(MatchPlayerStatisticInputDto, {
+          tournamentRosterId: 88,
+          pts: -1,
+        }),
+      ).resolves.toEqual(['pts']);
+    });
+
+    it('accepts only the persisted loss types as resultType', async () => {
+      await expect(
+        invalidProperties(SubmitMatchResultDto, {
+          resultType: LossType.NORMAL,
+        }),
+      ).resolves.toEqual([]);
+      await expect(
+        invalidProperties(SubmitMatchResultDto, { resultType: 'OTHER' }),
+      ).resolves.toEqual(['resultType']);
+    });
+
+    it('rejects null for non-nullable collection and discriminator fields', async () => {
+      await expect(
+        invalidProperties(SaveMatchDraftDto, { periods: null }),
+      ).resolves.toEqual(['periods']);
+      await expect(
+        invalidProperties(SaveMatchDraftDto, { playerStats: null }),
+      ).resolves.toEqual(['playerStats']);
+      await expect(
+        invalidProperties(SubmitMatchResultDto, { resultType: null }),
+      ).resolves.toEqual(['resultType']);
+    });
+
+    it('transforms nested numeric strings at the HTTP boundary', () => {
+      const dto = plainToInstance(SaveMatchDraftDto, {
+        periods: [
+          {
+            periodNumber: '1',
+            periodType: PeriodType.REGULAR,
+            homePoints: '18',
+            awayPoints: '22',
+          },
+        ],
+        mvpTournamentRosterId: '88',
+      });
+      expect(dto.periods?.[0]).toEqual({
+        periodNumber: 1,
+        periodType: PeriodType.REGULAR,
+        homePoints: 18,
+        awayPoints: 22,
+      });
+      expect(dto.mvpTournamentRosterId).toBe(88);
+    });
+
+    it('constructs every scoresheet request class', () => {
+      expect(new MatchPeriodInputDto()).toBeDefined();
+      expect(new SaveMatchDraftDto()).toBeDefined();
+      expect(new SubmitMatchResultDto()).toBeDefined();
+    });
+  });
 
   describe('reads', () => {
     it('combines tenant scope, filters, pagination, and ordering', async () => {

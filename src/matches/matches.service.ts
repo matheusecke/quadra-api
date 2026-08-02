@@ -3,6 +3,7 @@ import {
   LossType,
   MatchSide,
   MatchStatus,
+  PeriodType,
   Prisma,
   TournamentFormat,
   TournamentStatus,
@@ -15,6 +16,10 @@ import {
   ListTournamentMatchesQueryDto,
 } from './dto/list-matches-query.dto';
 import { CreateMatchDto } from './dto/create-match.dto';
+import {
+  MatchPeriodInputDto,
+  SaveMatchDraftDto,
+} from './dto/match-scoresheet.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
 import {
   MatchDetailResponseDto,
@@ -144,6 +149,14 @@ export const matchUpdateTargetSelect = {
   },
 } satisfies Prisma.MatchSelect;
 
+export const matchScoresheetTargetSelect = {
+  id: true,
+  tournamentId: true,
+  status: true,
+  startedAt: true,
+  tournament: { select: { status: true } },
+} satisfies Prisma.MatchSelect;
+
 type MatchSummaryRow = Prisma.MatchGetPayload<{
   select: typeof matchSummarySelect;
 }>;
@@ -152,6 +165,9 @@ type MatchDetailRow = Prisma.MatchGetPayload<{
 }>;
 type MatchUpdateTarget = Prisma.MatchGetPayload<{
   select: typeof matchUpdateTargetSelect;
+}>;
+type MatchScoresheetTarget = Prisma.MatchGetPayload<{
+  select: typeof matchScoresheetTargetSelect;
 }>;
 type MatchClient = Pick<
   Prisma.TransactionClient,
@@ -596,6 +612,122 @@ export class MatchesService {
       throw ApiException.unprocessable(
         'Both match participants must belong to the selected tournament group.',
         'INVALID_GROUP_ASSIGNMENT',
+      );
+    }
+  }
+
+  async draft(
+    organizationId: number,
+    id: number,
+    dto: SaveMatchDraftDto,
+  ): Promise<MatchDetailResponseDto> {
+    await this.runSerializable((tx) =>
+      this.saveDraft(tx, organizationId, id, dto),
+    );
+    return this.findOne(organizationId, id);
+  }
+
+  private async saveDraft(
+    tx: MatchClient,
+    organizationId: number,
+    id: number,
+    dto: SaveMatchDraftDto,
+  ): Promise<void> {
+    const current = await this.findScoresheetTargetOrThrow(
+      tx,
+      organizationId,
+      id,
+    );
+    this.assertScoresheetTournamentMutable(current.tournament.status);
+    this.assertDraftAllowed(current.status);
+    this.assertPeriodStructure(dto.periods);
+
+    if (dto.periods !== undefined) {
+      await tx.matchPeriod.updateMany({
+        where: { matchId: id, organizationId, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      if (dto.periods.length > 0) {
+        await tx.matchPeriod.createMany({
+          data: dto.periods.map((period) => ({
+            organizationId,
+            matchId: id,
+            periodNumber: period.periodNumber,
+            periodType: period.periodType,
+            homePoints: period.homePoints,
+            awayPoints: period.awayPoints,
+            startedAt: null,
+            endedAt: null,
+          })),
+        });
+      }
+    }
+
+    const now = new Date();
+    await tx.match.update({
+      where: { id },
+      data: {
+        status: MatchStatus.LIVE,
+        startedAt: current.startedAt ?? now,
+        endedAt: null,
+      },
+    });
+  }
+
+  private async findScoresheetTargetOrThrow(
+    client: MatchClient,
+    organizationId: number,
+    id: number,
+  ): Promise<MatchScoresheetTarget> {
+    const match = await client.match.findFirst({
+      where: {
+        id,
+        organizationId,
+        isDeleted: false,
+        tournament: { organizationId, isDeleted: false },
+      },
+      select: matchScoresheetTargetSelect,
+    });
+    if (!match) throw ApiException.notFound('Match not found');
+    return match;
+  }
+
+  private assertScoresheetTournamentMutable(status: TournamentStatus): void {
+    if (status === TournamentStatus.CANCELLED) {
+      throw ApiException.conflict(
+        'Match scoresheets cannot be changed for a cancelled tournament.',
+        'TOURNAMENT_NOT_MUTABLE',
+      );
+    }
+  }
+
+  private assertDraftAllowed(status: MatchStatus): void {
+    if (status !== MatchStatus.SCHEDULED && status !== MatchStatus.LIVE) {
+      throw ApiException.conflict(
+        'Drafts can only be saved for scheduled or live matches.',
+        'INVALID_STATUS_TRANSITION',
+      );
+    }
+  }
+
+  private assertPeriodStructure(periods?: MatchPeriodInputDto[]): void {
+    if (!periods || periods.length === 0) return;
+    const ordered = [...periods].sort(
+      (left, right) => left.periodNumber - right.periodNumber,
+    );
+    const invalid = ordered.some((period, index) => {
+      const expectedNumber = index + 1;
+      const expectedType =
+        expectedNumber <= 4 ? PeriodType.REGULAR : PeriodType.OVERTIME;
+      return (
+        period.periodNumber !== expectedNumber ||
+        period.periodType !== expectedType
+      );
+    });
+    if (invalid) {
+      throw ApiException.unprocessable(
+        'Periods must be contiguous and use the type required by their number.',
+        'INVALID_MATCH_PERIODS',
       );
     }
   }
