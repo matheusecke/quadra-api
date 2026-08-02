@@ -4,10 +4,13 @@ import { Test } from '@nestjs/testing';
 import {
   LossType,
   MatchResult,
+  MatchRosterStatus,
   MatchSide,
   MatchStatus,
   PeriodType,
   Prisma,
+  RosterRole,
+  RosterStatus,
   TournamentFormat,
   TournamentStatus,
   TournamentTeamStatus,
@@ -60,8 +63,17 @@ type MockClient = {
     updateMany: AsyncMock;
     createMany: AsyncMock;
   };
-  matchRoster: { findFirst: AsyncMock };
-  playerMatchStatistic: { findFirst: AsyncMock };
+  tournamentRoster: { findMany: AsyncMock };
+  matchRoster: {
+    findFirst: AsyncMock;
+    updateMany: AsyncMock;
+    create: AsyncMock;
+  };
+  playerMatchStatistic: {
+    findFirst: AsyncMock;
+    updateMany: AsyncMock;
+    create: AsyncMock;
+  };
 };
 
 type TransactionMock = jest.Mock<
@@ -97,8 +109,17 @@ const makeClient = (): MockClient => ({
     updateMany: asyncMock(),
     createMany: asyncMock(),
   },
-  matchRoster: { findFirst: asyncMock() },
-  playerMatchStatistic: { findFirst: asyncMock() },
+  tournamentRoster: { findMany: asyncMock() },
+  matchRoster: {
+    findFirst: asyncMock(),
+    updateMany: asyncMock(),
+    create: asyncMock(),
+  },
+  playerMatchStatistic: {
+    findFirst: asyncMock(),
+    updateMany: asyncMock(),
+    create: asyncMock(),
+  },
 });
 
 const mockTx = makeClient();
@@ -222,7 +243,47 @@ const scoresheetTargetRow = {
   tournamentId: 12,
   status: MatchStatus.SCHEDULED as MatchStatus,
   startedAt: null as Date | null,
-  tournament: { status: TournamentStatus.IN_PROGRESS },
+  mvpMatchRosterId: null as number | null,
+  tournament: { status: TournamentStatus.IN_PROGRESS as TournamentStatus },
+  teams: [
+    { id: 601, tournamentTeamId: 41 },
+    { id: 602, tournamentTeamId: 52 },
+  ],
+  playerStatistics: [] as {
+    tournamentRosterId: number;
+    matchRosterId: number | null;
+    matchRoster: {
+      id: number;
+      status: MatchRosterStatus;
+      isDeleted: boolean;
+    } | null;
+  }[],
+  mvpMatchRoster: null as {
+    tournamentRosterId: number;
+    isDeleted: boolean;
+  } | null,
+};
+
+const homeAthlete = {
+  id: 88,
+  tournamentId: 12,
+  tournamentTeamId: 41,
+  userId: 188,
+  role: RosterRole.ATHLETE,
+  status: RosterStatus.INACTIVE,
+  jerseyNumberSnapshot: 7,
+  displayNameSnapshot: 'Ana Silva',
+};
+
+const awayAthlete = {
+  id: 91,
+  tournamentId: 12,
+  tournamentTeamId: 52,
+  userId: 191,
+  role: RosterRole.ATHLETE,
+  status: RosterStatus.ACTIVE,
+  jerseyNumberSnapshot: 12,
+  displayNameSnapshot: 'Beatriz Lima',
 };
 
 async function captureApiException(
@@ -319,6 +380,16 @@ describe('MatchesService', () => {
       status: MatchStatus.LIVE,
       startedAt: draftNow,
     });
+    mockTx.tournamentRoster.findMany.mockResolvedValue([
+      homeAthlete,
+      awayAthlete,
+    ]);
+    mockTx.playerMatchStatistic.updateMany.mockResolvedValue({ count: 0 });
+    mockTx.matchRoster.updateMany.mockResolvedValue({ count: 0 });
+    mockTx.matchRoster.create
+      .mockResolvedValueOnce({ id: 701 })
+      .mockResolvedValueOnce({ id: 702 });
+    mockTx.playerMatchStatistic.create.mockResolvedValue({ id: 801 });
   }
 
   describe('draft periods', () => {
@@ -568,6 +639,436 @@ describe('MatchesService', () => {
       await service.draft(42, 501, {});
       expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
       expect(mockTx.match.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('draft player statistics', () => {
+    const playerStats = [
+      { tournamentRosterId: 88, pts: 18, reb: null },
+      { tournamentRosterId: 91, pts: 22, reb: null },
+    ];
+
+    it('preserves statistics and rosters when playerStats is omitted', async () => {
+      arrangeDraft();
+      await service.draft(42, 501, {});
+      expect(mockTx.tournamentRoster.findMany).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.matchRoster.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.matchRoster.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts inactive historical athletes and creates snapshots and normalized metrics', async () => {
+      arrangeDraft();
+      await service.draft(42, 501, { playerStats });
+      expect(mockTx.tournamentRoster.findMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: [88, 91] },
+          organizationId: 42,
+          isDeleted: false,
+        },
+        select: {
+          id: true,
+          tournamentId: true,
+          tournamentTeamId: true,
+          userId: true,
+          role: true,
+          jerseyNumberSnapshot: true,
+          displayNameSnapshot: true,
+        },
+      });
+      expect(mockTx.matchRoster.create).toHaveBeenNthCalledWith(1, {
+        data: {
+          organizationId: 42,
+          matchId: 501,
+          matchTeamId: 601,
+          tournamentRosterId: 88,
+          userId: 188,
+          role: RosterRole.ATHLETE,
+          jerseyNumberSnapshot: 7,
+          displayNameSnapshot: 'Ana Silva',
+          status: MatchRosterStatus.AVAILABLE,
+        },
+        select: { id: true },
+      });
+      expect(mockTx.playerMatchStatistic.create).toHaveBeenNthCalledWith(1, {
+        data: {
+          organizationId: 42,
+          matchId: 501,
+          matchTeamId: 601,
+          matchRosterId: 701,
+          tournamentRosterId: 88,
+          userId: 188,
+          pts: 18,
+          fgm: null,
+          fga: null,
+          threeFgm: null,
+          threeFga: null,
+          ftm: null,
+          fta: null,
+          reb: null,
+          ast: null,
+          stl: null,
+          blk: null,
+          tov: null,
+          pf: null,
+          minutesSeconds: null,
+        },
+      });
+    });
+
+    it('clears only AVAILABLE rosters backing active statistics', async () => {
+      arrangeDraft({
+        playerStatistics: [
+          {
+            tournamentRosterId: 88,
+            matchRosterId: 710,
+            matchRoster: {
+              id: 710,
+              status: MatchRosterStatus.AVAILABLE,
+              isDeleted: false,
+            },
+          },
+          {
+            tournamentRosterId: 91,
+            matchRosterId: null,
+            matchRoster: null,
+          },
+        ],
+      });
+      await service.draft(42, 501, { playerStats: [] });
+      expect(mockTx.playerMatchStatistic.updateMany).toHaveBeenCalledWith({
+        where: { matchId: 501, organizationId: 42, isDeleted: false },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchRoster.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: { in: [710] },
+          matchId: 501,
+          organizationId: 42,
+          status: MatchRosterStatus.AVAILABLE,
+          isDeleted: false,
+        },
+        data: { isDeleted: true },
+      });
+      expect(mockTx.matchRoster.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      {
+        name: 'missing scoped roster',
+        rows: [homeAthlete],
+        expected: {
+          code: 'RECORD_NOT_FOUND',
+          message: 'Tournament roster not found',
+        },
+      },
+      {
+        name: 'wrong tournament',
+        rows: [{ ...homeAthlete, tournamentId: 99 }, awayAthlete],
+        expected: {
+          code: 'INVALID_MATCH_ROSTER',
+          message:
+            'Every player statistic must reference an athlete from one of the match teams.',
+        },
+      },
+      {
+        name: 'wrong team',
+        rows: [{ ...homeAthlete, tournamentTeamId: 77 }, awayAthlete],
+        expected: {
+          code: 'INVALID_MATCH_ROSTER',
+          message:
+            'Every player statistic must reference an athlete from one of the match teams.',
+        },
+      },
+      {
+        name: 'non-athlete role',
+        rows: [
+          { ...homeAthlete, role: RosterRole.COACHING_STAFF },
+          awayAthlete,
+        ],
+        expected: {
+          code: 'INVALID_MATCH_ROSTER',
+          message:
+            'Every player statistic must reference an athlete from one of the match teams.',
+        },
+      },
+    ])('rejects $name before writes', async ({ rows, expected }) => {
+      arrangeDraft();
+      mockTx.tournamentRoster.findMany.mockResolvedValue(rows);
+      const error = await captureApiException(
+        service.draft(42, 501, { playerStats }),
+      );
+      expect(apiError(error)).toEqual(expected);
+      expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a duplicated tournament roster before lookup', async () => {
+      arrangeDraft();
+      const error = await captureApiException(
+        service.draft(42, 501, {
+          playerStats: [
+            { tournamentRosterId: 88, pts: 1 },
+            { tournamentRosterId: 88, pts: 2 },
+          ],
+        }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_PLAYER_STATS',
+        message: 'Each player can appear only once in match statistics.',
+      });
+      expect(mockTx.tournamentRoster.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects two roster identities resolving to the same user', async () => {
+      arrangeDraft();
+      mockTx.tournamentRoster.findMany.mockResolvedValue([
+        homeAthlete,
+        { ...awayAthlete, userId: homeAthlete.userId },
+      ]);
+      const error = await captureApiException(
+        service.draft(42, 501, { playerStats }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_PLAYER_STATS',
+        message: 'Each player can appear only once in match statistics.',
+      });
+    });
+
+    it('finishes all statistic validation before replacing periods', async () => {
+      arrangeDraft();
+      const error = await captureApiException(
+        service.draft(42, 501, {
+          periods: [
+            {
+              periodNumber: 1,
+              periodType: PeriodType.REGULAR,
+              homePoints: 18,
+              awayPoints: 22,
+            },
+          ],
+          playerStats: [
+            { tournamentRosterId: 88, pts: 18 },
+            { tournamentRosterId: 91, pts: null },
+          ],
+        }),
+      );
+      expect(apiError(error).code).toBe('INVALID_PLAYER_STATS');
+      expect(mockTx.matchPeriod.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects mixed null and tracked values for one metric', async () => {
+      arrangeDraft();
+      const error = await captureApiException(
+        service.draft(42, 501, {
+          playerStats: [
+            { tournamentRosterId: 88, pts: 0 },
+            { tournamentRosterId: 91, pts: null },
+          ],
+        }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_PLAYER_STATS',
+        message:
+          'Each tracked statistic must be provided for every player or be null for every player.',
+      });
+      expect(mockTx.tournamentRoster.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { fgm: 2, fga: 1 },
+      { threeFgm: 2, threeFga: 1 },
+      { ftm: 2, fta: 1 },
+    ])('rejects made totals greater than attempts: %o', async (metrics) => {
+      arrangeDraft();
+      const error = await captureApiException(
+        service.draft(42, 501, {
+          playerStats: [
+            { tournamentRosterId: 88, ...metrics },
+            { tournamentRosterId: 91, ...metrics },
+          ],
+        }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_PLAYER_STATS',
+        message: 'Made shots cannot exceed attempted shots.',
+      });
+    });
+
+    it('sets an explicit MVP to the newly created match roster', async () => {
+      arrangeDraft();
+      await service.draft(42, 501, {
+        playerStats,
+        mvpTournamentRosterId: 91,
+      });
+      expect(mockTx.match.update).toHaveBeenLastCalledWith({
+        where: { id: 501 },
+        data: {
+          status: MatchStatus.LIVE,
+          startedAt: expect.any(Date),
+          endedAt: null,
+          mvpMatchRosterId: 702,
+        },
+      });
+    });
+
+    it('preserves and rebinds an omitted MVP during statistic replacement', async () => {
+      arrangeDraft({
+        mvpMatchRosterId: 710,
+        mvpMatchRoster: { tournamentRosterId: 88, isDeleted: false },
+        playerStatistics: [
+          {
+            tournamentRosterId: 88,
+            matchRosterId: 710,
+            matchRoster: {
+              id: 710,
+              status: MatchRosterStatus.AVAILABLE,
+              isDeleted: false,
+            },
+          },
+        ],
+      });
+      await service.draft(42, 501, { playerStats });
+      expect(mockTx.match.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 501 },
+        data: { mvpMatchRosterId: null },
+      });
+      expect(mockTx.match.update).toHaveBeenLastCalledWith({
+        where: { id: 501 },
+        data: {
+          status: MatchStatus.LIVE,
+          startedAt: expect.any(Date),
+          endedAt: null,
+          mvpMatchRosterId: 701,
+        },
+      });
+    });
+
+    it('rejects implicit removal of the preserved MVP before writes', async () => {
+      arrangeDraft({
+        mvpMatchRosterId: 710,
+        mvpMatchRoster: { tournamentRosterId: 88, isDeleted: false },
+        playerStatistics: [
+          {
+            tournamentRosterId: 88,
+            matchRosterId: 710,
+            matchRoster: {
+              id: 710,
+              status: MatchRosterStatus.AVAILABLE,
+              isDeleted: false,
+            },
+          },
+        ],
+      });
+      mockTx.tournamentRoster.findMany.mockResolvedValue([awayAthlete]);
+      const error = await captureApiException(
+        service.draft(42, 501, {
+          playerStats: [{ tournamentRosterId: 91, pts: 1 }],
+        }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_MATCH_MVP',
+        message:
+          'The match MVP must be present in the resulting player statistics.',
+      });
+      expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an explicit MVP absent from replacement statistics', async () => {
+      arrangeDraft();
+      const error = await captureApiException(
+        service.draft(42, 501, {
+          playerStats,
+          mvpTournamentRosterId: 999,
+        }),
+      );
+      expect(apiError(error)).toEqual({
+        code: 'INVALID_MATCH_MVP',
+        message:
+          'The match MVP must be present in the resulting player statistics.',
+      });
+      expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).not.toHaveBeenCalled();
+    });
+
+    it('clears statistics and MVP only when null is explicit', async () => {
+      arrangeDraft({
+        mvpMatchRosterId: 710,
+        mvpMatchRoster: { tournamentRosterId: 88, isDeleted: false },
+        playerStatistics: [
+          {
+            tournamentRosterId: 88,
+            matchRosterId: 710,
+            matchRoster: {
+              id: 710,
+              status: MatchRosterStatus.AVAILABLE,
+              isDeleted: false,
+            },
+          },
+        ],
+      });
+      await service.draft(42, 501, {
+        playerStats: [],
+        mvpTournamentRosterId: null,
+      });
+      expect(mockTx.match.update).toHaveBeenLastCalledWith({
+        where: { id: 501 },
+        data: {
+          status: MatchStatus.LIVE,
+          startedAt: expect.any(Date),
+          endedAt: null,
+          mvpMatchRosterId: null,
+        },
+      });
+    });
+
+    it('changes MVP without replacing existing statistics', async () => {
+      arrangeDraft({
+        playerStatistics: [
+          {
+            tournamentRosterId: 91,
+            matchRosterId: 720,
+            matchRoster: {
+              id: 720,
+              status: MatchRosterStatus.AVAILABLE,
+              isDeleted: false,
+            },
+          },
+        ],
+      });
+      await service.draft(42, 501, { mvpTournamentRosterId: 91 });
+      expect(mockTx.tournamentRoster.findMany).not.toHaveBeenCalled();
+      expect(mockTx.playerMatchStatistic.updateMany).not.toHaveBeenCalled();
+      expect(mockTx.match.update).toHaveBeenLastCalledWith({
+        where: { id: 501 },
+        data: {
+          status: MatchStatus.LIVE,
+          startedAt: expect.any(Date),
+          endedAt: null,
+          mvpMatchRosterId: 720,
+        },
+      });
+    });
+
+    it('does not revalidate or rewrite an entirely omitted MVP', async () => {
+      arrangeDraft({
+        mvpMatchRosterId: 710,
+        mvpMatchRoster: { tournamentRosterId: 88, isDeleted: false },
+        playerStatistics: [],
+      });
+      await expect(service.draft(42, 501, {})).resolves.toBeDefined();
+      expect(mockTx.match.update).toHaveBeenCalledTimes(1);
+      expect(mockTx.match.update).toHaveBeenCalledWith({
+        where: { id: 501 },
+        data: {
+          status: MatchStatus.LIVE,
+          startedAt: expect.any(Date),
+          endedAt: null,
+        },
+      });
     });
   });
 

@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import {
   LossType,
+  MatchRosterStatus,
   MatchSide,
   MatchStatus,
   PeriodType,
   Prisma,
+  RosterRole,
   TournamentFormat,
   TournamentStatus,
   TournamentTeamStatus,
@@ -18,6 +20,7 @@ import {
 import { CreateMatchDto } from './dto/create-match.dto';
 import {
   MatchPeriodInputDto,
+  MatchPlayerStatisticInputDto,
   SaveMatchDraftDto,
 } from './dto/match-scoresheet.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
@@ -154,7 +157,25 @@ export const matchScoresheetTargetSelect = {
   tournamentId: true,
   status: true,
   startedAt: true,
+  mvpMatchRosterId: true,
   tournament: { select: { status: true } },
+  teams: {
+    where: { isDeleted: false },
+    select: { id: true, tournamentTeamId: true },
+  },
+  playerStatistics: {
+    where: { isDeleted: false },
+    select: {
+      tournamentRosterId: true,
+      matchRosterId: true,
+      matchRoster: {
+        select: { id: true, status: true, isDeleted: true },
+      },
+    },
+  },
+  mvpMatchRoster: {
+    select: { tournamentRosterId: true, isDeleted: true },
+  },
 } satisfies Prisma.MatchSelect;
 
 type MatchSummaryRow = Prisma.MatchGetPayload<{
@@ -169,6 +190,48 @@ type MatchUpdateTarget = Prisma.MatchGetPayload<{
 type MatchScoresheetTarget = Prisma.MatchGetPayload<{
   select: typeof matchScoresheetTargetSelect;
 }>;
+
+const playerStatisticMetricKeys = [
+  'pts',
+  'fgm',
+  'fga',
+  'threeFgm',
+  'threeFga',
+  'ftm',
+  'fta',
+  'reb',
+  'ast',
+  'stl',
+  'blk',
+  'tov',
+  'pf',
+  'minutesSeconds',
+] as const;
+
+type PlayerStatisticMetric = (typeof playerStatisticMetricKeys)[number];
+type NormalizedPlayerStatistic = {
+  tournamentRosterId: number;
+} & Record<PlayerStatisticMetric, number | null>;
+
+const tournamentRosterForMatchSelect = {
+  id: true,
+  tournamentId: true,
+  tournamentTeamId: true,
+  userId: true,
+  role: true,
+  jerseyNumberSnapshot: true,
+  displayNameSnapshot: true,
+} satisfies Prisma.TournamentRosterSelect;
+
+type TournamentRosterForMatch = Prisma.TournamentRosterGetPayload<{
+  select: typeof tournamentRosterForMatchSelect;
+}>;
+
+type ResolvedPlayerStatistic = NormalizedPlayerStatistic & {
+  tournamentRoster: TournamentRosterForMatch;
+  matchTeamId: number;
+};
+
 type MatchClient = Pick<
   Prisma.TransactionClient,
   | 'match'
@@ -177,6 +240,7 @@ type MatchClient = Pick<
   | 'tournamentGroup'
   | 'tournamentTeam'
   | 'tournamentGroupTeam'
+  | 'tournamentRoster'
   | 'tournamentBracketSlot'
   | 'matchPeriod'
   | 'matchRoster'
@@ -642,27 +706,54 @@ export class MatchesService {
     this.assertDraftAllowed(current.status);
     this.assertPeriodStructure(dto.periods);
 
-    if (dto.periods !== undefined) {
-      await tx.matchPeriod.updateMany({
-        where: { matchId: id, organizationId, isDeleted: false },
-        data: { isDeleted: true },
-      });
-      if (dto.periods.length > 0) {
-        await tx.matchPeriod.createMany({
-          data: dto.periods.map((period) => ({
+    const normalizedStats =
+      dto.playerStats === undefined
+        ? undefined
+        : this.normalizePlayerStatistics(dto.playerStats);
+    const resolvedStats =
+      normalizedStats === undefined
+        ? undefined
+        : await this.resolvePlayerStatistics(
+            tx,
             organizationId,
-            matchId: id,
-            periodNumber: period.periodNumber,
-            periodType: period.periodType,
-            homePoints: period.homePoints,
-            awayPoints: period.awayPoints,
-            startedAt: null,
-            endedAt: null,
-          })),
-        });
-      }
+            current,
+            normalizedStats,
+          );
+    const updatesMvp =
+      dto.playerStats !== undefined || dto.mvpTournamentRosterId !== undefined;
+    const resultingMvpTournamentRosterId = updatesMvp
+      ? this.resolveResultingMvpTournamentRosterId(
+          current,
+          dto.mvpTournamentRosterId,
+          normalizedStats,
+        )
+      : null;
+    const existingMvpMatchRosterId =
+      updatesMvp && normalizedStats === undefined
+        ? this.findExistingMvpMatchRosterId(
+            current,
+            resultingMvpTournamentRosterId,
+          )
+        : null;
+
+    if (dto.periods !== undefined) {
+      await this.replacePeriods(tx, organizationId, id, dto.periods);
     }
 
+    const createdRosterIds =
+      resolvedStats === undefined
+        ? undefined
+        : await this.replacePlayerStatistics(
+            tx,
+            organizationId,
+            current,
+            resolvedStats,
+          );
+    const mvpMatchRosterId =
+      resultingMvpTournamentRosterId === null
+        ? null
+        : (createdRosterIds?.get(resultingMvpTournamentRosterId) ??
+          existingMvpMatchRosterId);
     const now = new Date();
     await tx.match.update({
       where: { id },
@@ -670,7 +761,33 @@ export class MatchesService {
         status: MatchStatus.LIVE,
         startedAt: current.startedAt ?? now,
         endedAt: null,
+        ...(updatesMvp ? { mvpMatchRosterId } : {}),
       },
+    });
+  }
+
+  private async replacePeriods(
+    tx: MatchClient,
+    organizationId: number,
+    matchId: number,
+    periods: MatchPeriodInputDto[],
+  ): Promise<void> {
+    await tx.matchPeriod.updateMany({
+      where: { matchId, organizationId, isDeleted: false },
+      data: { isDeleted: true },
+    });
+    if (periods.length === 0) return;
+    await tx.matchPeriod.createMany({
+      data: periods.map((period) => ({
+        organizationId,
+        matchId,
+        periodNumber: period.periodNumber,
+        periodType: period.periodType,
+        homePoints: period.homePoints,
+        awayPoints: period.awayPoints,
+        startedAt: null,
+        endedAt: null,
+      })),
     });
   }
 
@@ -730,6 +847,224 @@ export class MatchesService {
         'INVALID_MATCH_PERIODS',
       );
     }
+  }
+
+  private normalizePlayerStatistics(
+    input: MatchPlayerStatisticInputDto[],
+  ): NormalizedPlayerStatistic[] {
+    const rosterIds = new Set<number>();
+    const normalized = input.map((stat) => {
+      if (rosterIds.has(stat.tournamentRosterId)) {
+        throw ApiException.unprocessable(
+          'Each player can appear only once in match statistics.',
+          'INVALID_PLAYER_STATS',
+        );
+      }
+      rosterIds.add(stat.tournamentRosterId);
+      return {
+        tournamentRosterId: stat.tournamentRosterId,
+        ...Object.fromEntries(
+          playerStatisticMetricKeys.map((key) => [key, stat[key] ?? null]),
+        ),
+      } as NormalizedPlayerStatistic;
+    });
+
+    for (const key of playerStatisticMetricKeys) {
+      const tracked = normalized.filter((stat) => stat[key] !== null).length;
+      if (tracked !== 0 && tracked !== normalized.length) {
+        throw ApiException.unprocessable(
+          'Each tracked statistic must be provided for every player or be null for every player.',
+          'INVALID_PLAYER_STATS',
+        );
+      }
+    }
+    for (const stat of normalized) {
+      if (
+        (stat.fgm !== null && stat.fga !== null && stat.fgm > stat.fga) ||
+        (stat.threeFgm !== null &&
+          stat.threeFga !== null &&
+          stat.threeFgm > stat.threeFga) ||
+        (stat.ftm !== null && stat.fta !== null && stat.ftm > stat.fta)
+      ) {
+        throw ApiException.unprocessable(
+          'Made shots cannot exceed attempted shots.',
+          'INVALID_PLAYER_STATS',
+        );
+      }
+    }
+    return normalized;
+  }
+
+  private async resolvePlayerStatistics(
+    tx: MatchClient,
+    organizationId: number,
+    match: MatchScoresheetTarget,
+    stats: NormalizedPlayerStatistic[],
+  ): Promise<ResolvedPlayerStatistic[]> {
+    if (stats.length === 0) return [];
+    const ids = stats.map((stat) => stat.tournamentRosterId);
+    const rosters = await tx.tournamentRoster.findMany({
+      where: { id: { in: ids }, organizationId, isDeleted: false },
+      select: tournamentRosterForMatchSelect,
+    });
+    if (rosters.length !== ids.length) {
+      throw ApiException.notFound('Tournament roster not found');
+    }
+    const rosterById = new Map(rosters.map((roster) => [roster.id, roster]));
+    const matchTeamByTournamentTeamId = new Map(
+      match.teams.map((team) => [team.tournamentTeamId, team.id]),
+    );
+    const users = new Set<number>();
+    return stats.map((stat) => {
+      const roster = rosterById.get(stat.tournamentRosterId);
+      if (!roster) throw ApiException.notFound('Tournament roster not found');
+      const matchTeamId = matchTeamByTournamentTeamId.get(
+        roster.tournamentTeamId,
+      );
+      if (
+        roster.tournamentId !== match.tournamentId ||
+        roster.role !== RosterRole.ATHLETE ||
+        matchTeamId === undefined
+      ) {
+        throw ApiException.unprocessable(
+          'Every player statistic must reference an athlete from one of the match teams.',
+          'INVALID_MATCH_ROSTER',
+        );
+      }
+      if (users.has(roster.userId)) {
+        throw ApiException.unprocessable(
+          'Each player can appear only once in match statistics.',
+          'INVALID_PLAYER_STATS',
+        );
+      }
+      users.add(roster.userId);
+      return { ...stat, tournamentRoster: roster, matchTeamId };
+    });
+  }
+
+  private resolveResultingMvpTournamentRosterId(
+    match: MatchScoresheetTarget,
+    requestedMvpTournamentRosterId: number | null | undefined,
+    replacementStats: NormalizedPlayerStatistic[] | undefined,
+  ): number | null {
+    const currentMvpTournamentRosterId =
+      match.mvpMatchRoster && !match.mvpMatchRoster.isDeleted
+        ? match.mvpMatchRoster.tournamentRosterId
+        : null;
+    const resultingMvpTournamentRosterId =
+      requestedMvpTournamentRosterId === undefined
+        ? currentMvpTournamentRosterId
+        : requestedMvpTournamentRosterId;
+    if (resultingMvpTournamentRosterId === null) return null;
+    const resultingPlayerTournamentRosterIds = new Set(
+      (replacementStats ?? match.playerStatistics).map(
+        (stat: { tournamentRosterId: number }) => stat.tournamentRosterId,
+      ),
+    );
+    if (
+      !resultingPlayerTournamentRosterIds.has(resultingMvpTournamentRosterId)
+    ) {
+      this.invalidMvp();
+    }
+    return resultingMvpTournamentRosterId;
+  }
+
+  private findExistingMvpMatchRosterId(
+    match: MatchScoresheetTarget,
+    resultingMvpTournamentRosterId: number | null,
+  ): number | null {
+    if (resultingMvpTournamentRosterId === null) return null;
+    const statistic = match.playerStatistics.find(
+      (candidate) =>
+        candidate.tournamentRosterId === resultingMvpTournamentRosterId &&
+        candidate.matchRoster !== null &&
+        !candidate.matchRoster.isDeleted &&
+        candidate.matchRoster.status === MatchRosterStatus.AVAILABLE,
+    );
+    if (
+      statistic?.matchRosterId === null ||
+      statistic?.matchRosterId === undefined
+    ) {
+      return this.invalidMvp();
+    }
+    return statistic.matchRosterId;
+  }
+
+  private invalidMvp(): never {
+    throw ApiException.unprocessable(
+      'The match MVP must be present in the resulting player statistics.',
+      'INVALID_MATCH_MVP',
+    );
+  }
+
+  private async replacePlayerStatistics(
+    tx: MatchClient,
+    organizationId: number,
+    match: MatchScoresheetTarget,
+    stats: ResolvedPlayerStatistic[],
+  ): Promise<Map<number, number>> {
+    if (match.mvpMatchRosterId !== null) {
+      await tx.match.update({
+        where: { id: match.id },
+        data: { mvpMatchRosterId: null },
+      });
+    }
+    await tx.playerMatchStatistic.updateMany({
+      where: { matchId: match.id, organizationId, isDeleted: false },
+      data: { isDeleted: true },
+    });
+    const backingRosterIds = [
+      ...new Set(
+        match.playerStatistics
+          .map((stat) => stat.matchRosterId)
+          .filter((id): id is number => id !== null),
+      ),
+    ];
+    if (backingRosterIds.length > 0) {
+      await tx.matchRoster.updateMany({
+        where: {
+          id: { in: backingRosterIds },
+          matchId: match.id,
+          organizationId,
+          status: MatchRosterStatus.AVAILABLE,
+          isDeleted: false,
+        },
+        data: { isDeleted: true },
+      });
+    }
+
+    const createdRosterIds = new Map<number, number>();
+    for (const stat of stats) {
+      const { tournamentRoster, matchTeamId, tournamentRosterId, ...metrics } =
+        stat;
+      const matchRoster = await tx.matchRoster.create({
+        data: {
+          organizationId,
+          matchId: match.id,
+          matchTeamId,
+          tournamentRosterId,
+          userId: tournamentRoster.userId,
+          role: tournamentRoster.role,
+          jerseyNumberSnapshot: tournamentRoster.jerseyNumberSnapshot,
+          displayNameSnapshot: tournamentRoster.displayNameSnapshot,
+          status: MatchRosterStatus.AVAILABLE,
+        },
+        select: { id: true },
+      });
+      createdRosterIds.set(tournamentRosterId, matchRoster.id);
+      await tx.playerMatchStatistic.create({
+        data: {
+          organizationId,
+          matchId: match.id,
+          matchTeamId,
+          matchRosterId: matchRoster.id,
+          tournamentRosterId,
+          userId: tournamentRoster.userId,
+          ...metrics,
+        },
+      });
+    }
+    return createdRosterIds;
   }
 
   async update(
