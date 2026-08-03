@@ -3,11 +3,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   MatchStatus,
   Prisma,
+  RosterRole,
   TournamentFormat,
   TournamentStatus,
   TournamentTeamStatus,
 } from '@prisma/client';
 import { TournamentsService } from './tournaments.service';
+import { StatisticsService } from '../statistics/statistics.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 type AsyncMock = jest.Mock<(input?: unknown) => Promise<unknown>>;
@@ -54,6 +56,9 @@ const mockPrisma: any = {
   match: {
     groupBy: jest.fn(),
   },
+  playerMatchStatistic: {
+    findMany: jest.fn(),
+  },
   $transaction: jest.fn((callback: (tx: unknown) => unknown) =>
     callback(mockTx),
   ),
@@ -99,6 +104,57 @@ const baseTournamentRow = {
   _count: { teams: 0 },
 };
 
+const leaderRow = (
+  tournamentRosterId: number,
+  userId: number,
+  athleteName: string,
+  values: Partial<
+    Record<
+      | 'minutesSeconds'
+      | 'pts'
+      | 'reb'
+      | 'ast'
+      | 'stl'
+      | 'blk'
+      | 'tov'
+      | 'pf'
+      | 'fgm'
+      | 'fga'
+      | 'threeFgm'
+      | 'threeFga'
+      | 'ftm'
+      | 'fta',
+      number | null
+    >
+  >,
+) => ({
+  tournamentRosterId,
+  userId,
+  minutesSeconds: null,
+  pts: null,
+  reb: null,
+  ast: null,
+  stl: null,
+  blk: null,
+  tov: null,
+  pf: null,
+  fgm: null,
+  fga: null,
+  threeFgm: null,
+  threeFga: null,
+  ftm: null,
+  fta: null,
+  ...values,
+  tournamentRoster: {
+    displayNameSnapshot: athleteName,
+    tournamentTeamId: 40 + tournamentRosterId,
+    tournamentTeam: {
+      teamId: 8 + tournamentRosterId,
+      displayNameSnapshot: `Team ${tournamentRosterId}`,
+    },
+  },
+});
+
 describe('TournamentsService', () => {
   let service: TournamentsService;
 
@@ -111,6 +167,7 @@ describe('TournamentsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TournamentsService,
+        StatisticsService,
         { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();
@@ -1235,6 +1292,92 @@ describe('TournamentsService', () => {
       const result = await service.championSuggestion(ORG_ID, 12);
 
       expect(result.championTournamentTeamId).toBeNull();
+    });
+  });
+
+  describe('leaders', () => {
+    it('uses the tenant-scoped finished athlete rows and returns both fixed groups', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.playerMatchStatistic.findMany.mockResolvedValue([
+        leaderRow(1, 165, 'Zulu', { pts: 20, reb: 1 }),
+        leaderRow(1, 165, 'Zulu', { pts: 20, reb: null }),
+        leaderRow(2, 164, 'Alpha', { pts: 20, reb: 3 }),
+        leaderRow(3, 163, 'Bravo', { pts: 20, reb: 2 }),
+        leaderRow(3, 163, 'Bravo', { pts: 20, reb: 2 }),
+      ]);
+
+      const result = await service.leaders(ORG_ID, 12);
+
+      expect(mockPrisma.playerMatchStatistic.findMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          organizationId: ORG_ID,
+          isDeleted: false,
+          match: expect.objectContaining({
+            tournamentId: 12,
+            status: MatchStatus.FINISHED,
+          }),
+          tournamentRoster: expect.objectContaining({
+            role: RosterRole.ATHLETE,
+          }),
+        }),
+        select: expect.any(Object),
+      });
+      expect(Object.keys(result.perGame)).toEqual([
+        'ppg',
+        'rpg',
+        'apg',
+        'stg',
+        'bpg',
+      ]);
+      expect(Object.keys(result.totals)).toEqual([
+        'pts',
+        'reb',
+        'ast',
+        'stl',
+        'blk',
+      ]);
+      expect(result.perGame.ppg.map(({ athleteName }) => athleteName)).toEqual([
+        'Bravo',
+        'Zulu',
+        'Alpha',
+      ]);
+      expect(result.perGame.rpg[0]).toMatchObject({
+        athleteName: 'Alpha',
+        value: 3,
+        gamesPlayed: 1,
+      });
+      expect(result.totals.pts.map(({ athleteName }) => athleteName)).toEqual([
+        'Bravo',
+        'Zulu',
+        'Alpha',
+      ]);
+    });
+
+    it('returns all ten empty lists for an existing tournament with no statistics', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(baseTournamentRow);
+      mockPrisma.playerMatchStatistic.findMany.mockResolvedValue([]);
+
+      await expect(service.leaders(ORG_ID, 12)).resolves.toEqual({
+        perGame: { ppg: [], rpg: [], apg: [], stg: [], bpg: [] },
+        totals: { pts: [], reb: [], ast: [], stl: [], blk: [] },
+      });
+    });
+
+    it('returns the existing tournament 404 before querying statistics', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue(null);
+      await expect(service.leaders(ORG_ID, 12)).rejects.toMatchObject({
+        status: 404,
+        response: {
+          error: {
+            title: 'Not Found',
+            message: 'Tournament not found',
+            code: 'RECORD_NOT_FOUND',
+            data: {},
+          },
+          statusCode: 404,
+        },
+      });
+      expect(mockPrisma.playerMatchStatistic.findMany).not.toHaveBeenCalled();
     });
   });
 });

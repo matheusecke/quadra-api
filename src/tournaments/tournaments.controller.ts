@@ -27,6 +27,7 @@ import { CompleteTournamentDto } from './dto/complete-tournament.dto';
 import { ListTournamentsQueryDto } from './dto/list-tournaments-query.dto';
 import { TournamentResponseDto } from './dto/tournament-response.dto';
 import { ChampionSuggestionResponseDto } from './dto/champion-suggestion-response.dto';
+import { TournamentLeadersResponseDto } from './dto/tournament-leaders-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrgRoleGuard } from '../auth/guards/org-role.guard';
 import { ANY_ORG_ROLE, OrgRoles } from '../auth/decorators/org-roles.decorator';
@@ -74,6 +75,18 @@ export class TournamentsController {
       user.sub,
       dto,
     );
+  }
+
+  @Get(':id/leaders')
+  @OrgRoles(...ANY_ORG_ROLE)
+  @ApiOperation({ summary: 'Get tournament per-game and total leaders' })
+  @ApiParam({ name: 'id', example: 12, description: 'Tournament id.' })
+  @ApiOkResponse({ type: TournamentLeadersResponseDto })
+  leaders(
+    @Param('id', ParseIntApiPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<TournamentLeadersResponseDto> {
+    return this.tournamentsService.leaders(user.organizationId as number, id);
   }
 
   @Get(':id')

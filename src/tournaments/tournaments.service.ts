@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   MatchStatus,
   Prisma,
+  RosterRole,
   TournamentFormat,
   TournamentTeamStatus,
   TournamentStatus,
@@ -9,12 +10,17 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
 import { slugify } from '../common/utils/slugify';
+import {
+  StatisticsService,
+  type StatisticLine,
+} from '../statistics/statistics.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { CompleteTournamentDto } from './dto/complete-tournament.dto';
 import { ListTournamentsQueryDto } from './dto/list-tournaments-query.dto';
 import { TournamentResponseDto } from './dto/tournament-response.dto';
 import { ChampionSuggestionResponseDto } from './dto/champion-suggestion-response.dto';
+import { TournamentLeadersResponseDto } from './dto/tournament-leaders-response.dto';
 
 const tournamentSelect = {
   id: true,
@@ -51,9 +57,40 @@ interface MatchCounts {
   finished: number;
 }
 
+const leaderStatisticSelect = {
+  tournamentRosterId: true,
+  userId: true,
+  minutesSeconds: true,
+  pts: true,
+  reb: true,
+  ast: true,
+  stl: true,
+  blk: true,
+  tov: true,
+  pf: true,
+  fgm: true,
+  fga: true,
+  threeFgm: true,
+  threeFga: true,
+  ftm: true,
+  fta: true,
+  tournamentRoster: {
+    select: {
+      tournamentTeamId: true,
+      displayNameSnapshot: true,
+      tournamentTeam: {
+        select: { teamId: true, displayNameSnapshot: true },
+      },
+    },
+  },
+} satisfies Prisma.PlayerMatchStatisticSelect;
+
 @Injectable()
 export class TournamentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly statistics: StatisticsService,
+  ) {}
 
   async create(
     organizationId: number,
@@ -520,6 +557,92 @@ export class TournamentsService {
     return this.toResponse(
       row,
       matchCounts.get(row.id) ?? { total: 0, finished: 0 },
+    );
+  }
+
+  async leaders(
+    organizationId: number,
+    id: number,
+  ): Promise<TournamentLeadersResponseDto> {
+    await this.findRowOrThrow(organizationId, id);
+    const rows = await this.prisma.playerMatchStatistic.findMany({
+      where: {
+        organizationId,
+        isDeleted: false,
+        user: { is: { isDeleted: false } },
+        match: {
+          organizationId,
+          tournamentId: id,
+          status: MatchStatus.FINISHED,
+          isDeleted: false,
+          tournament: { is: { organizationId, isDeleted: false } },
+        },
+        matchTeam: {
+          organizationId,
+          isDeleted: false,
+          tournamentTeam: {
+            is: {
+              organizationId,
+              tournamentId: id,
+              isDeleted: false,
+              team: { is: { isDeleted: false } },
+            },
+          },
+        },
+        tournamentRoster: {
+          organizationId,
+          tournamentId: id,
+          role: RosterRole.ATHLETE,
+          isDeleted: false,
+          tournament: { is: { organizationId, isDeleted: false } },
+          tournamentTeam: {
+            is: {
+              organizationId,
+              tournamentId: id,
+              isDeleted: false,
+              team: { is: { isDeleted: false } },
+            },
+          },
+        },
+      },
+      select: leaderStatisticSelect,
+    });
+    const groups = new Map<number, typeof rows>();
+    for (const row of rows) {
+      const group = groups.get(row.tournamentRosterId);
+      if (group) group.push(row);
+      else groups.set(row.tournamentRosterId, [row]);
+    }
+    return this.statistics.rankLeaders(
+      [...groups.values()].map((group) => {
+        const first = group[0];
+        return {
+          athleteId: first.userId,
+          athleteName: first.tournamentRoster.displayNameSnapshot,
+          tournamentRosterId: first.tournamentRosterId,
+          tournamentTeamId: first.tournamentRoster.tournamentTeamId,
+          teamId: first.tournamentRoster.tournamentTeam.teamId,
+          teamName: first.tournamentRoster.tournamentTeam.displayNameSnapshot,
+          statistics: group.map(
+            (row): StatisticLine => ({
+              minutesSeconds: row.minutesSeconds,
+              pts: row.pts,
+              reb: row.reb,
+              ast: row.ast,
+              stl: row.stl,
+              blk: row.blk,
+              tov: row.tov,
+              pf: row.pf,
+              fgm: row.fgm,
+              fga: row.fga,
+              threeFgm: row.threeFgm,
+              threeFga: row.threeFga,
+              ftm: row.ftm,
+              fta: row.fta,
+            }),
+          ),
+        };
+      }),
     );
   }
 

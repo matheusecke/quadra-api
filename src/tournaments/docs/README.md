@@ -4,15 +4,16 @@ The spine of the sports domain: every later phase (enrollment, groups, standings
 
 ## Routes
 
-| Method | Route | Access |
-| --- | --- | --- |
-| `GET` | `/tournaments` | any org role — paginated, `q`, `ids`, `seasonId`, `categoryId`, `status` |
-| `POST` | `/tournaments` | `ORG_ADMIN` |
-| `GET` | `/tournaments/:id` | any org role |
-| `PATCH` | `/tournaments/:id` | `ORG_ADMIN` |
-| `POST` | `/tournaments/:id/complete` | `ORG_ADMIN` — declares the champion and closes the tournament |
-| `POST` | `/tournaments/:id/reopen` | `ORG_ADMIN` — the inverse of `/complete` |
-| `GET` | `/tournaments/:id/champion-suggestion` | any org role — a suggestion, never a fact |
+| Method  | Route                                  | Access                                                                   |
+| ------- | -------------------------------------- | ------------------------------------------------------------------------ |
+| `GET`   | `/tournaments`                         | any org role — paginated, `q`, `ids`, `seasonId`, `categoryId`, `status` |
+| `POST`  | `/tournaments`                         | `ORG_ADMIN`                                                              |
+| `GET`   | `/tournaments/:id`                     | any org role                                                             |
+| `PATCH` | `/tournaments/:id`                     | `ORG_ADMIN`                                                              |
+| `POST`  | `/tournaments/:id/complete`            | `ORG_ADMIN` — declares the champion and closes the tournament            |
+| `POST`  | `/tournaments/:id/reopen`              | `ORG_ADMIN` — the inverse of `/complete`                                 |
+| `GET`   | `/tournaments/:id/champion-suggestion` | any org role — a suggestion, never a fact                                |
+| `GET`   | `/tournaments/:id/leaders`             | any org role — per-game and total statistics leaders                     |
 
 No `DELETE` route. A tournament is `CANCELLED` via `PATCH`, never deleted.
 
@@ -37,5 +38,21 @@ No `DELETE` route. A tournament is `CANCELLED` via `PATCH`, never deleted.
 - **`GET /:id/champion-suggestion`** suggests, never asserts: `GROUP_STAGE` is always `null` (no champion concept); `LEAGUE` is `null` for now — the suggestion does not yet read the classification table (see the `TODO` in the service); `KNOCKOUT`/`GROUP_STAGE_KNOCKOUT` return the winner of the single slot in the highest round with non-deleted slots, or `null` when that round has zero or more than one slot, or the single slot has no winner yet.
 
 - **`mvpTournamentRosterId`** is read-only for now — always `null`, never accepted in `POST`/`PATCH`, because no screen sets a tournament MVP yet.
+
+## Statistics leaders
+
+`GET /tournaments/:id/leaders` reads only visible, non-deleted athlete
+statistics from `FINISHED` matches in the active JWT organization. It returns
+fixed top-five lists in two groups:
+
+- `perGame`: `ppg`, `rpg`, `apg`, `stg`, `bpg`;
+- `totals`: `pts`, `reb`, `ast`, `stl`, `blk`.
+
+There is no minimum-games threshold. Each category uses its own measured-game
+count. Order is value DESC, measured games DESC, athlete tournament-roster
+snapshot name ASC, then athlete `User.id` ASC. Empty categories remain present
+as `[]`. Calculations are delegated to the Prisma-independent
+`StatisticsModule`; this module owns only the tournament lookup/query and HTTP
+route.
 
 Contract and domain rules: `../../../../docs/sports-api-contract.md` §4, `../../../../docs/sports-domain-rules.md` §1–§3.
