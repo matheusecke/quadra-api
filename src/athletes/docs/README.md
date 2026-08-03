@@ -1,21 +1,47 @@
 # Module: Athletes (`AthletesModule`)
 
-Roster-eligible user catalog. Despite the route name, this is a selector over `OrganizationUserAffiliation` for the two tournament-roster roles (`ATHLETE`, `COACHING_STAFF`) — not a second person identity and not the standalone athlete profile that is still to be built.
+Organization-scoped athlete catalog, profile, and persisted-statistics reads.
+The identity in every route is global `User.id`; active JWT organization scope
+makes cross-tenant ids indistinguishable from missing ids.
 
 ## Endpoints
 
-| Method | Path        | Guards                                          | Purpose                                                                                                                  |
-| ------ | ----------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/athletes` | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Paginated catalog of active, roster-eligible users in the active JWT organization; filters: `q`, `ids`, `teamId`, `role` |
+| Method | Path                        | Query                                                  | Purpose                                        |
+| ------ | --------------------------- | ------------------------------------------------------ | ---------------------------------------------- |
+| `GET`  | `/athletes`                 | `page`, `limit`, `q`, repeated `ids`, `teamId`, `role` | Existing roster-candidate catalog              |
+| `GET`  | `/athletes/:id`             | none                                                   | Current profile or historical athlete identity |
+| `GET`  | `/athletes/:id/statistics`  | none                                                   | All visible finished-match aggregates          |
+| `GET`  | `/athletes/:id/matches`     | `page`, `limit`, repeated `ids`, `tournamentId`        | Match box-score history                        |
+| `GET`  | `/athletes/:id/tournaments` | `page`, `limit`, repeated `ids`, `seasonId`            | Tournament/team aggregate history              |
 
-`GET /athletes` uses `PaginationInterceptor` — response shape in [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md).
+All reads require `JwtAuthGuard`, active organization context, and any active
+organization role. List routes use the standard pagination envelope.
 
-## Eligibility
+## Visibility and history
 
-A row is included when the `OrganizationUserAffiliation` is active and non-deleted, its role is `ATHLETE` or `COACHING_STAFF`, and the related `User` is active and non-deleted. `ORG_ADMIN` and `TEAM_ADMIN` affiliations never appear, even without a `role` filter.
+The catalog remains restricted to active roster-eligible affiliations. Detail
+routes accept a non-deleted user who has either an active `ATHLETE` affiliation
+or a non-deleted historical athlete tournament roster in the organization.
+Historical-only profiles return null current team, jersey, and position.
 
-## Response shape
+Only non-deleted `PlayerMatchStatistic` rows from visible `FINISHED` matches
+contribute. LIVE draft/reopened rows do not contribute. Match names prefer the
+non-deleted match-roster snapshot and fall back to the tournament-roster
+snapshot; tournament and team names always use tournament snapshots.
 
-`id` is the global `User.id` — the same value accepted as `userId` by `POST /tournament-rosters`. `jerseyNumber` and `position` are nullable. `status` is the user's `EntityStatus` and is always `ACTIVE` in this catalog. Email and affiliation ids are deliberately omitted.
+## Statistics
 
-Ordering: user `name ASC`, then user `id ASC`.
+Aggregates expose games played, metric-specific measured games, nullable
+totals/per-game values, `fgPct`, `threeFgPct`, `ftPct`, `trueShootingPct`, and
+EFF. Percentages are `0..1`; derived non-integers have at most three decimals.
+`null` means untracked and zero means measured zero.
+
+Match history order is `scheduledAt DESC`, then match id DESC. Tournament
+history groups by tournament and tournament team, then orders by tournament
+start DESC NULLS LAST, tournament id DESC, and tournament-team id ASC.
+
+## Boundaries
+
+This module only reads Phase 9 statistics/roster snapshots. It does not write,
+repair, cache, or persist aggregates and does not implement Phase 11 admin
+behavior. Shared arithmetic lives in the internal `StatisticsModule`.
