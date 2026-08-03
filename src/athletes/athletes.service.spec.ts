@@ -3,6 +3,8 @@ import {
   AffiliationStatus,
   BasketballPosition,
   EntityStatus,
+  LossType,
+  MatchResult,
   MatchStatus,
   OrgRole,
   RosterRole,
@@ -42,6 +44,79 @@ const affiliationRow = {
     id: 165,
     name: 'Rafael Moura',
     status: EntityStatus.ACTIVE,
+  },
+};
+
+const historyRow = {
+  tournamentRosterId: 88,
+  userId: 165,
+  minutesSeconds: 1980,
+  pts: 24,
+  reb: 8,
+  ast: 5,
+  stl: 2,
+  blk: 1,
+  tov: 3,
+  pf: 2,
+  fgm: 9,
+  fga: 17,
+  threeFgm: 3,
+  threeFga: 7,
+  ftm: 3,
+  fta: 4,
+  matchRoster: {
+    displayNameSnapshot: 'Rafael Moura (match)',
+    isDeleted: false,
+  },
+  tournamentRoster: {
+    tournamentId: 12,
+    tournamentTeamId: 41,
+    displayNameSnapshot: 'Rafael Moura (tournament)',
+    tournamentTeam: {
+      teamId: 8,
+      displayNameSnapshot: 'Engenharia PUC',
+    },
+  },
+  matchTeam: {
+    id: 701,
+    tournamentTeamId: 41,
+    finalScore: 78,
+    result: MatchResult.WIN,
+    lossType: null,
+  },
+  match: {
+    id: 501,
+    scheduledAt: new Date('2026-08-15T19:30:00.000Z'),
+    tournament: {
+      id: 12,
+      name: 'Intercursos 2026',
+      seasonId: 7,
+      startsAt: new Date('2026-08-01T00:00:00.000Z'),
+    },
+    teams: [
+      {
+        id: 701,
+        tournamentTeamId: 41,
+        finalScore: 78,
+        result: MatchResult.WIN,
+        lossType: null,
+        tournamentTeam: {
+          teamId: 8,
+          displayNameSnapshot: 'Engenharia PUC',
+        },
+      },
+      {
+        id: 702,
+        tournamentTeamId: 42,
+        finalScore: 70,
+        result: MatchResult.LOSS,
+        lossType: LossType.NORMAL,
+        tournamentTeam: {
+          teamId: 9,
+          displayNameSnapshot: 'Direito PUC',
+        },
+      },
+    ],
   },
 };
 
@@ -268,6 +343,246 @@ describe('AthletesService', () => {
       await expect(service.findStatistics(42, 165)).resolves.toBe(
         emptyAggregate,
       );
+    });
+  });
+
+  describe('findMatches', () => {
+    it('combines filters, paginates in stable match order, and maps snapshots/results', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        status: EntityStatus.ACTIVE,
+        organizationAffiliations: [],
+      });
+      mockPrisma.playerMatchStatistic.count.mockResolvedValue(1);
+      mockPrisma.playerMatchStatistic.findMany.mockResolvedValue([historyRow]);
+      mockStatistics.derive.mockReturnValue({
+        fgPct: 0.529,
+        threeFgPct: 0.429,
+        ftPct: 0.75,
+        trueShootingPct: 0.64,
+        efficiency: 28,
+      });
+
+      const result = await service.findMatches(42, 165, {
+        page: 2,
+        limit: 5,
+        ids: [501, 498],
+        tournamentId: 12,
+      });
+
+      expect(mockPrisma.playerMatchStatistic.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 5,
+          take: 5,
+          orderBy: [{ match: { scheduledAt: 'desc' } }, { matchId: 'desc' }],
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([
+              {
+                OR: [
+                  { matchRosterId: null },
+                  {
+                    matchRoster: {
+                      is: { organizationId: 42, isDeleted: false },
+                    },
+                  },
+                ],
+              },
+              { matchId: { in: [501, 498] } },
+              { match: { tournamentId: 12 } },
+            ]),
+          }),
+        }),
+      );
+      expect(result).toEqual({
+        count: 1,
+        data: [
+          {
+            match: { id: 501, scheduledAt: historyRow.match.scheduledAt },
+            tournament: { id: 12, name: 'Intercursos 2026' },
+            athleteName: 'Rafael Moura (match)',
+            team: { tournamentTeamId: 41, teamId: 8, name: 'Engenharia PUC' },
+            opponent: { tournamentTeamId: 42, teamId: 9, name: 'Direito PUC' },
+            result: {
+              result: MatchResult.WIN,
+              lossType: null,
+              pointsFor: 78,
+              pointsAgainst: 70,
+            },
+            stats: expect.objectContaining({ tournamentRosterId: 88, pts: 24 }),
+            derived: {
+              fgPct: 0.529,
+              threeFgPct: 0.429,
+              ftPct: 0.75,
+              trueShootingPct: 0.64,
+              efficiency: 28,
+            },
+          },
+        ],
+      });
+    });
+
+    it('falls back to the tournament-roster name and returns an empty 200 service page', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        status: EntityStatus.ACTIVE,
+        organizationAffiliations: [],
+      });
+      mockPrisma.playerMatchStatistic.count
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(0);
+      mockPrisma.playerMatchStatistic.findMany
+        .mockResolvedValueOnce([{ ...historyRow, matchRoster: null }])
+        .mockResolvedValueOnce([]);
+      mockStatistics.derive.mockReturnValue({
+        fgPct: null,
+        threeFgPct: null,
+        ftPct: null,
+        trueShootingPct: null,
+        efficiency: null,
+      });
+
+      const fallback = await service.findMatches(42, 165, {
+        page: 1,
+        limit: 10,
+      });
+      expect(fallback.data[0].athleteName).toBe('Rafael Moura (tournament)');
+      await expect(
+        service.findMatches(42, 165, { page: 1, limit: 10 }),
+      ).resolves.toEqual({ count: 0, data: [] });
+    });
+  });
+
+  describe('findTournaments', () => {
+    it('combines filters, groups before pagination, and applies the complete stable order', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        status: EntityStatus.ACTIVE,
+        organizationAffiliations: [],
+      });
+      const secondTeam = {
+        ...historyRow,
+        tournamentRosterId: 89,
+        tournamentRoster: {
+          ...historyRow.tournamentRoster,
+          tournamentTeamId: 43,
+          tournamentTeam: {
+            teamId: 10,
+            displayNameSnapshot: 'Medicina PUC',
+          },
+        },
+      };
+      const sameStartHigherTournament = {
+        ...historyRow,
+        tournamentRosterId: 90,
+        tournamentRoster: {
+          ...historyRow.tournamentRoster,
+          tournamentId: 13,
+          tournamentTeamId: 44,
+          tournamentTeam: {
+            teamId: 11,
+            displayNameSnapshot: 'Arquitetura PUC',
+          },
+        },
+        match: {
+          ...historyRow.match,
+          id: 502,
+          tournament: {
+            ...historyRow.match.tournament,
+            id: 13,
+            name: 'Intercampi 2026',
+          },
+        },
+      };
+      const newerTournament = {
+        ...sameStartHigherTournament,
+        tournamentRosterId: 91,
+        tournamentRoster: {
+          ...sameStartHigherTournament.tournamentRoster,
+          tournamentId: 10,
+          tournamentTeamId: 46,
+        },
+        match: {
+          ...sameStartHigherTournament.match,
+          id: 503,
+          tournament: {
+            ...sameStartHigherTournament.match.tournament,
+            id: 10,
+            name: 'Copa Primavera',
+            startsAt: new Date('2026-09-01T00:00:00.000Z'),
+          },
+        },
+      };
+      const undatedTournament = {
+        ...sameStartHigherTournament,
+        tournamentRosterId: 92,
+        tournamentRoster: {
+          ...sameStartHigherTournament.tournamentRoster,
+          tournamentId: 14,
+          tournamentTeamId: 45,
+        },
+        match: {
+          ...sameStartHigherTournament.match,
+          id: 504,
+          tournament: {
+            ...sameStartHigherTournament.match.tournament,
+            id: 14,
+            name: 'Torneio sem data',
+            startsAt: null,
+          },
+        },
+      };
+      mockPrisma.playerMatchStatistic.findMany.mockResolvedValue([
+        historyRow,
+        { ...historyRow, match: { ...historyRow.match, id: 498 } },
+        secondTeam,
+        sameStartHigherTournament,
+        newerTournament,
+        undatedTournament,
+      ]);
+      mockStatistics.aggregate.mockImplementation((lines: unknown[]) => ({
+        ...emptyAggregate,
+        gamesPlayed: lines.length,
+      }));
+
+      const result = await service.findTournaments(42, 165, {
+        page: 1,
+        limit: 10,
+        ids: [10, 12, 13, 14],
+        seasonId: 7,
+      });
+
+      expect(result.count).toBe(5);
+      expect(result.data.map((row) => row.team.tournamentTeamId)).toEqual([
+        46, 44, 41, 43, 45,
+      ]);
+      expect(result.data.map((row) => row.statistics.gamesPlayed)).toEqual([
+        1, 1, 2, 1, 1,
+      ]);
+      expect(mockPrisma.playerMatchStatistic.findMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            { match: { tournamentId: { in: [10, 12, 13, 14] } } },
+            { match: { tournament: { seasonId: 7 } } },
+          ]),
+        }),
+        select: expect.any(Object),
+      });
+    });
+
+    it('returns count zero and no rows when valid filters match no history', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        status: EntityStatus.ACTIVE,
+        organizationAffiliations: [],
+      });
+      mockPrisma.playerMatchStatistic.findMany.mockResolvedValue([]);
+      await expect(
+        service.findTournaments(42, 165, { page: 1, limit: 10 }),
+      ).resolves.toEqual({ count: 0, data: [] });
     });
   });
 });
