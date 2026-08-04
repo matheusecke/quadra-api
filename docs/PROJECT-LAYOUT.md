@@ -61,13 +61,20 @@ src/
 │   ├── organizations.service.ts
 │   └── dto/
 │
-└── teams/
-    ├── docs/
-    │   └── README.md
-    ├── teams.module.ts
-    ├── teams.controller.ts
-    ├── teams.service.ts
-    └── dto/
+├── teams/
+│   ├── docs/
+│   │   └── README.md
+│   ├── teams.module.ts
+│   ├── teams.controller.ts
+│   ├── teams.service.ts
+│   └── dto/
+│
+└── statistics/
+    ├── docs/README.md
+    ├── dto/statistics-response.dto.ts
+    ├── statistics.module.ts
+    ├── statistics.service.ts
+    └── statistics.service.spec.ts
 ```
 
 ## `prisma/` schema tree
@@ -94,6 +101,7 @@ Registered in `src/app.module.ts`:
 - `ThrottlerModule` + global `ThrottlerGuard` (`APP_GUARD` in `app.module.ts`) — default rate limit; stricter `@Throttle` on selected routes; `/api` excluded for Swagger. **Full trade-offs, proxy and replica behavior, evolution path:** [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting).
 - `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`
 - Global `ResponseTransformInterceptor` via `APP_INTERCEPTOR`
+- `StatisticsModule` is **not** registered directly in `AppModule`. It is an internal, Prisma-free, controller-free module imported by `AthletesModule` and `TournamentsModule` to share pure aggregation, shooting/TS%/EFF derivation, and deterministic leader ranking.
 
 Bootstrap (`src/main.ts`): `cookie-parser`, shutdown hooks, CORS with credentials, `ValidationPipe`, global filters, Swagger at `/api`, default port `3001`.
 
