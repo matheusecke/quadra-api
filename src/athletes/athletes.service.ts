@@ -86,13 +86,7 @@ const athleteMatchHistorySelect = (organizationId: number) =>
           where: {
             organizationId,
             isDeleted: false,
-            tournamentTeam: {
-              is: {
-                organizationId,
-                isDeleted: false,
-                team: { is: { isDeleted: false } },
-              },
-            },
+            tournamentTeam: { is: { organizationId } },
           },
           select: {
             id: true,

@@ -452,6 +452,44 @@ describe('AthletesService', () => {
         service.findMatches(42, 165, { page: 1, limit: 10 }),
       ).resolves.toEqual({ count: 0, data: [] });
     });
+
+    it('keeps opponents from soft-deleted teams, pinning only organizationId', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        status: EntityStatus.ACTIVE,
+        organizationAffiliations: [],
+      });
+      mockPrisma.playerMatchStatistic.count.mockResolvedValue(1);
+      mockPrisma.playerMatchStatistic.findMany.mockResolvedValue([historyRow]);
+      mockStatistics.derive.mockReturnValue({
+        fgPct: 0.529,
+        threeFgPct: 0.429,
+        ftPct: 0.75,
+        trueShootingPct: 0.64,
+        efficiency: 28,
+      });
+
+      await service.findMatches(42, 165, { page: 1, limit: 10 });
+
+      expect(mockPrisma.playerMatchStatistic.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            match: expect.objectContaining({
+              select: expect.objectContaining({
+                teams: expect.objectContaining({
+                  where: {
+                    organizationId: 42,
+                    isDeleted: false,
+                    tournamentTeam: { is: { organizationId: 42 } },
+                  },
+                }),
+              }),
+            }),
+          }),
+        }),
+      );
+    });
   });
 
   describe('findTournaments', () => {
