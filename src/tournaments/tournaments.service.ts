@@ -10,10 +10,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
 import { slugify } from '../common/utils/slugify';
-import {
-  StatisticsService,
-  type StatisticLine,
-} from '../statistics/statistics.service';
+import { StatisticsService } from '../statistics/statistics.service';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { UpdateTournamentDto } from './dto/update-tournament.dto';
 import { CompleteTournamentDto } from './dto/complete-tournament.dto';
@@ -623,24 +620,7 @@ export class TournamentsService {
           tournamentTeamId: first.tournamentRoster.tournamentTeamId,
           teamId: first.tournamentRoster.tournamentTeam.teamId,
           teamName: first.tournamentRoster.tournamentTeam.displayNameSnapshot,
-          statistics: group.map(
-            (row): StatisticLine => ({
-              minutesSeconds: row.minutesSeconds,
-              pts: row.pts,
-              reb: row.reb,
-              ast: row.ast,
-              stl: row.stl,
-              blk: row.blk,
-              tov: row.tov,
-              pf: row.pf,
-              fgm: row.fgm,
-              fga: row.fga,
-              threeFgm: row.threeFgm,
-              threeFga: row.threeFga,
-              ftm: row.ftm,
-              fta: row.fta,
-            }),
-          ),
+          statistics: group,
         };
       }),
     );

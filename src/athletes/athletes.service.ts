@@ -285,24 +285,7 @@ export class AthletesService {
             teamId: first.tournamentRoster.tournamentTeam.teamId,
             name: first.tournamentRoster.tournamentTeam.displayNameSnapshot,
           },
-          statistics: this.statistics.aggregate(
-            group.map((row) => ({
-              minutesSeconds: row.minutesSeconds,
-              pts: row.pts,
-              reb: row.reb,
-              ast: row.ast,
-              stl: row.stl,
-              blk: row.blk,
-              tov: row.tov,
-              pf: row.pf,
-              fgm: row.fgm,
-              fga: row.fga,
-              threeFgm: row.threeFgm,
-              threeFga: row.threeFga,
-              ftm: row.ftm,
-              fta: row.fta,
-            })),
-          ),
+          statistics: this.statistics.aggregate(group),
         };
       })
       .sort((left, right) => {
