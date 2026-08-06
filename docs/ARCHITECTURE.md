@@ -1,4 +1,4 @@
-# Architecture — tcc-api
+# Architecture — quadra-api
 
 Hub document for backend structure. **For LLM context:** load only the sections below that match your task; deep detail lives in linked files.
 

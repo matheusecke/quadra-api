@@ -1,7 +1,7 @@
 services:
   api:
-    container_name: tcc-api
-    image: tcc-api
+    container_name: quadra-api
+    image: quadra-api
     build:
       context: .
       dockerfile: Dockerfile.local
@@ -11,17 +11,17 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@tcc-postgres:5432/tcc?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@quadra-postgres:5432/quadra?schema=public
     ports:
       - "3001:3001"
     restart: unless-stopped
     networks:
-      - tcc-network
+      - quadra-network
 
 networks:
-  tcc-network:
+  quadra-network:
     external: true
-    name: tcc-network
+    name: quadra-network
 
 volumes:
   node_modules:

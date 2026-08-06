@@ -56,7 +56,7 @@ async function bootstrap(): Promise<void> {
   ].join('\n');
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('tcc-api')
+    .setTitle('quadra-api')
     .setDescription(swaggerDescription)
     .setVersion('1.0')
     .addTag('health', 'Health check.')

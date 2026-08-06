@@ -1,4 +1,4 @@
-# tcc-api
+# quadra-api
 
 Backend (**REST API**) for a **multi-tenant web platform** to run **basketball championships** across many sport organizations in one system. Built for a **computer engineering capstone (TCC)** — production-quality patterns, incremental scope.
 
@@ -12,61 +12,61 @@ The product is split across **separate Git repositories** that are meant to live
 
 | Repository | Role |
 | ---------- | ---- |
-| **`tcc-api`** (this repo) | REST API — auth, sessions, multi-tenant persistence, future championship/match modules. |
-| **`tcc-web`** | Browser SPA (React + Vite) — UI, calls the API over HTTP. |
-| **`tcc-infra`** | Local **Docker Compose** definitions (PostgreSQL, shared network, optional **full stack** compose that builds API + web). AWS/ECS-oriented material may live here as the project grows. |
+| **`quadra-api`** (this repo) | REST API — auth, sessions, multi-tenant persistence, future championship/match modules. |
+| **`quadra-web`** | Browser SPA (React + Vite) — UI, calls the API over HTTP. |
+| **`quadra-infra`** | Local **Docker Compose** definitions (PostgreSQL, shared network, optional **full stack** compose that builds API + web). AWS/ECS-oriented material may live here as the project grows. |
 
 Expected layout for integrated work:
 
 ```text
 <workspace>/
-  tcc-api/
-  tcc-web/
-  tcc-infra/
+  quadra-api/
+  quadra-web/
+  quadra-infra/
 ```
 
 ---
 
 ## Docker and how services connect
 
-**Intended local workflow:** run the database (and optionally API + web) **in containers** so hostnames, ports, and the shared **`tcc-network`** match what the compose files expect. Running everything in Docker avoids “works on my machine” drift for DB hostnames (`tcc-postgres` vs `localhost`) and matches how the repos were wired.
+**Intended local workflow:** run the database (and optionally API + web) **in containers** so hostnames, ports, and the shared **`quadra-network`** match what the compose files expect. Running everything in Docker avoids “works on my machine” drift for DB hostnames (`quadra-postgres` vs `localhost`) and matches how the repos were wired.
 
 ### What each layer does
 
-1. **`tcc-infra`** — Defines Docker network **`tcc-network`** and container **`tcc-postgres`** (PostgreSQL 16). Publishes the database on host port **`5433`** → container `5432` (so host tools use `localhost:5433`). Optionally **`docker-compose-full.yml`** in that repo builds and runs **postgres + API + web** together.
-2. **`tcc-api`** — `docker-compose.yml` here builds the API image (`Dockerfile.local`), attaches the API to **`tcc-network`**, and sets `DATABASE_URL` to `...@tcc-postgres:5432/...`. The compose file treats **`tcc-network` as external** — bring infra (or full stack) up first so the network (and DB) exist.
-3. **`tcc-web`** — `docker-compose.yml` runs the Vite dev server in a container with **`VITE_API_URL=http://localhost:3001`** so the **browser** still talks to the API on the host-mapped port.
+1. **`quadra-infra`** — Defines Docker network **`quadra-network`** and container **`quadra-postgres`** (PostgreSQL 16). Publishes the database on host port **`5433`** → container `5432` (so host tools use `localhost:5433`). Optionally **`docker-compose-full.yml`** in that repo builds and runs **postgres + API + web** together.
+2. **`quadra-api`** — `docker-compose.yml` here builds the API image (`Dockerfile.local`), attaches the API to **`quadra-network`**, and sets `DATABASE_URL` to `...@quadra-postgres:5432/...`. The compose file treats **`quadra-network` as external** — bring infra (or full stack) up first so the network (and DB) exist.
+3. **`quadra-web`** — `docker-compose.yml` runs the Vite dev server in a container with **`VITE_API_URL=http://localhost:3001`** so the **browser** still talks to the API on the host-mapped port.
 
 ### Communication paths
 
 ```text
-Browser  ──HTTP (JSON, cookies)──►  tcc-web  :5173   (Vite app)
+Browser  ──HTTP (JSON, cookies)──►  quadra-web  :5173   (Vite app)
               │
-              └── same browser ──►  tcc-api  :3001   (REST + Swagger /api)
+              └── same browser ──►  quadra-api  :3001   (REST + Swagger /api)
                                         │
-                                        └── TCP ──►  PostgreSQL (tcc-postgres:5432 on Docker network)
+                                        └── TCP ──►  PostgreSQL (quadra-postgres:5432 on Docker network)
 ```
 
-- **Web → API:** the SPA uses `VITE_API_URL` (see `tcc-web`). The API enables CORS with credentials for dev (default origin **`http://localhost:5173`** in `src/main.ts`, overridable with **`CORS_ORIGIN`**).
-- **API → DB:** inside Docker, `DATABASE_URL` uses hostname **`tcc-postgres`**. From the **host** (e.g. `npm run start:dev` on your machine with infra up), point `DATABASE_URL` at **`localhost:5433`** to reach the same database through the published port.
+- **Web → API:** the SPA uses `VITE_API_URL` (see `quadra-web`). The API enables CORS with credentials for dev (default origin **`http://localhost:5173`** in `src/main.ts`, overridable with **`CORS_ORIGIN`**).
+- **API → DB:** inside Docker, `DATABASE_URL` uses hostname **`quadra-postgres`**. From the **host** (e.g. `npm run start:dev` on your machine with infra up), point `DATABASE_URL` at **`localhost:5433`** to reach the same database through the published port.
 
 ### One-command full stack (typical)
 
 From the machine that has **all three** repos checked out next to each other:
 
 ```bash
-cd tcc-infra
+cd quadra-infra
 docker compose -f docker-compose-full.yml up --build
 ```
 
-That starts **postgres**, **tcc-api** on **http://localhost:3001**, and **tcc-web** on **http://localhost:5173**. Apply Prisma migrations yourself when the schema changes (see [CLAUDE.md](CLAUDE.md)).
+That starts **postgres**, **quadra-api** on **http://localhost:3001**, and **quadra-web** on **http://localhost:5173**. Apply Prisma migrations yourself when the schema changes (see [CLAUDE.md](CLAUDE.md)).
 
 ### API-only container (after DB is up)
 
-If you already started **`tcc-infra/docker-compose.yml`** (Postgres + network) and only want the API container from this repo:
+If you already started **`quadra-infra/docker-compose.yml`** (Postgres + network) and only want the API container from this repo:
 
 ```bash
-cd tcc-api
+cd quadra-api
 docker compose up --build
 ```
 

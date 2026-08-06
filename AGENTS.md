@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file supplements the repository-level `AGENTS.md` for work inside `tcc-api/`.
+This file supplements the repository-level `AGENTS.md` for work inside `quadra-api/`.
 
 ## Scope
 

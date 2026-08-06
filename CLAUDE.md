@@ -1,4 +1,4 @@
-# tcc-api
+# quadra-api
 
 Multi-tenant NestJS backend for basketball championship management. Domain context (Portuguese, parent repo): [../TCC.md](../TCC.md).
 
@@ -104,10 +104,10 @@ populated table is the standard case, and needs a backfill Prisma will not write
 ## Local Environment
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tcc?schema=public
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/quadra?schema=public
 JWT_SECRET=...
 JWT_EXPIRES_IN=15m   # optional, default 15m
 PORT=3001            # optional
 ```
 
-Docker Compose (`docker-compose.yml`) runs the API on external network `tcc-network`; PostgreSQL in container `tcc-postgres`.
+Docker Compose (`docker-compose.yml`) runs the API on external network `quadra-network`; PostgreSQL in container `quadra-postgres`.
