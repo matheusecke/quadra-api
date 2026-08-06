@@ -1,6 +1,6 @@
 # Database Conventions
 
-This document is the source of truth for database naming, Prisma mapping, and migration conventions in `tcc-api`. It is **project-wide** (lives in `docs/`). Application-module notes that are not strictly about the database belong in `src/<domain>/docs/README.md`; the Prisma **client** module is described in [`src/prisma/docs/README.md`](../src/prisma/docs/README.md).
+This document is the source of truth for database naming, Prisma mapping, and migration conventions in `quadra-api`. It is **project-wide** (lives in `docs/`). Application-module notes that are not strictly about the database belong in `src/<domain>/docs/README.md`; the Prisma **client** module is described in [`src/prisma/docs/README.md`](../src/prisma/docs/README.md).
 
 ## Naming
 

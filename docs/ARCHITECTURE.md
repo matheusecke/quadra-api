@@ -1,4 +1,4 @@
-# Architecture — tcc-api
+# Architecture — quadra-api
 
 Hub document for backend structure. **For LLM context:** load only the sections below that match your task; deep detail lives in linked files.
 
@@ -33,7 +33,7 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 | Folder trees, `app.module` composition    | [PROJECT-LAYOUT.md](./PROJECT-LAYOUT.md)     | Refactoring structure, new modules           |
 | Errors, API response envelope, pagination | [HTTP-LAYER.md](./HTTP-LAYER.md)             | Filters, interceptors, DTO validation errors |
 | Jest scope and mocks                      | [TESTING-STRATEGY.md](./TESTING-STRATEGY.md) | Tests only                                   |
-| Missing features, next milestones         | [ROADMAP-GAPS.md](./ROADMAP-GAPS.md)         | Planning, scope questions                    |
+| Missing features, next milestones         | [ROADMAP.md](./ROADMAP.md)                   | Planning, scope questions                    |
 
 ### Co-located with modules (`src/<domain>/docs/README.md`)
 

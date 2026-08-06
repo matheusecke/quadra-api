@@ -13,7 +13,7 @@
 --   1 organização  | 16 times | 160 usuários seed | 161 afiliações (incl. user id=1)
 --   16 vínculos org↔time
 --
--- Fonte de verdade para slugs/e-mails usados em mockSportsData.ts (tcc-web).
+-- Fonte de verdade para slugs/e-mails usados em mockSportsData.ts (quadra-web).
 -- =============================================================================
 
 BEGIN;
@@ -26,7 +26,7 @@ WHERE NOT EXISTS (SELECT 1 FROM organizations o WHERE o.slug = v.slug AND o.is_d
 -- short_name is picked by hand (T01..T16), NOT derived from name: every team is
 -- named "Time N", so the migration's name-based backfill would collapse all
 -- sixteen into "TIM". No unique index on short_name allows it, but it would be
--- useless on a bracket. Team names and slugs are unchanged — tcc-web's
+-- useless on a bracket. Team names and slugs are unchanged — quadra-web's
 -- mock-sports-data.ts traces them (Team N = puc-time-N).
 INSERT INTO teams (name, short_name, slug, status, is_deleted, created_at, updated_at)
 SELECT v.name, v.short_name, v.slug, 'ACTIVE'::entity_status, false, NOW(), NOW()
