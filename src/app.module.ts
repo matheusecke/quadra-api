@@ -2,6 +2,7 @@ import { ExecutionContext, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR, Reflector } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -49,6 +50,7 @@ function skipThrottlerForSwaggerPath(context: ExecutionContext): boolean {
       skipIf: skipThrottlerForSwaggerPath,
       throttlers: [{ ttl: 60_000, limit: 120 }],
     }),
+    HealthModule,
     PrismaModule,
     AuthModule,
     UsersModule,

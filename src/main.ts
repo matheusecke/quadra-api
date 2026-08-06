@@ -59,6 +59,7 @@ async function bootstrap(): Promise<void> {
     .setTitle('tcc-api')
     .setDescription(swaggerDescription)
     .setVersion('1.0')
+    .addTag('health', 'Health check.')
     .addBearerAuth(
       {
         type: 'http',
