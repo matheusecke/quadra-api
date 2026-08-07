@@ -10,3 +10,5 @@ export class TeamMatchesQueryDto extends PaginationDefaultsDto {
   @IsIn(TEAM_MATCH_SCOPES)
   scope!: TeamMatchScope;
 }
+
+export class TeamTournamentsQueryDto extends PaginationDefaultsDto {}

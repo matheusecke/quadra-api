@@ -11,6 +11,7 @@ import {
   MatchSide,
   MatchStatus,
   TournamentStatus,
+  TournamentTeamStatus,
 } from '@prisma/client';
 import { TeamsService } from './teams.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -27,6 +28,7 @@ const mockPrisma: any = {
     update: jest.fn(),
   },
   tournament: { findMany: jest.fn() },
+  tournamentTeam: { count: jest.fn(), findMany: jest.fn() },
   match: { count: jest.fn(), findMany: jest.fn() },
   matchTeam: { findMany: jest.fn() },
 };
@@ -143,6 +145,37 @@ const statisticMatch = (
         lossType: opponent.lossType,
       },
     ],
+  },
+});
+
+const tournamentHistoryRow = ({
+  tournamentTeamId,
+  tournamentId,
+  tournamentStatus,
+  participationStatus,
+  championTournamentTeamId = null,
+  startsAt = null,
+}: {
+  tournamentTeamId: number;
+  tournamentId: number;
+  tournamentStatus: TournamentStatus;
+  participationStatus: TournamentTeamStatus;
+  championTournamentTeamId?: number | null;
+  startsAt?: Date | null;
+}) => ({
+  id: tournamentTeamId,
+  teamId: 1,
+  displayNameSnapshot: 'Engenharia PUC',
+  status: participationStatus,
+  tournament: {
+    id: tournamentId,
+    name: `Intercursos ${tournamentId}`,
+    seasonId: 7,
+    status: tournamentStatus,
+    startsAt,
+    endsAt: null,
+    championTournamentTeamId,
+    season: { label: '2026' },
   },
 });
 
@@ -688,6 +721,177 @@ describe('TeamsService', () => {
 
       expect(mockPrisma.match.count).not.toHaveBeenCalled();
       expect(mockPrisma.match.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findTournaments', () => {
+    beforeEach(() => {
+      mockPrisma.team.findFirst.mockResolvedValue(profileTeam());
+      mockPrisma.matchTeam.findMany.mockResolvedValue([]);
+    });
+
+    it('returns active and withdrawn participations across tournament statuses in deterministic order', async () => {
+      const statuses = [
+        TournamentStatus.DRAFT,
+        TournamentStatus.REGISTRATION,
+        TournamentStatus.IN_PROGRESS,
+        TournamentStatus.COMPLETED,
+        TournamentStatus.CANCELLED,
+      ];
+      mockPrisma.tournamentTeam.count.mockResolvedValue(statuses.length);
+      mockPrisma.tournamentTeam.findMany.mockResolvedValue(
+        statuses.map((tournamentStatus, index) => {
+          const tournamentTeamId = 41 + index;
+          return tournamentHistoryRow({
+            tournamentTeamId,
+            tournamentId: 12 + index,
+            tournamentStatus,
+            participationStatus:
+              index % 2 === 0
+                ? TournamentTeamStatus.ACTIVE
+                : TournamentTeamStatus.WITHDRAWN,
+            championTournamentTeamId:
+              tournamentStatus === TournamentStatus.COMPLETED
+                ? tournamentTeamId
+                : null,
+            startsAt: index === 0 ? new Date('2026-05-02T12:00:00.000Z') : null,
+          });
+        }),
+      );
+
+      const result = await service.findTournaments(42, 1, {
+        page: 1,
+        limit: 10,
+      });
+
+      const where = {
+        organizationId: 42,
+        teamId: 1,
+        isDeleted: false,
+        tournament: { is: { organizationId: 42, isDeleted: false } },
+      };
+      expect(mockPrisma.tournamentTeam.count).toHaveBeenCalledWith({ where });
+      expect(mockPrisma.tournamentTeam.findMany).toHaveBeenCalledWith({
+        where,
+        skip: 0,
+        take: 10,
+        orderBy: [
+          { tournament: { startsAt: { sort: 'desc', nulls: 'last' } } },
+          { tournamentId: 'desc' },
+          { id: 'asc' },
+        ],
+        select: expect.any(Object),
+      });
+      expect(result.count).toBe(statuses.length);
+      expect(
+        result.data.map((item) => ({
+          tournamentStatus: item.tournament.status,
+          participationStatus: item.team.status,
+          isChampion: item.team.isChampion,
+        })),
+      ).toEqual(
+        statuses.map((tournamentStatus, index) => ({
+          tournamentStatus,
+          participationStatus:
+            index % 2 === 0
+              ? TournamentTeamStatus.ACTIVE
+              : TournamentTeamStatus.WITHDRAWN,
+          isChampion: tournamentStatus === TournamentStatus.COMPLETED,
+        })),
+      );
+      expect(JSON.stringify(result)).not.toContain('"totals"');
+    });
+
+    it('loads finished statistics only for participations on the current page', async () => {
+      mockPrisma.tournamentTeam.count.mockResolvedValue(2);
+      mockPrisma.tournamentTeam.findMany.mockResolvedValue([
+        tournamentHistoryRow({
+          tournamentTeamId: 41,
+          tournamentId: 12,
+          tournamentStatus: TournamentStatus.IN_PROGRESS,
+          participationStatus: TournamentTeamStatus.ACTIVE,
+        }),
+        tournamentHistoryRow({
+          tournamentTeamId: 77,
+          tournamentId: 19,
+          tournamentStatus: TournamentStatus.CANCELLED,
+          participationStatus: TournamentTeamStatus.WITHDRAWN,
+        }),
+      ]);
+      mockPrisma.matchTeam.findMany.mockResolvedValue([
+        {
+          ...statisticMatch(
+            601,
+            { finalScore: 80, result: MatchResult.WIN },
+            { finalScore: 70 },
+            [{ homePoints: 80, awayPoints: 70 }],
+          ),
+          tournamentTeamId: 41,
+        },
+        {
+          ...statisticMatch(
+            602,
+            { finalScore: 60, result: MatchResult.LOSS },
+            { finalScore: 65 },
+            [{ homePoints: 60, awayPoints: 65 }],
+          ),
+          tournamentTeamId: 77,
+        },
+      ]);
+
+      const result = await service.findTournaments(42, 1, {
+        page: 2,
+        limit: 2,
+      });
+
+      expect(mockPrisma.matchTeam.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            tournamentTeam: {
+              is: expect.objectContaining({ id: { in: [41, 77] } }),
+            },
+            match: {
+              is: expect.objectContaining({ status: MatchStatus.FINISHED }),
+            },
+          }),
+        }),
+      );
+      expect(result.data[0].statistics.results).toMatchObject({
+        measuredGames: 1,
+        winRate: 1,
+        pointsForPerGame: 80,
+      });
+      expect(result.data[1].statistics.results).toMatchObject({
+        measuredGames: 1,
+        winRate: 0,
+        pointsForPerGame: 60,
+      });
+    });
+
+    it('returns an empty page without issuing an empty-id statistics query', async () => {
+      mockPrisma.tournamentTeam.count.mockResolvedValue(0);
+      mockPrisma.tournamentTeam.findMany.mockResolvedValue([]);
+
+      const result = await service.findTournaments(42, 1, {
+        page: 1,
+        limit: 10,
+      });
+
+      expect(result).toEqual({ count: 0, data: [] });
+      expect(mockPrisma.matchTeam.findMany).not.toHaveBeenCalled();
+    });
+
+    it('checks visibility before querying tournament participations', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+
+      const err = await service
+        .findTournaments(42, 1, { page: 1, limit: 10 })
+        .catch((error: unknown) => error);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(mockPrisma.tournamentTeam.count).not.toHaveBeenCalled();
+      expect(mockPrisma.tournamentTeam.findMany).not.toHaveBeenCalled();
     });
   });
 

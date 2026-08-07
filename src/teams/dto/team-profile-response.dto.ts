@@ -4,6 +4,8 @@ import {
   LossType,
   MatchResult,
   MatchStatus,
+  TournamentStatus,
+  TournamentTeamStatus,
 } from '@prisma/client';
 import type { MatchScoreSource } from '../../matches/match-score-source';
 
@@ -159,4 +161,38 @@ export class TeamMatchResponseDto {
   team!: TeamMatchParticipantResponseDto;
   @ApiProperty({ type: TeamMatchParticipantResponseDto })
   opponent!: TeamMatchParticipantResponseDto;
+}
+
+export class TeamTournamentHistoryReferenceResponseDto {
+  @ApiProperty({ example: 12 }) id!: number;
+  @ApiProperty({ example: 'Intercursos 2026' }) name!: string;
+  @ApiProperty({ example: 7 }) seasonId!: number;
+  @ApiProperty({ example: '2026' }) seasonLabel!: string;
+  @ApiProperty({ enum: TournamentStatus, enumName: 'TournamentStatus' })
+  status!: TournamentStatus;
+  @ApiProperty({ nullable: true, example: '2026-05-02T12:00:00.000Z' })
+  startsAt!: Date | null;
+  @ApiProperty({ nullable: true, example: '2026-06-20T12:00:00.000Z' })
+  endsAt!: Date | null;
+}
+
+export class TeamTournamentParticipantResponseDto {
+  @ApiProperty({ example: 41 }) tournamentTeamId!: number;
+  @ApiProperty({ example: 8 }) teamId!: number;
+  @ApiProperty({ example: 'Engenharia PUC' }) name!: string;
+  @ApiProperty({
+    enum: TournamentTeamStatus,
+    enumName: 'TournamentTeamStatus',
+  })
+  status!: TournamentTeamStatus;
+  @ApiProperty({ example: true }) isChampion!: boolean;
+}
+
+export class TeamTournamentResponseDto {
+  @ApiProperty({ type: TeamTournamentHistoryReferenceResponseDto })
+  tournament!: TeamTournamentHistoryReferenceResponseDto;
+  @ApiProperty({ type: TeamTournamentParticipantResponseDto })
+  team!: TeamTournamentParticipantResponseDto;
+  @ApiProperty({ type: TeamStatisticsResponseDto })
+  statistics!: TeamStatisticsResponseDto;
 }

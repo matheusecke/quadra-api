@@ -20,8 +20,12 @@ import {
   TeamProfileStatus,
   TeamStatisticsResponseDto,
   TeamSummaryResponseDto,
+  TeamTournamentResponseDto,
 } from './dto/team-profile-response.dto';
-import { TeamMatchesQueryDto } from './dto/team-profile-query.dto';
+import {
+  TeamMatchesQueryDto,
+  TeamTournamentsQueryDto,
+} from './dto/team-profile-query.dto';
 import {
   STATISTIC_METRICS,
   StatisticsService,
@@ -149,6 +153,25 @@ const teamProfileMatchSelect = {
   },
 } satisfies Prisma.MatchSelect;
 
+const teamTournamentHistorySelect = {
+  id: true,
+  teamId: true,
+  displayNameSnapshot: true,
+  status: true,
+  tournament: {
+    select: {
+      id: true,
+      name: true,
+      seasonId: true,
+      status: true,
+      startsAt: true,
+      endsAt: true,
+      championTournamentTeamId: true,
+      season: { select: { label: true } },
+    },
+  },
+} satisfies Prisma.TournamentTeamSelect;
+
 type TeamProfileRow = Prisma.TeamGetPayload<{
   select: ReturnType<typeof teamProfileSelect>;
 }>;
@@ -157,6 +180,9 @@ type TeamStatisticMatchRow = Prisma.MatchTeamGetPayload<{
 }>;
 type TeamProfileMatchRow = Prisma.MatchGetPayload<{
   select: typeof teamProfileMatchSelect;
+}>;
+type TeamTournamentHistoryRow = Prisma.TournamentTeamGetPayload<{
+  select: typeof teamTournamentHistorySelect;
 }>;
 
 const round = (value: number): number => Math.round(value * 1000) / 1000;
@@ -373,6 +399,81 @@ export class TeamsService {
       data: [...liveRows, ...queuedRows].map((row) =>
         this.toTeamMatch(row, teamId),
       ),
+    };
+  }
+
+  async findTournaments(
+    organizationId: number,
+    teamId: number,
+    query: TeamTournamentsQueryDto,
+  ): Promise<{ count: number; data: TeamTournamentResponseDto[] }> {
+    await this.findVisibleTeamOrThrow(organizationId, teamId);
+    const where: Prisma.TournamentTeamWhereInput = {
+      organizationId,
+      teamId,
+      isDeleted: false,
+      tournament: { is: { organizationId, isDeleted: false } },
+    };
+    const [count, rows] = await Promise.all([
+      this.prisma.tournamentTeam.count({ where }),
+      this.prisma.tournamentTeam.findMany({
+        where,
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        orderBy: [
+          { tournament: { startsAt: { sort: 'desc', nulls: 'last' } } },
+          { tournamentId: 'desc' },
+          { id: 'asc' },
+        ],
+        select: teamTournamentHistorySelect,
+      }),
+    ]);
+    if (rows.length === 0) return { count, data: [] };
+
+    const statisticRows = await this.findTeamStatisticRows(
+      organizationId,
+      teamId,
+      rows.map((row) => row.id),
+    );
+    const statisticsByParticipation = new Map<
+      number,
+      TeamStatisticMatchRow[]
+    >();
+    for (const statisticRow of statisticRows) {
+      const statistics = statisticsByParticipation.get(
+        statisticRow.tournamentTeamId,
+      );
+      if (statistics) statistics.push(statisticRow);
+      else {
+        statisticsByParticipation.set(statisticRow.tournamentTeamId, [
+          statisticRow,
+        ]);
+      }
+    }
+
+    return {
+      count,
+      data: rows.map((row) => ({
+        tournament: {
+          id: row.tournament.id,
+          name: row.tournament.name,
+          seasonId: row.tournament.seasonId,
+          seasonLabel: row.tournament.season.label,
+          status: row.tournament.status,
+          startsAt: row.tournament.startsAt,
+          endsAt: row.tournament.endsAt,
+        },
+        team: {
+          tournamentTeamId: row.id,
+          teamId: row.teamId,
+          name: row.displayNameSnapshot,
+          status: row.status,
+          isChampion: row.tournament.championTournamentTeamId === row.id,
+        },
+        statistics: this.composeTeamStatistics(
+          statisticsByParticipation.get(row.id) ?? [],
+        ),
+      })),
     };
   }
 
