@@ -1,5 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { BrazilianState } from '@prisma/client';
+import {
+  BrazilianState,
+  LossType,
+  MatchResult,
+  MatchStatus,
+} from '@prisma/client';
+import type { MatchScoreSource } from '../../matches/match-score-source';
 
 export enum TeamProfileStatus {
   ACTIVE = 'ACTIVE',
@@ -110,4 +116,47 @@ export class TeamSummaryResponseDto {
   titles!: TeamTitleResponseDto[];
   @ApiProperty({ type: TeamStatisticsResponseDto })
   statistics!: TeamStatisticsResponseDto;
+}
+
+export class TeamMatchReferenceResponseDto {
+  @ApiProperty({ example: 501 }) id!: number;
+  @ApiProperty({ enum: MatchStatus, enumName: 'MatchStatus' })
+  status!: MatchStatus;
+  @ApiProperty({ example: '2026-08-15T19:30:00.000Z' })
+  scheduledAt!: Date;
+  @ApiProperty({ example: 'Central Arena', nullable: true })
+  venueName!: string | null;
+  @ApiProperty({ enum: ['PERIODS', 'AWARDED'], nullable: true })
+  scoreSource!: MatchScoreSource | null;
+}
+
+export class TeamTournamentReferenceResponseDto {
+  @ApiProperty({ example: 12 }) id!: number;
+  @ApiProperty({ example: 'Intercursos 2026' }) name!: string;
+  @ApiProperty({ example: 7 }) seasonId!: number;
+  @ApiProperty({ example: '2026' }) seasonLabel!: string;
+}
+
+export class TeamMatchParticipantResponseDto {
+  @ApiProperty({ example: 41 }) tournamentTeamId!: number;
+  @ApiProperty({ example: 8 }) teamId!: number;
+  @ApiProperty({ example: 'Engenharia PUC' }) name!: string;
+  @ApiProperty({ example: 78, nullable: true }) score!: number | null;
+  @ApiProperty({ enum: MatchResult, nullable: true })
+  result!: MatchResult | null;
+  @ApiProperty({ enum: LossType, nullable: true })
+  lossType!: LossType | null;
+  @ApiProperty({ example: true, nullable: true })
+  isWinner!: boolean | null;
+}
+
+export class TeamMatchResponseDto {
+  @ApiProperty({ type: TeamMatchReferenceResponseDto })
+  match!: TeamMatchReferenceResponseDto;
+  @ApiProperty({ type: TeamTournamentReferenceResponseDto })
+  tournament!: TeamTournamentReferenceResponseDto;
+  @ApiProperty({ type: TeamMatchParticipantResponseDto })
+  team!: TeamMatchParticipantResponseDto;
+  @ApiProperty({ type: TeamMatchParticipantResponseDto })
+  opponent!: TeamMatchParticipantResponseDto;
 }

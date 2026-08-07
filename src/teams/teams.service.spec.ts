@@ -1,5 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpStatus } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import {
   AffiliationStatus,
   BrazilianState,
@@ -14,6 +16,7 @@ import { TeamsService } from './teams.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
 import { StatisticsService } from '../statistics/statistics.service';
+import { TeamMatchesQueryDto } from './dto/team-profile-query.dto';
 
 const mockPrisma: any = {
   team: {
@@ -24,6 +27,7 @@ const mockPrisma: any = {
     update: jest.fn(),
   },
   tournament: { findMany: jest.fn() },
+  match: { count: jest.fn(), findMany: jest.fn() },
   matchTeam: { findMany: jest.fn() },
 };
 
@@ -67,6 +71,48 @@ const profileTeam = (overrides: Record<string, unknown> = {}) => ({
   organizationAffiliations: [{ id: 4 }],
   ...overrides,
 });
+
+const profileMatchRow = {
+  id: 501,
+  status: MatchStatus.FINISHED,
+  scheduledAt: new Date('2026-08-15T19:30:00.000Z'),
+  venueName: 'Central Arena',
+  tournament: {
+    id: 12,
+    name: 'Intercursos 2026',
+    seasonId: 7,
+    season: { label: '2026' },
+  },
+  periods: [{ homePoints: 78, awayPoints: 72 }],
+  teams: [
+    {
+      side: MatchSide.HOME,
+      tournamentTeamId: 41,
+      finalScore: 78,
+      result: MatchResult.WIN,
+      lossType: null,
+      isWinner: true,
+      tournamentTeam: {
+        teamId: 1,
+        displayNameSnapshot: 'Engenharia PUC',
+        isDeleted: false,
+      },
+    },
+    {
+      side: MatchSide.AWAY,
+      tournamentTeamId: 42,
+      finalScore: 72,
+      result: MatchResult.LOSS,
+      lossType: LossType.NORMAL,
+      isWinner: false,
+      tournamentTeam: {
+        teamId: 9,
+        displayNameSnapshot: 'Direito PUC',
+        isDeleted: false,
+      },
+    },
+  ],
+};
 
 const statisticMatch = (
   id: number,
@@ -449,6 +495,199 @@ describe('TeamsService', () => {
         },
       });
       expect(JSON.stringify(result)).not.toContain('totals');
+    });
+  });
+
+  describe('findMatches', () => {
+    beforeEach(() => {
+      mockPrisma.team.findFirst.mockResolvedValue(profileTeam());
+    });
+
+    it('rejects a missing or unsupported scope at the DTO boundary', async () => {
+      const missing = await validate(plainToInstance(TeamMatchesQueryDto, {}));
+      const unsupported = await validate(
+        plainToInstance(TeamMatchesQueryDto, { scope: 'all' }),
+      );
+
+      expect(missing.map((error) => error.property)).toContain('scope');
+      expect(unsupported.map((error) => error.property)).toContain('scope');
+    });
+
+    it('paginates LIVE before scheduled and postponed without loading either full set', async () => {
+      mockPrisma.match.count
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(3);
+      mockPrisma.match.findMany
+        .mockResolvedValueOnce([
+          { ...profileMatchRow, id: 503, status: MatchStatus.LIVE },
+          { ...profileMatchRow, id: 504, status: MatchStatus.LIVE },
+        ])
+        .mockResolvedValueOnce([
+          { ...profileMatchRow, id: 505, status: MatchStatus.SCHEDULED },
+        ]);
+
+      const result = await service.findMatches(42, 1, {
+        scope: 'upcoming',
+        page: 1,
+        limit: 3,
+      });
+
+      expect(result.count).toBe(5);
+      expect(result.data.map((item) => item.match.id)).toEqual([503, 504, 505]);
+      expect(mockPrisma.match.findMany).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          skip: 0,
+          take: 2,
+          orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }],
+        }),
+      );
+      expect(mockPrisma.match.findMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          skip: 0,
+          take: 1,
+          orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }],
+        }),
+      );
+      expect(mockPrisma.match.count.mock.calls[0][0].where.status).toBe(
+        MatchStatus.LIVE,
+      );
+      expect(mockPrisma.match.count.mock.calls[1][0].where.status).toEqual({
+        in: [MatchStatus.SCHEDULED, MatchStatus.POSTPONED],
+      });
+    });
+
+    it('continues a later upcoming page inside the scheduled/postponed set', async () => {
+      mockPrisma.match.count
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(5);
+      mockPrisma.match.findMany.mockResolvedValueOnce([
+        { ...profileMatchRow, id: 506, status: MatchStatus.POSTPONED },
+        { ...profileMatchRow, id: 507, status: MatchStatus.SCHEDULED },
+        { ...profileMatchRow, id: 508, status: MatchStatus.SCHEDULED },
+      ]);
+
+      await service.findMatches(42, 1, {
+        scope: 'upcoming',
+        page: 2,
+        limit: 3,
+      });
+
+      expect(mockPrisma.match.findMany).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.match.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 1, take: 3 }),
+      );
+    });
+
+    it('returns only finished/cancelled history in descending deterministic order', async () => {
+      mockPrisma.match.count.mockResolvedValue(1);
+      mockPrisma.match.findMany.mockResolvedValue([profileMatchRow]);
+
+      const result = await service.findMatches(42, 1, {
+        scope: 'history',
+        page: 1,
+        limit: 10,
+      });
+
+      expect(mockPrisma.match.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 0,
+          take: 10,
+          orderBy: [{ scheduledAt: 'desc' }, { id: 'desc' }],
+          where: expect.objectContaining({
+            organizationId: 42,
+            isDeleted: false,
+            status: { in: [MatchStatus.FINISHED, MatchStatus.CANCELLED] },
+            tournament: { is: { organizationId: 42, isDeleted: false } },
+            teams: {
+              some: {
+                organizationId: 42,
+                isDeleted: false,
+                tournamentTeam: {
+                  is: { organizationId: 42, teamId: 1, isDeleted: false },
+                },
+              },
+            },
+          }),
+        }),
+      );
+      expect(result.data).toEqual([
+        {
+          match: {
+            id: 501,
+            status: MatchStatus.FINISHED,
+            scheduledAt: new Date('2026-08-15T19:30:00.000Z'),
+            venueName: 'Central Arena',
+            scoreSource: 'PERIODS',
+          },
+          tournament: {
+            id: 12,
+            name: 'Intercursos 2026',
+            seasonId: 7,
+            seasonLabel: '2026',
+          },
+          team: {
+            tournamentTeamId: 41,
+            teamId: 1,
+            name: 'Engenharia PUC',
+            score: 78,
+            result: MatchResult.WIN,
+            lossType: null,
+            isWinner: true,
+          },
+          opponent: {
+            tournamentTeamId: 42,
+            teamId: 9,
+            name: 'Direito PUC',
+            score: 72,
+            result: MatchResult.LOSS,
+            lossType: LossType.NORMAL,
+            isWinner: false,
+          },
+        },
+      ]);
+    });
+
+    it('masks scores and results for non-finished rows', async () => {
+      mockPrisma.match.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+      mockPrisma.match.findMany.mockResolvedValueOnce([
+        { ...profileMatchRow, status: MatchStatus.SCHEDULED },
+      ]);
+
+      const result = await service.findMatches(42, 1, {
+        scope: 'upcoming',
+        page: 1,
+        limit: 10,
+      });
+
+      expect(result.data[0].match.scoreSource).toBeNull();
+      expect(result.data[0].team).toMatchObject({
+        score: null,
+        result: null,
+        lossType: null,
+        isWinner: null,
+      });
+      expect(result.data[0].opponent).toMatchObject({
+        score: null,
+        result: null,
+        lossType: null,
+        isWinner: null,
+      });
+    });
+
+    it('checks visibility before querying matches', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+
+      const err = await service
+        .findMatches(42, 1, { scope: 'history', page: 1, limit: 10 })
+        .catch((error: unknown) => error);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+
+      expect(mockPrisma.match.count).not.toHaveBeenCalled();
+      expect(mockPrisma.match.findMany).not.toHaveBeenCalled();
     });
   });
 
