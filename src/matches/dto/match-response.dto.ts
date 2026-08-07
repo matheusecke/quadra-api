@@ -1,7 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { LossType, MatchResult, MatchStatus, PeriodType } from '@prisma/client';
+import type { MatchScoreSource } from '../match-score-source';
 
-export type MatchScoreSource = 'PERIODS' | 'AWARDED';
+export type { MatchScoreSource } from '../match-score-source';
 
 export class MatchBracketRoundResponseDto {
   @ApiProperty({ example: 31 }) id!: number;
@@ -12,6 +13,7 @@ export class MatchBracketRoundResponseDto {
 
 export class MatchTeamResponseDto {
   @ApiProperty({ example: 41 }) tournamentTeamId!: number;
+  @ApiProperty({ example: 8 }) teamId!: number;
   @ApiProperty({ example: 'Engineering' }) teamName!: string;
   @ApiProperty({ example: 78, nullable: true }) score!: number | null;
   @ApiProperty({ enum: MatchResult, nullable: true })

@@ -278,6 +278,11 @@ until FINISHED. A FINISHED forfeit reads as `periods: []`, `playerStats: []`,
 and `mvp: null`; masking applies only while FINISHED, so a reopened LIVE match
 exposes any preserved raw facts.
 
+Each participant also includes its global `teamId` alongside the existing
+`TournamentTeam.id` registration id and snapshot name. This additive id does
+not change preserved tournament ids or snapshots, result masking, or
+score-source behavior.
+
 ## Domain errors
 
 | HTTP | Code                      | Message                                                                                      |
