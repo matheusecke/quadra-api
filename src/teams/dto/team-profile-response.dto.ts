@@ -39,50 +39,50 @@ export class TeamTitleResponseDto {
 }
 
 export class TeamResultStatisticsResponseDto {
-  @ApiProperty({ example: 4 }) measuredGames!: number;
-  @ApiProperty({ example: 0.5, nullable: true }) winRate!: number | null;
-  @ApiProperty({ example: 2 }) scoreMeasuredGames!: number;
-  @ApiProperty({ example: 70, nullable: true }) pointsForPerGame!:
+  @ApiProperty({ example: 18 }) measuredGames!: number;
+  @ApiProperty({ example: 0.667, nullable: true }) winRate!: number | null;
+  @ApiProperty({ example: 16 }) scoreMeasuredGames!: number;
+  @ApiProperty({ example: 73.125, nullable: true }) pointsForPerGame!:
     | number
     | null;
-  @ApiProperty({ example: 67.5, nullable: true }) pointsAgainstPerGame!:
+  @ApiProperty({ example: 68.5, nullable: true }) pointsAgainstPerGame!:
     | number
     | null;
-  @ApiProperty({ example: 2.5, nullable: true }) pointDiffPerGame!:
+  @ApiProperty({ example: 4.625, nullable: true }) pointDiffPerGame!:
     | number
     | null;
 }
 
 export class TeamBoxScoreMeasuredGamesResponseDto {
-  @ApiProperty({ example: 2 }) reb!: number;
-  @ApiProperty({ example: 1 }) ast!: number;
-  @ApiProperty({ example: 2 }) stl!: number;
-  @ApiProperty({ example: 1 }) blk!: number;
-  @ApiProperty({ example: 2 }) tov!: number;
-  @ApiProperty({ example: 2 }) pf!: number;
+  @ApiProperty({ example: 14 }) reb!: number;
+  @ApiProperty({ example: 14 }) ast!: number;
+  @ApiProperty({ example: 12 }) stl!: number;
+  @ApiProperty({ example: 12 }) blk!: number;
+  @ApiProperty({ example: 14 }) tov!: number;
+  @ApiProperty({ example: 14 }) pf!: number;
 }
 
 export class TeamBoxScorePerGameResponseDto {
-  @ApiProperty({ example: 6, nullable: true }) reb!: number | null;
-  @ApiProperty({ example: 5, nullable: true }) ast!: number | null;
-  @ApiProperty({ example: 1.5, nullable: true }) stl!: number | null;
-  @ApiProperty({ example: 1, nullable: true }) blk!: number | null;
-  @ApiProperty({ example: 3.5, nullable: true }) tov!: number | null;
-  @ApiProperty({ example: 1.5, nullable: true }) pf!: number | null;
+  @ApiProperty({ example: 38.286, nullable: true }) reb!: number | null;
+  @ApiProperty({ example: 17.143, nullable: true }) ast!: number | null;
+  @ApiProperty({ example: 7.5, nullable: true }) stl!: number | null;
+  @ApiProperty({ example: 3.25, nullable: true }) blk!: number | null;
+  @ApiProperty({ example: 11.786, nullable: true }) tov!: number | null;
+  @ApiProperty({ example: 16.214, nullable: true }) pf!: number | null;
 }
 
 export class TeamShootingStatisticsResponseDto {
-  @ApiProperty({ example: 0.522, nullable: true }) fgPct!: number | null;
-  @ApiProperty({ example: 0.375, nullable: true }) threeFgPct!: number | null;
-  @ApiProperty({ example: 0.6, nullable: true }) ftPct!: number | null;
-  @ApiProperty({ example: 0.595, nullable: true }) trueShootingPct!:
+  @ApiProperty({ example: 0.481, nullable: true }) fgPct!: number | null;
+  @ApiProperty({ example: 0.354, nullable: true }) threeFgPct!: number | null;
+  @ApiProperty({ example: 0.742, nullable: true }) ftPct!: number | null;
+  @ApiProperty({ example: 0.571, nullable: true }) trueShootingPct!:
     | number
     | null;
 }
 
 export class TeamEfficiencyStatisticsResponseDto {
-  @ApiProperty({ example: 1 }) measuredGames!: number;
-  @ApiProperty({ example: 33, nullable: true }) perGame!: number | null;
+  @ApiProperty({ example: 12 }) measuredGames!: number;
+  @ApiProperty({ example: 82.417, nullable: true }) perGame!: number | null;
 }
 
 export class TeamBoxScoreStatisticsResponseDto {

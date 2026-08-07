@@ -76,7 +76,7 @@ export class TeamsController {
   @ApiOperation({
     summary: 'Get a team profile summary in the active organization',
   })
-  @ApiParam({ name: 'id', example: 8, description: 'Global team id.' })
+  @ApiParam({ name: 'id', example: 8, description: 'Global Team.id.' })
   @ApiOkResponse({ type: TeamSummaryResponseDto })
   findSummary(
     @Param('id', ParseIntApiPipe) id: number,

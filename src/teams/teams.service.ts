@@ -17,12 +17,13 @@ import { ListTeamsQueryDto } from './dto/list-teams-query.dto';
 import { TeamResponseDto } from './dto/team-response.dto';
 import {
   TeamProfileStatus,
+  TeamStatisticsResponseDto,
   TeamSummaryResponseDto,
 } from './dto/team-profile-response.dto';
 import {
   STATISTIC_METRICS,
-  StatisticLine,
   StatisticsService,
+  type StatisticLine,
 } from '../statistics/statistics.service';
 import { deriveMatchScoreSource } from '../matches/match-score-source';
 
@@ -37,6 +38,82 @@ const teamSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.TeamSelect;
+
+const teamProfileSelect = (organizationId: number) =>
+  ({
+    id: true,
+    name: true,
+    shortName: true,
+    city: true,
+    state: true,
+    status: true,
+    organizationAffiliations: {
+      where: {
+        organizationId,
+        isDeleted: false,
+        status: AffiliationStatus.ACTIVE,
+      },
+      take: 1,
+      select: { id: true },
+    },
+  }) satisfies Prisma.TeamSelect;
+
+const statisticMetricSelect = {
+  minutesSeconds: true,
+  pts: true,
+  reb: true,
+  ast: true,
+  stl: true,
+  blk: true,
+  tov: true,
+  pf: true,
+  fgm: true,
+  fga: true,
+  threeFgm: true,
+  threeFga: true,
+  ftm: true,
+  fta: true,
+} satisfies Prisma.PlayerMatchStatisticSelect;
+
+const teamStatisticMatchSelect = {
+  id: true,
+  tournamentTeamId: true,
+  finalScore: true,
+  result: true,
+  lossType: true,
+  playerStatistics: {
+    where: { isDeleted: false },
+    select: statisticMetricSelect,
+  },
+  match: {
+    select: {
+      status: true,
+      periods: {
+        where: { isDeleted: false },
+        select: { homePoints: true, awayPoints: true },
+      },
+      teams: {
+        where: {
+          isDeleted: false,
+          tournamentTeam: { is: { isDeleted: false } },
+        },
+        select: {
+          id: true,
+          side: true,
+          finalScore: true,
+          lossType: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.MatchTeamSelect;
+
+type TeamProfileRow = Prisma.TeamGetPayload<{
+  select: ReturnType<typeof teamProfileSelect>;
+}>;
+type TeamStatisticMatchRow = Prisma.MatchTeamGetPayload<{
+  select: typeof teamStatisticMatchSelect;
+}>;
 
 const round = (value: number): number => Math.round(value * 1000) / 1000;
 const average = (values: readonly number[]): number | null =>
@@ -155,27 +232,6 @@ export class TeamsService {
       }),
       this.findTeamStatisticRows(organizationId, teamId),
     ]);
-    const lines = rows.map((row) => this.toStatisticLine(row.playerStatistics));
-    const boxScore = this.statistics.aggregate(lines);
-    const resultRows = rows.filter(
-      (row) =>
-        row.result === MatchResult.WIN || row.result === MatchResult.LOSS,
-    );
-    const scoredRows = rows.flatMap((row) => {
-      const opponent = row.match.teams.find((team) => team.id !== row.id);
-      if (
-        deriveMatchScoreSource({
-          status: row.match.status,
-          teams: row.match.teams,
-          periods: row.match.periods,
-        }) !== 'PERIODS' ||
-        row.finalScore === null ||
-        !opponent ||
-        opponent.finalScore === null
-      )
-        return [];
-      return [[row.finalScore, opponent.finalScore] as const];
-    });
     return {
       team: {
         id: team.id,
@@ -200,33 +256,7 @@ export class TeamsService {
           endsAt: title.endsAt,
         },
       })),
-      statistics: {
-        results: {
-          measuredGames: resultRows.length,
-          winRate: average(
-            resultRows.map((row) => (row.result === MatchResult.WIN ? 1 : 0)),
-          ),
-          scoreMeasuredGames: scoredRows.length,
-          pointsForPerGame: average(scoredRows.map(([pointsFor]) => pointsFor)),
-          pointsAgainstPerGame: average(
-            scoredRows.map(([, pointsAgainst]) => pointsAgainst),
-          ),
-          pointDiffPerGame: average(
-            scoredRows.map(
-              ([pointsFor, pointsAgainst]) => pointsFor - pointsAgainst,
-            ),
-          ),
-        },
-        boxScore: {
-          measuredGames: this.selectBoxMetrics(boxScore.measuredGames),
-          perGame: this.selectBoxMetrics(boxScore.perGame),
-          shooting: boxScore.shooting,
-          efficiency: {
-            measuredGames: boxScore.efficiency.measuredGames,
-            perGame: boxScore.efficiency.perGame,
-          },
-        },
-      },
+      statistics: this.composeTeamStatistics(rows),
     };
   }
 
@@ -299,18 +329,24 @@ export class TeamsService {
     });
   }
 
-  private async findVisibleTeamOrThrow(organizationId: number, teamId: number) {
-    const affiliation = {
-      organizationId,
-      isDeleted: false,
-      status: AffiliationStatus.ACTIVE,
-    } satisfies Prisma.OrganizationTeamAffiliationWhereInput;
+  private async findVisibleTeamOrThrow(
+    organizationId: number,
+    teamId: number,
+  ): Promise<TeamProfileRow> {
     const team = await this.prisma.team.findFirst({
       where: {
         id: teamId,
         isDeleted: false,
         OR: [
-          { organizationAffiliations: { some: affiliation } },
+          {
+            organizationAffiliations: {
+              some: {
+                organizationId,
+                isDeleted: false,
+                status: AffiliationStatus.ACTIVE,
+              },
+            },
+          },
           {
             tournamentTeams: {
               some: {
@@ -322,19 +358,7 @@ export class TeamsService {
           },
         ],
       },
-      select: {
-        id: true,
-        name: true,
-        shortName: true,
-        city: true,
-        state: true,
-        status: true,
-        organizationAffiliations: {
-          where: affiliation,
-          take: 1,
-          select: { id: true },
-        },
-      },
+      select: teamProfileSelect(organizationId),
     });
     if (!team) throw ApiException.notFound('Team not found');
     return team;
@@ -344,7 +368,7 @@ export class TeamsService {
     organizationId: number,
     teamId: number,
     tournamentTeamIds?: readonly number[],
-  ) {
+  ): Promise<TeamStatisticMatchRow[]> {
     return this.prisma.matchTeam.findMany({
       where: {
         organizationId,
@@ -369,51 +393,62 @@ export class TeamsService {
           },
         },
       },
-      select: {
-        id: true,
-        tournamentTeamId: true,
-        finalScore: true,
-        result: true,
-        lossType: true,
-        playerStatistics: {
-          where: { isDeleted: false },
-          select: Object.fromEntries(
-            STATISTIC_METRICS.map((metric) => [metric, true]),
-          ) as Prisma.PlayerMatchStatisticSelect,
-        },
-        match: {
-          select: {
-            status: true,
-            periods: {
-              where: { isDeleted: false },
-              select: { homePoints: true, awayPoints: true },
-            },
-            teams: {
-              where: {
-                organizationId,
-                isDeleted: false,
-                tournamentTeam: {
-                  is: {
-                    organizationId,
-                    isDeleted: false,
-                    tournament: { is: { organizationId, isDeleted: false } },
-                  },
-                },
-              },
-              select: {
-                id: true,
-                side: true,
-                finalScore: true,
-                lossType: true,
-              },
-            },
-          },
-        },
-      },
+      select: teamStatisticMatchSelect,
     });
   }
 
-  private toStatisticLine(lines: readonly StatisticLine[]): StatisticLine {
+  private composeTeamStatistics(
+    rows: readonly TeamStatisticMatchRow[],
+  ): TeamStatisticsResponseDto {
+    const resultRows = rows.filter((row) => row.result !== null);
+    const scoredRows = rows.flatMap((row) => {
+      const opponent = row.match.teams.find((team) => team.id !== row.id);
+      if (
+        deriveMatchScoreSource(row.match) !== 'PERIODS' ||
+        row.finalScore === null ||
+        opponent?.finalScore === null ||
+        opponent?.finalScore === undefined
+      ) {
+        return [];
+      }
+      return [[row.finalScore, opponent.finalScore] as const];
+    });
+    const boxScore = this.statistics.aggregate(
+      rows.map((row) => this.toTeamStatisticLine(row.playerStatistics)),
+    );
+
+    return {
+      results: {
+        measuredGames: resultRows.length,
+        winRate: average(
+          resultRows.map((row) => (row.result === MatchResult.WIN ? 1 : 0)),
+        ),
+        scoreMeasuredGames: scoredRows.length,
+        pointsForPerGame: average(scoredRows.map(([pointsFor]) => pointsFor)),
+        pointsAgainstPerGame: average(
+          scoredRows.map(([, pointsAgainst]) => pointsAgainst),
+        ),
+        pointDiffPerGame: average(
+          scoredRows.map(
+            ([pointsFor, pointsAgainst]) => pointsFor - pointsAgainst,
+          ),
+        ),
+      },
+      boxScore: {
+        measuredGames: this.selectBoxMetrics(boxScore.measuredGames),
+        perGame: this.selectBoxMetrics(boxScore.perGame),
+        shooting: boxScore.shooting,
+        efficiency: {
+          measuredGames: boxScore.efficiency.measuredGames,
+          perGame: boxScore.efficiency.perGame,
+        },
+      },
+    };
+  }
+
+  private toTeamStatisticLine(
+    lines: readonly StatisticLine[],
+  ): StatisticLine {
     return Object.fromEntries(
       STATISTIC_METRICS.map((metric) => {
         const values = lines
