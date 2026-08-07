@@ -126,15 +126,18 @@ const readSlotRow = {
   match: null as ReadMatchRow | null,
   homeTournamentTeam: {
     id: 21,
+    teamId: 8,
     displayNameSnapshot: 'Engenharia',
     team: { shortName: 'ENG' },
   } as {
     id: number;
+    teamId: number;
     displayNameSnapshot: string;
     team: { shortName: string };
   } | null,
   awayTournamentTeam: null as {
     id: number;
+    teamId: number;
     displayNameSnapshot: string;
     team: { shortName: string };
   } | null,
@@ -338,6 +341,7 @@ describe('TournamentBracketsService', () => {
                 label: null,
                 homeTeam: {
                   tournamentTeamId: 21,
+                  teamId: 8,
                   name: 'Engenharia',
                   shortName: 'ENG',
                 },
@@ -362,6 +366,7 @@ describe('TournamentBracketsService', () => {
               winnerTournamentTeamId: 21,
               awayTournamentTeam: {
                 id: 22,
+                teamId: 9,
                 displayNameSnapshot: 'Direito',
                 team: { shortName: 'DIR' },
               },
@@ -383,11 +388,13 @@ describe('TournamentBracketsService', () => {
                 label: null,
                 homeTeam: {
                   tournamentTeamId: 21,
+                  teamId: 8,
                   name: 'Engenharia',
                   shortName: 'ENG',
                 },
                 awayTeam: {
                   tournamentTeamId: 22,
+                  teamId: 9,
                   name: 'Direito',
                   shortName: 'DIR',
                 },
