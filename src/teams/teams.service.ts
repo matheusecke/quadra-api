@@ -727,9 +727,7 @@ export class TeamsService {
     };
   }
 
-  private toTeamStatisticLine(
-    lines: readonly StatisticLine[],
-  ): StatisticLine {
+  private toTeamStatisticLine(lines: readonly StatisticLine[]): StatisticLine {
     return Object.fromEntries(
       STATISTIC_METRICS.map((metric) => {
         const values = lines

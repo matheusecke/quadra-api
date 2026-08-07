@@ -547,9 +547,7 @@ describe('TeamsService', () => {
     });
 
     it('paginates LIVE before scheduled and postponed without loading either full set', async () => {
-      mockPrisma.match.count
-        .mockResolvedValueOnce(2)
-        .mockResolvedValueOnce(3);
+      mockPrisma.match.count.mockResolvedValueOnce(2).mockResolvedValueOnce(3);
       mockPrisma.match.findMany
         .mockResolvedValueOnce([
           { ...profileMatchRow, id: 503, status: MatchStatus.LIVE },
@@ -592,9 +590,7 @@ describe('TeamsService', () => {
     });
 
     it('continues a later upcoming page inside the scheduled/postponed set', async () => {
-      mockPrisma.match.count
-        .mockResolvedValueOnce(2)
-        .mockResolvedValueOnce(5);
+      mockPrisma.match.count.mockResolvedValueOnce(2).mockResolvedValueOnce(5);
       mockPrisma.match.findMany.mockResolvedValueOnce([
         { ...profileMatchRow, id: 506, status: MatchStatus.POSTPONED },
         { ...profileMatchRow, id: 507, status: MatchStatus.SCHEDULED },
