@@ -56,9 +56,10 @@ async function bootstrap(): Promise<void> {
   ].join('\n');
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('tcc-api')
+    .setTitle('quadra-api')
     .setDescription(swaggerDescription)
     .setVersion('1.0')
+    .addTag('health', 'Health check.')
     .addBearerAuth(
       {
         type: 'http',
@@ -92,7 +93,28 @@ async function bootstrap(): Promise<void> {
     )
     .addTag(
       'teams',
-      'Global team registry and lifecycle (system admin for writes).',
+      'Global team registry. `GET /teams` is an organization-scoped catalog open to any active role; writes remain system-admin only until platform-admin routes move to `/admin/*`.',
+    )
+    .addTag('athletes', 'Organization roster-eligible user catalog.')
+    .addTag(
+      'tournament-teams',
+      'Tournament team registration, seed, withdrawal, and reactivation.',
+    )
+    .addTag(
+      'tournament-rosters',
+      'Tournament roster membership, role, jersey, and deactivation.',
+    )
+    .addTag(
+      'tournament-groups',
+      'Tournament group structure and registered-team assignments.',
+    )
+    .addTag(
+      'tournament-brackets',
+      'Knockout bracket rounds, slots, participants, and the composite bracket read.',
+    )
+    .addTag(
+      'matches',
+      'Match scheduling, lifecycle actions, participants, and persisted result reads.',
     )
     .addTag(
       'organization-user-affiliations',
@@ -101,6 +123,18 @@ async function bootstrap(): Promise<void> {
     .addTag(
       'organization-team-affiliations',
       'Team linkage to organizations: invites and affiliation status.',
+    )
+    .addTag(
+      'seasons',
+      'Time-bounded grouping of tournaments inside an organization.',
+    )
+    .addTag(
+      'tournament-categories',
+      'Controlled division vocabulary per organization (Sub-19, Adulto Masculino, …).',
+    )
+    .addTag(
+      'tournaments',
+      'Tournament CRUD, completion/reopen transitions, and champion suggestion.',
     )
     .build();
 

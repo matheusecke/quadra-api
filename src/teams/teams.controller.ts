@@ -29,6 +29,10 @@ import { ListTeamsQueryDto } from './dto/list-teams-query.dto';
 import { TeamResponseDto } from './dto/team-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SystemAdminGuard } from '../auth/guards/system-admin.guard';
+import { OrgRoleGuard } from '../auth/guards/org-role.guard';
+import { ANY_ORG_ROLE, OrgRoles } from '../auth/decorators/org-roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { PaginationInterceptor } from '../common/interceptors/pagination.interceptor';
 import { ParseIntApiPipe } from '../common/pipes/parse-int-api.pipe';
 import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorator';
@@ -52,13 +56,16 @@ export class TeamsController {
   }
 
   @Get()
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(...ANY_ORG_ROLE)
   @UseInterceptors(PaginationInterceptor)
-  @ApiOperation({ summary: 'List teams' })
+  @ApiOperation({ summary: 'List teams of the active JWT organization' })
   @ApiPaginatedOkResponse(TeamResponseDto)
   findAll(
     @Query() query: ListTeamsQueryDto,
+    @CurrentUser() user: JwtPayload,
   ): Promise<{ count: number; data: TeamResponseDto[] }> {
-    return this.teamsService.findAll(query);
+    return this.teamsService.findAll(user.organizationId as number, query);
   }
 
   @Get(':id')

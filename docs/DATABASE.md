@@ -1,6 +1,6 @@
 # Database Conventions
 
-This document is the source of truth for database naming, Prisma mapping, and migration conventions in `tcc-api`. It is **project-wide** (lives in `docs/`). Application-module notes that are not strictly about the database belong in `src/<domain>/docs/README.md`; the Prisma **client** module is described in [`src/prisma/docs/README.md`](../src/prisma/docs/README.md).
+This document is the source of truth for database naming, Prisma mapping, and migration conventions in `quadra-api`. It is **project-wide** (lives in `docs/`). Application-module notes that are not strictly about the database belong in `src/<domain>/docs/README.md`; the Prisma **client** module is described in [`src/prisma/docs/README.md`](../src/prisma/docs/README.md).
 
 ## Naming
 
@@ -37,7 +37,7 @@ This document is the source of truth for database naming, Prisma mapping, and mi
 
 ## Sports Domain Tables
 
-Added by the `sports_module_schema` migration. No application module exists for them yet — the tables are physically present and reflected in Prisma Client, and their services/controllers are a later phase.
+Added by the `sports_module_schema` migration. `Season`, `TournamentCategory` and `Tournament` now have an application module. `Match` and `MatchTeam` now have application ownership in `MatchesModule` for scheduling and lifecycle actions. `MatchPeriod`, `MatchRoster`, and `PlayerMatchStatistic` are selected into the detail read model, but Phase 8 does not write them. The schema and migrations are unchanged by Phase 8.
 
 | Prisma model | Database table | Purpose |
 | --- | --- | --- |

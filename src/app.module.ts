@@ -2,6 +2,7 @@ import { ExecutionContext, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR, Reflector } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -9,6 +10,16 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { TeamsModule } from './teams/teams.module';
 import { OrganizationTeamAffiliationsModule } from './organization-team-affiliations/organization-team-affiliations.module';
 import { OrganizationUserAffiliationsModule } from './organization-user-affiliations/organization-user-affiliations.module';
+import { SeasonsModule } from './seasons/seasons.module';
+import { TournamentCategoriesModule } from './tournament-categories/tournament-categories.module';
+import { TournamentsModule } from './tournaments/tournaments.module';
+import { AthletesModule } from './athletes/athletes.module';
+import { TournamentTeamsModule } from './tournament-teams/tournament-teams.module';
+import { TournamentRostersModule } from './tournament-rosters/tournament-rosters.module';
+import { TournamentGroupsModule } from './tournament-groups/tournament-groups.module';
+import { TournamentBracketsModule } from './tournament-brackets/tournament-brackets.module';
+import { MatchesModule } from './matches/matches.module';
+import { StandingsModule } from './standings/standings.module';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 
 /**
@@ -39,6 +50,7 @@ function skipThrottlerForSwaggerPath(context: ExecutionContext): boolean {
       skipIf: skipThrottlerForSwaggerPath,
       throttlers: [{ ttl: 60_000, limit: 120 }],
     }),
+    HealthModule,
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -46,6 +58,16 @@ function skipThrottlerForSwaggerPath(context: ExecutionContext): boolean {
     TeamsModule,
     OrganizationTeamAffiliationsModule,
     OrganizationUserAffiliationsModule,
+    SeasonsModule,
+    TournamentCategoriesModule,
+    TournamentsModule,
+    AthletesModule,
+    TournamentTeamsModule,
+    TournamentRostersModule,
+    TournamentGroupsModule,
+    TournamentBracketsModule,
+    MatchesModule,
+    StandingsModule,
   ],
   providers: [
     {

@@ -10,64 +10,92 @@ src/
 ├── app.module.ts
 │
 ├── prisma/
-│   ├── docs/
-│   │   └── README.md
+│   ├── docs/README.md
 │   ├── prisma.module.ts
 │   └── prisma.service.ts
 │
 ├── common/
 │   ├── dto/
-│   │   ├── pagination-defaults.dto.ts
-│   │   └── pagination-response.dto.ts
 │   ├── exceptions/
-│   │   └── api.exception.ts
 │   ├── filters/
-│   │   ├── api-exception.filter.ts
-│   │   └── prisma-exception.filter.ts
 │   ├── interceptors/
-│   │   ├── pagination.interceptor.ts
-│   │   └── response-transform.interceptor.ts
 │   ├── pipes/
-│   │   ├── validation.factory.ts
-│   │   └── parse-int-api.pipe.ts
+│   ├── swagger/
 │   └── utils/
-│       └── slugify.ts
+│
+├── health/
+│   ├── health.module.ts
+│   └── health.controller.ts
 │
 ├── auth/
-│   ├── docs/
-│   │   └── README.md
-│   ├── auth.module.ts
-│   ├── auth.controller.ts
-│   ├── auth.service.ts
-│   ├── decorators/
-│   ├── dto/
-│   ├── guards/
-│   ├── interfaces/
-│   └── strategies/
+│   ├── docs/README.md
+│   ├── auth.module.ts / .controller.ts / .service.ts
+│   ├── decorators/ · dto/ · guards/ · interfaces/ · strategies/
 │
 ├── users/
-│   ├── docs/
-│   │   └── README.md
-│   ├── users.module.ts
-│   ├── users.controller.ts
-│   ├── users.service.ts
-│   └── dto/
+│   ├── docs/README.md
+│   └── users.module.ts / .controller.ts / .service.ts / dto/
 │
 ├── organizations/
-│   ├── docs/
-│   │   └── README.md
-│   ├── organizations.module.ts
-│   ├── organizations.controller.ts
-│   ├── organizations.service.ts
-│   └── dto/
+│   ├── docs/README.md
+│   └── organizations.module.ts / .controller.ts / .service.ts / dto/
 │
-└── teams/
-    ├── docs/
-    │   └── README.md
-    ├── teams.module.ts
-    ├── teams.controller.ts
-    ├── teams.service.ts
-    └── dto/
+├── teams/
+│   ├── docs/README.md
+│   └── teams.module.ts / .controller.ts / .service.ts / dto/
+│
+├── organization-team-affiliations/
+│   ├── docs/README.md
+│   └── organization-team-affiliations.module.ts / .controller.ts / .service.ts / dto/
+│
+├── organization-user-affiliations/
+│   ├── docs/README.md
+│   └── organization-user-affiliations.module.ts / .controller.ts / .service.ts / dto/
+│
+├── seasons/
+│   ├── docs/README.md
+│   └── seasons.module.ts / .controller.ts / .service.ts / dto/
+│
+├── tournament-categories/
+│   ├── docs/README.md
+│   └── tournament-categories.module.ts / .controller.ts / .service.ts / dto/
+│
+├── tournaments/
+│   ├── docs/README.md
+│   └── tournaments.module.ts / .controller.ts / .service.ts / dto/
+│
+├── athletes/
+│   ├── docs/README.md
+│   └── athletes.module.ts / .controller.ts / .service.ts / dto/
+│
+├── tournament-teams/
+│   ├── docs/README.md
+│   └── tournament-teams.module.ts / .controller.ts / .service.ts / dto/
+│
+├── tournament-rosters/
+│   ├── docs/README.md
+│   └── tournament-rosters.module.ts / .controller.ts / .service.ts / dto/
+│
+├── tournament-groups/
+│   ├── docs/README.md
+│   └── tournament-groups.module.ts / .controller.ts / .service.ts / dto/
+│
+├── tournament-brackets/
+│   ├── docs/README.md
+│   └── tournament-brackets.module.ts / .controller.ts / .service.ts / dto/
+│
+├── matches/
+│   ├── docs/README.md
+│   └── matches.module.ts / .controller.ts / .service.ts / dto/
+│
+├── standings/
+│   ├── docs/README.md
+│   └── standings.module.ts / .controller.ts / .service.ts / standings-ranking.ts / dto/
+│
+└── statistics/
+    ├── docs/README.md
+    ├── statistics.module.ts / .service.ts / .service.spec.ts
+    └── dto/statistics-response.dto.ts
 ```
 
 ## `prisma/` schema tree
@@ -75,25 +103,40 @@ src/
 ```text
 prisma/
 ├── schema/
-│   ├── enums.prisma
 │   ├── schema.prisma
+│   ├── enums.prisma
 │   ├── user.prisma
+│   ├── refresh-token.prisma
 │   ├── organization.prisma
 │   ├── team.prisma
-│   ├── refresh-token.prisma
 │   ├── organization-user-affiliation.prisma
-│   └── organization-team-affiliation.prisma
+│   ├── organization-team-affiliation.prisma
+│   ├── season.prisma
+│   ├── tournament-category.prisma
+│   ├── tournament.prisma
+│   ├── tournament-team.prisma
+│   ├── tournament-roster.prisma
+│   ├── tournament-group.prisma
+│   ├── tournament-group-team.prisma
+│   ├── tournament-bracket-round.prisma
+│   ├── tournament-bracket-slot.prisma
+│   ├── match.prisma
+│   ├── match-team.prisma
+│   ├── match-period.prisma
+│   ├── match-roster.prisma
+│   └── player-match-statistic.prisma
 └── migrations/
 ```
 
 ## App composition
 
-Registered in `src/app.module.ts`:
+Registered in `src/app.module.ts`, in this order:
 
 - `ConfigModule` (global)
-- `ThrottlerModule` + global `ThrottlerGuard` (`APP_GUARD` in `app.module.ts`) — default rate limit; stricter `@Throttle` on selected routes; `/api` excluded for Swagger. **Full trade-offs, proxy and replica behavior, evolution path:** [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting).
-- `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`
+- `ThrottlerModule` + global `ThrottlerGuard` (`APP_GUARD`) — default rate limit; stricter `@Throttle` on selected routes; `/api` excluded for Swagger. **Full trade-offs, proxy and replica behavior, evolution path:** [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting).
+- `HealthModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`, `SeasonsModule`, `TournamentCategoriesModule`, `TournamentsModule`, `AthletesModule`, `TournamentTeamsModule`, `TournamentRostersModule`, `TournamentGroupsModule`, `TournamentBracketsModule`, `MatchesModule`, `StandingsModule`
 - Global `ResponseTransformInterceptor` via `APP_INTERCEPTOR`
+- `StatisticsModule` is **not** registered directly in `AppModule`. It is an internal, Prisma-free, controller-free module imported by `AthletesModule` and `TournamentsModule` to share pure aggregation, shooting/TS%/EFF derivation, and deterministic leader ranking.
 
 Bootstrap (`src/main.ts`): `cookie-parser`, shutdown hooks, CORS with credentials, `ValidationPipe`, global filters, Swagger at `/api`, default port `3001`.
 

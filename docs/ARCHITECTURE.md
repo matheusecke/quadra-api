@@ -1,4 +1,4 @@
-# Architecture — tcc-api
+# Architecture — quadra-api
 
 Hub document for backend structure. **For LLM context:** load only the sections below that match your task; deep detail lives in linked files.
 
@@ -14,14 +14,15 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 
 ## Implemented today (snapshot)
 
-- NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule` (`src/app.module.ts`).
+- NestJS app with global `ConfigModule`, **`ThrottlerGuard` (`APP_GUARD`)** + `ThrottlerModule` (default rate limit; stricter `@Throttle` on selected routes; Swagger `/api` excluded — see [HTTP-LAYER.md#rate-limiting](./HTTP-LAYER.md#rate-limiting)), `HealthModule`, `PrismaModule`, `AuthModule`, `UsersModule`, `OrganizationsModule`, `TeamsModule`, `OrganizationTeamAffiliationsModule`, `OrganizationUserAffiliationsModule`, `SeasonsModule`, `TournamentCategoriesModule`, `TournamentsModule`, `AthletesModule`, `TournamentTeamsModule`, `TournamentRostersModule`, `TournamentGroupsModule`, `TournamentBracketsModule`, `MatchesModule` (`src/app.module.ts`). The internal `StatisticsModule` is not registered in `AppModule`; it is imported by `AthletesModule` and `TournamentsModule`.
+- `HealthModule` exposes `GET /health` (no auth, standard `{ data: { status: 'ok' }, statusCode }` envelope) for ECS/ALB container liveness checks. Database connectivity is not checked yet.
 - Bootstrap: `ValidationPipe`, global exception filters, `cookie-parser`, CORS with credentials, Swagger at `/api`, port `3001` by default (`src/main.ts`).
 - Prisma multi-file schema under `prisma/schema/` covering multi-tenant core + auth persistence: `User`, `Organization`, `Team`, `OrganizationUserAffiliation`, `OrganizationTeamAffiliation`, `RefreshToken`.
-- Sports domain schema (tables exist; no application module yet — services, controllers, and DTOs are the next phase): `Season`, `TournamentCategory`, `Tournament`, `TournamentTeam`, `TournamentRoster`, `TournamentGroup`, `TournamentGroupTeam`, `TournamentBracketRound`, `TournamentBracketSlot`, `Match`, `MatchTeam`, `MatchPeriod`, `MatchRoster`, `PlayerMatchStatistic`. See [DATABASE.md](./DATABASE.md).
+- Sports domain schema: `Season`, `TournamentCategory`, `Tournament`, `TournamentTeam`, `TournamentRoster`, `TournamentGroup`, `TournamentGroupTeam`, `TournamentBracketRound`, and `TournamentBracketSlot` now have application modules (CRUD, slug derivation, completion/reopen, champion suggestion, registration/roster lifecycle, group structure, and assignments). `MatchesModule` owns match scheduling and reads plus scoresheet draft/result/reopen writes across `Match`, `MatchTeam`, `MatchPeriod`, `MatchRoster`, and `PlayerMatchStatistic`; it also synchronizes the winner of an already-linked bracket slot without advancing the bracket. `AthletesModule` owns athlete identity (`GET /athletes/:id`) and paginated match/tournament statistics history (`GET /athletes/:id/statistics`, `GET /athletes/:id/matches`, `GET /athletes/:id/tournaments`), including their own tenant-scoped Prisma queries. `TournamentsModule` owns the tournament leader query (`GET /tournaments/:id/leaders`). The internal `StatisticsModule` owns pure, nullable aggregation, shooting/TS%/EFF derivation, and deterministic leader ranking; it has no controller and no Prisma dependency. See [DATABASE.md](./DATABASE.md).
 - Shared utilities:
   - `src/common/utils/slugify.ts` — slug generation used by `OrganizationsModule` and `TeamsModule`.
   - `src/common/utils/affiliation-token.util.ts` — invite token generation (`crypto.randomBytes(32)`) and SHA-256 hashing used by both affiliation modules.
-- **Derived, never persisted:** standings/classification (FIBA Appendix D), registration-open state, and the match read model — all computed by query in the next phase, no columns.
+- **Derived, never persisted:** `isRegistrationOpen` and the tournament match counters (`TournamentsService`, implemented) — plus standings/classification (FIBA Appendix D), athlete statistics aggregates (totals, per-game values, shooting/TS%/EFF), and tournament leaderboards, no columns.
 
 ## Document map (by concern)
 
@@ -32,19 +33,30 @@ Hub document for backend structure. **For LLM context:** load only the sections 
 | Folder trees, `app.module` composition    | [PROJECT-LAYOUT.md](./PROJECT-LAYOUT.md)     | Refactoring structure, new modules           |
 | Errors, API response envelope, pagination | [HTTP-LAYER.md](./HTTP-LAYER.md)             | Filters, interceptors, DTO validation errors |
 | Jest scope and mocks                      | [TESTING-STRATEGY.md](./TESTING-STRATEGY.md) | Tests only                                   |
-| Missing features, next milestones         | [ROADMAP-GAPS.md](./ROADMAP-GAPS.md)         | Planning, scope questions                    |
+| Missing features, next milestones         | [ROADMAP.md](./ROADMAP.md)                   | Planning, scope questions                    |
 
 ### Co-located with modules (`src/<domain>/docs/README.md`)
 
-| Module                         | File                                                                                                        | When to load                                                |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Prisma client                  | [`src/prisma/docs/README.md`](../src/prisma/docs/README.md)                                                 | DB access, lifecycle, schema location                       |
-| Auth                           | [`src/auth/docs/README.md`](../src/auth/docs/README.md)                                                     | Login, session, org context, authorization                  |
-| Users                          | [`src/users/docs/README.md`](../src/users/docs/README.md)                                                   | User CRUD, admin rules                                      |
-| Organizations                  | [`src/organizations/docs/README.md`](../src/organizations/docs/README.md)                                   | Org CRUD, slug, soft delete, token revocation               |
-| Teams                          | [`src/teams/docs/README.md`](../src/teams/docs/README.md)                                                   | Team CRUD, slug, soft delete                                |
-| Organization–Team Affiliations | [`src/organization-team-affiliations/docs/README.md`](../src/organization-team-affiliations/docs/README.md) | Invite flow, token lifecycle, status transitions            |
-| Organization–User Affiliations | [`src/organization-user-affiliations/docs/README.md`](../src/organization-user-affiliations/docs/README.md) | Invite flow, role/team constraints, self-removal prevention |
+| Module                         | File                                                                                                        | When to load                                                     |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Prisma client                  | [`src/prisma/docs/README.md`](../src/prisma/docs/README.md)                                                 | DB access, lifecycle, schema location                            |
+| Auth                           | [`src/auth/docs/README.md`](../src/auth/docs/README.md)                                                     | Login, session, org context, authorization                       |
+| Users                          | [`src/users/docs/README.md`](../src/users/docs/README.md)                                                   | User CRUD, admin rules                                           |
+| Organizations                  | [`src/organizations/docs/README.md`](../src/organizations/docs/README.md)                                   | Org CRUD, slug, soft delete, token revocation                    |
+| Teams                          | [`src/teams/docs/README.md`](../src/teams/docs/README.md)                                                   | Team CRUD, slug, soft delete                                     |
+| Organization–Team Affiliations | [`src/organization-team-affiliations/docs/README.md`](../src/organization-team-affiliations/docs/README.md) | Invite flow, token lifecycle, status transitions                 |
+| Organization–User Affiliations | [`src/organization-user-affiliations/docs/README.md`](../src/organization-user-affiliations/docs/README.md) | Invite flow, role/team constraints, self-removal prevention      |
+| Seasons                        | [`src/seasons/docs/README.md`](../src/seasons/docs/README.md)                                               | Season CRUD, date-only contract, archiving                       |
+| Tournament Categories          | [`src/tournament-categories/docs/README.md`](../src/tournament-categories/docs/README.md)                   | Category CRUD, slug derivation, sort order                       |
+| Tournaments                    | [`src/tournaments/docs/README.md`](../src/tournaments/docs/README.md)                                       | Tournament CRUD, completion/reopen, champion rules               |
+| Athletes                       | [`src/athletes/docs/README.md`](../src/athletes/docs/README.md)                                             | Roster-eligible user catalog for team selectors                  |
+| Statistics                     | [`src/statistics/docs/README.md`](../src/statistics/docs/README.md)                                         | Internal pure aggregation, shooting/TS%/EFF derivation, ranking  |
+| Tournament Teams               | [`src/tournament-teams/docs/README.md`](../src/tournament-teams/docs/README.md)                             | Registration, reactivation, seed, withdrawal                     |
+| Tournament Rosters             | [`src/tournament-rosters/docs/README.md`](../src/tournament-rosters/docs/README.md)                         | Roster membership, role/jersey, team-scoped writes, deactivation |
+| Tournament Groups              | [`src/tournament-groups/docs/README.md`](../src/tournament-groups/docs/README.md)                           | Group structure, ordering, assignments, and soft deletion        |
+| Tournament Brackets            | [`src/tournament-brackets/docs/README.md`](../src/tournament-brackets/docs/README.md)                       | Knockout rounds, slots, participants, composite bracket read     |
+| Matches                        | [`src/matches/docs/README.md`](../src/matches/docs/README.md)                                               | Scheduling, lifecycle actions, participants, result read model   |
+| Standings                      | [`src/standings/docs/README.md`](../src/standings/docs/README.md)                                           | FIBA classification, tiebreak criteria, recorded draws           |
 
 ## Conventions (high level)
 
