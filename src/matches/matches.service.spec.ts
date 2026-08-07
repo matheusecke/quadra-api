@@ -150,20 +150,20 @@ const summaryRow = {
     {
       side: MatchSide.HOME,
       tournamentTeamId: 41,
+      tournamentTeam: { teamId: 8, displayNameSnapshot: 'Engineering' },
       finalScore: null as number | null,
       result: null as MatchResult | null,
       lossType: null as LossType | null,
       isWinner: null as boolean | null,
-      tournamentTeam: { displayNameSnapshot: 'Engineering' },
     },
     {
       side: MatchSide.AWAY,
       tournamentTeamId: 52,
+      tournamentTeam: { teamId: 9, displayNameSnapshot: 'Law' },
       finalScore: null as number | null,
       result: null as MatchResult | null,
       lossType: null as LossType | null,
       isWinner: null as boolean | null,
-      tournamentTeam: { displayNameSnapshot: 'Law' },
     },
   ],
   periods: [] as { homePoints: number; awayPoints: number }[],
@@ -2427,6 +2427,39 @@ describe('MatchesService', () => {
   });
 
   describe('reads', () => {
+    it('maps global team ids without changing snapshot names or result masking', async () => {
+      mockPrisma.match.count.mockResolvedValue(1);
+      mockPrisma.match.findMany.mockResolvedValue([summaryRow]);
+      mockPrisma.match.findFirst.mockResolvedValue(detailRow);
+
+      const list = await service.findAll(42, { page: 1, limit: 10 });
+      const detail = await service.findOne(42, 501);
+
+      const expectedParticipants = {
+        homeTeam: {
+          tournamentTeamId: 41,
+          teamId: 8,
+          teamName: 'Engineering',
+          score: null,
+          result: null,
+          lossType: null,
+          isWinner: null,
+        },
+        awayTeam: {
+          tournamentTeamId: 52,
+          teamId: 9,
+          teamName: 'Law',
+          score: null,
+          result: null,
+          lossType: null,
+          isWinner: null,
+        },
+      };
+
+      expect(list.data[0]).toMatchObject(expectedParticipants);
+      expect(detail).toMatchObject(expectedParticipants);
+    });
+
     it('combines tenant scope, filters, pagination, and ordering', async () => {
       mockPrisma.match.count.mockResolvedValue(1);
       mockPrisma.match.findMany.mockResolvedValue([summaryRow]);

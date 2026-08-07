@@ -4,6 +4,9 @@ export class BracketSlotTeamResponseDto {
   @ApiProperty({ example: 21 })
   tournamentTeamId!: number;
 
+  @ApiProperty({ example: 8 })
+  teamId!: number;
+
   @ApiProperty({
     example: 'Engenharia',
     description:

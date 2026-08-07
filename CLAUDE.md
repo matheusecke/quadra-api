@@ -12,6 +12,10 @@ After implementation: review documentation for drift (start with ARCHITECTURE.md
 
 All written artifacts must be in **English**: code comments, implementation plans, commit messages, PR titles and descriptions, branch names, migration names, and any other git-related content.
 
+## Commit Attribution
+
+Keep commit messages limited to the repository change. Do not add `Co-authored-by`, `Signed-off-by`, `Generated-by`, or equivalent authorship, provenance, or tool-identification trailers or commit-body metadata.
+
 ## Stack
 
 - NestJS 11 + TypeScript, port **3001**

@@ -27,6 +27,15 @@ import { UpdateTeamDto } from './dto/update-team.dto';
 import { UpdateTeamStatusDto } from './dto/update-team-status.dto';
 import { ListTeamsQueryDto } from './dto/list-teams-query.dto';
 import { TeamResponseDto } from './dto/team-response.dto';
+import {
+  TeamMatchResponseDto,
+  TeamSummaryResponseDto,
+  TeamTournamentResponseDto,
+} from './dto/team-profile-response.dto';
+import {
+  TeamMatchesQueryDto,
+  TeamTournamentsQueryDto,
+} from './dto/team-profile-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SystemAdminGuard } from '../auth/guards/system-admin.guard';
 import { OrgRoleGuard } from '../auth/guards/org-role.guard';
@@ -66,6 +75,60 @@ export class TeamsController {
     @CurrentUser() user: JwtPayload,
   ): Promise<{ count: number; data: TeamResponseDto[] }> {
     return this.teamsService.findAll(user.organizationId as number, query);
+  }
+
+  @Get(':id/tournaments')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(...ANY_ORG_ROLE)
+  @UseInterceptors(PaginationInterceptor)
+  @ApiOperation({ summary: 'List team tournaments in the active organization' })
+  @ApiParam({ name: 'id', example: 8, description: 'Global Team.id.' })
+  @ApiPaginatedOkResponse(TeamTournamentResponseDto)
+  findTournaments(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Query() query: TeamTournamentsQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<{ count: number; data: TeamTournamentResponseDto[] }> {
+    return this.teamsService.findTournaments(
+      user.organizationId as number,
+      id,
+      query,
+    );
+  }
+
+  @Get(':id/matches')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(...ANY_ORG_ROLE)
+  @UseInterceptors(PaginationInterceptor)
+  @ApiOperation({ summary: 'List team matches in the active organization' })
+  @ApiParam({ name: 'id', example: 8, description: 'Global Team.id.' })
+  @ApiPaginatedOkResponse(TeamMatchResponseDto)
+  findMatches(
+    @Param('id', ParseIntApiPipe) id: number,
+    @Query() query: TeamMatchesQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<{ count: number; data: TeamMatchResponseDto[] }> {
+    return this.teamsService.findMatches(
+      user.organizationId as number,
+      id,
+      query,
+    );
+  }
+
+  @Get(':id/summary')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(...ANY_ORG_ROLE)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get a team profile summary in the active organization',
+  })
+  @ApiParam({ name: 'id', example: 8, description: 'Global Team.id.' })
+  @ApiOkResponse({ type: TeamSummaryResponseDto })
+  findSummary(
+    @Param('id', ParseIntApiPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<TeamSummaryResponseDto> {
+    return this.teamsService.findSummary(user.organizationId as number, id);
   }
 
   @Get(':id')

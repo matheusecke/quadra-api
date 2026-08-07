@@ -50,6 +50,9 @@ missing, deleted, and cross-tenant targets return `404`.
 - An empty `PATCH` body returns the current row unchanged.
 - Writes return the flat persisted row, including `matchId` and
   `winnerTournamentTeamId`; only the composite read returns the enriched tree.
+- Populated `homeTeam` and `awayTeam` objects expose both the tournament-scoped
+  `tournamentTeamId` and global `teamId`. Their visible `name` remains the
+  registration snapshot, while `shortName` remains the live global-team value.
 - In the composite read, `match` carries the linked match's `id`, `status`,
   `date` (`scheduled_at`), and both scores, or `null` when nothing is linked or
   the linked match was soft-deleted. `homeScore`/`awayScore` come from
