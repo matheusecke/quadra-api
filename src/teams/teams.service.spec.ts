@@ -4,10 +4,16 @@ import {
   AffiliationStatus,
   BrazilianState,
   EntityStatus,
+  LossType,
+  MatchResult,
+  MatchSide,
+  MatchStatus,
+  TournamentStatus,
 } from '@prisma/client';
 import { TeamsService } from './teams.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
+import { StatisticsService } from '../statistics/statistics.service';
 
 const mockPrisma: any = {
   team: {
@@ -17,6 +23,8 @@ const mockPrisma: any = {
     findFirst: jest.fn(),
     update: jest.fn(),
   },
+  tournament: { findMany: jest.fn() },
+  matchTeam: { findMany: jest.fn() },
 };
 
 const baseTeam = {
@@ -31,6 +39,67 @@ const baseTeam = {
   updatedAt: new Date('2026-01-02T00:00:00.000Z'),
 };
 
+const statisticLine = (overrides: Record<string, number | null> = {}) => ({
+  minutesSeconds: null,
+  pts: null,
+  reb: null,
+  ast: null,
+  stl: null,
+  blk: null,
+  tov: null,
+  pf: null,
+  fgm: null,
+  fga: null,
+  threeFgm: null,
+  threeFga: null,
+  ftm: null,
+  fta: null,
+  ...overrides,
+});
+
+const profileTeam = (overrides: Record<string, unknown> = {}) => ({
+  id: 8,
+  name: 'Engenharia PUC',
+  shortName: 'EPU',
+  city: 'Campinas',
+  state: BrazilianState.SP,
+  status: EntityStatus.ACTIVE,
+  organizationAffiliations: [{ id: 4 }],
+  ...overrides,
+});
+
+const statisticMatch = (
+  id: number,
+  requested: Record<string, unknown>,
+  opponent: Record<string, unknown>,
+  periods: Array<{ homePoints: number; awayPoints: number }>,
+) => ({
+  id,
+  tournamentTeamId: 101,
+  finalScore: requested.finalScore,
+  result: requested.result,
+  lossType: requested.lossType,
+  playerStatistics: requested.playerStatistics ?? [],
+  match: {
+    status: MatchStatus.FINISHED,
+    periods,
+    teams: [
+      {
+        id,
+        side: MatchSide.HOME,
+        finalScore: requested.finalScore,
+        lossType: requested.lossType,
+      },
+      {
+        id: id + 1000,
+        side: MatchSide.AWAY,
+        finalScore: opponent.finalScore,
+        lossType: opponent.lossType,
+      },
+    ],
+  },
+});
+
 describe('TeamsService', () => {
   let service: TeamsService;
 
@@ -40,6 +109,7 @@ describe('TeamsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TeamsService,
+        StatisticsService,
         { provide: PrismaService, useValue: mockPrisma },
       ],
     }).compile();
@@ -155,6 +225,230 @@ describe('TeamsService', () => {
 
       expect(err).toBeInstanceOf(ApiException);
       expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+    });
+  });
+
+  describe('findSummary', () => {
+    it.each([
+      [EntityStatus.ACTIVE, [{ id: 4 }], 'ACTIVE'],
+      [EntityStatus.ACTIVE, [], 'HISTORICAL'],
+      [EntityStatus.INACTIVE, [{ id: 4 }], 'INACTIVE'],
+      [EntityStatus.INACTIVE, [], 'INACTIVE'],
+    ])(
+      'uses contextual status %s with affiliations %j',
+      async (status, organizationAffiliations, expectedStatus) => {
+        mockPrisma.team.findFirst.mockResolvedValue(
+          profileTeam({ status, organizationAffiliations }),
+        );
+        mockPrisma.tournament.findMany.mockResolvedValue([]);
+        mockPrisma.matchTeam.findMany.mockResolvedValue([]);
+
+        const result = await service.findSummary(42, 8);
+
+        expect(result.team.status).toBe(expectedStatus);
+      },
+    );
+
+    it('returns 404 before loading titles or statistics when the team is invisible', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+
+      const err = await service.findSummary(42, 8).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(mockPrisma.team.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 8,
+          isDeleted: false,
+          OR: [
+            {
+              organizationAffiliations: {
+                some: {
+                  organizationId: 42,
+                  isDeleted: false,
+                  status: AffiliationStatus.ACTIVE,
+                },
+              },
+            },
+            {
+              tournamentTeams: {
+                some: {
+                  organizationId: 42,
+                  isDeleted: false,
+                  tournament: {
+                    is: { organizationId: 42, isDeleted: false },
+                  },
+                },
+              },
+            },
+          ],
+        },
+        select: expect.any(Object),
+      });
+      expect(mockPrisma.tournament.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.matchTeam.findMany).not.toHaveBeenCalled();
+    });
+
+    it('maps valid completed titles and leaves invalid champions out', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(profileTeam());
+      mockPrisma.tournament.findMany.mockResolvedValue([
+        {
+          id: 12,
+          name: 'Intercursos 2026',
+          seasonId: 7,
+          startsAt: new Date('2026-05-02T12:00:00.000Z'),
+          endsAt: new Date('2026-06-20T12:00:00.000Z'),
+          season: { label: '2026' },
+        },
+      ]);
+      mockPrisma.matchTeam.findMany.mockResolvedValue([]);
+
+      const result = await service.findSummary(42, 8);
+
+      expect(mockPrisma.tournament.findMany).toHaveBeenCalledWith({
+        where: {
+          organizationId: 42,
+          isDeleted: false,
+          status: TournamentStatus.COMPLETED,
+          championTournamentTeam: {
+            is: { organizationId: 42, teamId: 8, isDeleted: false },
+          },
+        },
+        orderBy: [
+          { startsAt: { sort: 'desc', nulls: 'last' } },
+          { id: 'desc' },
+        ],
+        select: expect.any(Object),
+      });
+      expect(result.titles).toEqual([
+        {
+          tournament: {
+            id: 12,
+            name: 'Intercursos 2026',
+            seasonId: 7,
+            seasonLabel: '2026',
+            startsAt: new Date('2026-05-02T12:00:00.000Z'),
+            endsAt: new Date('2026-06-20T12:00:00.000Z'),
+          },
+        },
+      ]);
+    });
+
+    it('returns no titles when no valid champion exists', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(profileTeam());
+      mockPrisma.tournament.findMany.mockResolvedValue([]);
+      mockPrisma.matchTeam.findMany.mockResolvedValue([]);
+
+      expect((await service.findSummary(42, 8)).titles).toEqual([]);
+    });
+
+    it('aggregates only public team summary rates without totals', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(profileTeam());
+      mockPrisma.tournament.findMany.mockResolvedValue([]);
+      mockPrisma.matchTeam.findMany.mockResolvedValue([
+        statisticMatch(
+          601,
+          {
+            finalScore: 80,
+            result: MatchResult.WIN,
+            lossType: LossType.NORMAL,
+            playerStatistics: [
+              statisticLine({
+                minutesSeconds: 1200,
+                pts: 20,
+                reb: 5,
+                ast: 3,
+                stl: 1,
+                blk: 1,
+                tov: 2,
+                pf: 2,
+                fgm: 8,
+                fga: 15,
+                threeFgm: 2,
+                threeFga: 5,
+                ftm: 2,
+                fta: 3,
+              }),
+              statisticLine({
+                minutesSeconds: 900,
+                pts: 10,
+                reb: 7,
+                ast: 2,
+                stl: 0,
+                blk: 0,
+                tov: 1,
+                pf: 1,
+                fgm: 4,
+                fga: 8,
+                threeFgm: 1,
+                threeFga: 3,
+                ftm: 1,
+                fta: 2,
+              }),
+            ],
+          },
+          { finalScore: 70, lossType: LossType.NORMAL },
+          [{ homePoints: 80, awayPoints: 70 }],
+        ),
+        statisticMatch(
+          602,
+          {
+            finalScore: 60,
+            result: MatchResult.LOSS,
+            lossType: LossType.NORMAL,
+            playerStatistics: [
+              statisticLine({ reb: 0, stl: 2, tov: 4, pf: 0 }),
+            ],
+          },
+          { finalScore: 65, lossType: LossType.NORMAL },
+          [{ homePoints: 60, awayPoints: 65 }],
+        ),
+        statisticMatch(
+          603,
+          {
+            finalScore: 20,
+            result: MatchResult.WIN,
+            lossType: LossType.NORMAL,
+          },
+          { finalScore: 0, lossType: LossType.FORFEIT },
+          [],
+        ),
+        statisticMatch(
+          604,
+          {
+            finalScore: 0,
+            result: MatchResult.LOSS,
+            lossType: LossType.DEFAULT,
+          },
+          { finalScore: 2, lossType: LossType.NORMAL },
+          [{ homePoints: 5, awayPoints: 10 }],
+        ),
+      ]);
+
+      const result = await service.findSummary(42, 8);
+
+      expect(result.statistics).toEqual({
+        results: {
+          measuredGames: 4,
+          winRate: 0.5,
+          scoreMeasuredGames: 2,
+          pointsForPerGame: 70,
+          pointsAgainstPerGame: 67.5,
+          pointDiffPerGame: 2.5,
+        },
+        boxScore: {
+          measuredGames: { reb: 2, ast: 1, stl: 2, blk: 1, tov: 2, pf: 2 },
+          perGame: { reb: 6, ast: 5, stl: 1.5, blk: 1, tov: 3.5, pf: 1.5 },
+          shooting: {
+            fgPct: 0.522,
+            threeFgPct: 0.375,
+            ftPct: 0.6,
+            trueShootingPct: 0.595,
+          },
+          efficiency: { measuredGames: 1, perGame: 33 },
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain('totals');
     });
   });
 

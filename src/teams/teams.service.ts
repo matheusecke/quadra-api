@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { AffiliationStatus, EntityStatus, Prisma } from '@prisma/client';
+import {
+  AffiliationStatus,
+  EntityStatus,
+  MatchResult,
+  MatchStatus,
+  Prisma,
+  TournamentStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { slugify } from '../common/utils/slugify';
 import { ApiException } from '../common/exceptions/api.exception';
@@ -8,6 +15,16 @@ import { UpdateTeamDto } from './dto/update-team.dto';
 import { UpdateTeamStatusDto } from './dto/update-team-status.dto';
 import { ListTeamsQueryDto } from './dto/list-teams-query.dto';
 import { TeamResponseDto } from './dto/team-response.dto';
+import {
+  TeamProfileStatus,
+  TeamSummaryResponseDto,
+} from './dto/team-profile-response.dto';
+import {
+  STATISTIC_METRICS,
+  StatisticLine,
+  StatisticsService,
+} from '../statistics/statistics.service';
+import { deriveMatchScoreSource } from '../matches/match-score-source';
 
 const teamSelect = {
   id: true,
@@ -21,9 +38,18 @@ const teamSelect = {
   updatedAt: true,
 } satisfies Prisma.TeamSelect;
 
+const round = (value: number): number => Math.round(value * 1000) / 1000;
+const average = (values: readonly number[]): number | null =>
+  values.length === 0
+    ? null
+    : round(values.reduce((sum, value) => sum + value, 0) / values.length);
+
 @Injectable()
 export class TeamsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly statistics: StatisticsService,
+  ) {}
 
   async create(dto: CreateTeamDto): Promise<TeamResponseDto> {
     const slug = slugify(dto.name);
@@ -99,6 +125,111 @@ export class TeamsService {
     return team;
   }
 
+  async findSummary(
+    organizationId: number,
+    teamId: number,
+  ): Promise<TeamSummaryResponseDto> {
+    const team = await this.findVisibleTeamOrThrow(organizationId, teamId);
+    const [titles, rows] = await Promise.all([
+      this.prisma.tournament.findMany({
+        where: {
+          organizationId,
+          isDeleted: false,
+          status: TournamentStatus.COMPLETED,
+          championTournamentTeam: {
+            is: { organizationId, teamId, isDeleted: false },
+          },
+        },
+        orderBy: [
+          { startsAt: { sort: 'desc', nulls: 'last' } },
+          { id: 'desc' },
+        ],
+        select: {
+          id: true,
+          name: true,
+          seasonId: true,
+          startsAt: true,
+          endsAt: true,
+          season: { select: { label: true } },
+        },
+      }),
+      this.findTeamStatisticRows(organizationId, teamId),
+    ]);
+    const lines = rows.map((row) => this.toStatisticLine(row.playerStatistics));
+    const boxScore = this.statistics.aggregate(lines);
+    const resultRows = rows.filter(
+      (row) =>
+        row.result === MatchResult.WIN || row.result === MatchResult.LOSS,
+    );
+    const scoredRows = rows.flatMap((row) => {
+      const opponent = row.match.teams.find((team) => team.id !== row.id);
+      if (
+        deriveMatchScoreSource({
+          status: row.match.status,
+          teams: row.match.teams,
+          periods: row.match.periods,
+        }) !== 'PERIODS' ||
+        row.finalScore === null ||
+        !opponent ||
+        opponent.finalScore === null
+      )
+        return [];
+      return [[row.finalScore, opponent.finalScore] as const];
+    });
+    return {
+      team: {
+        id: team.id,
+        name: team.name,
+        shortName: team.shortName,
+        city: team.city,
+        state: team.state,
+        status:
+          team.status === EntityStatus.INACTIVE
+            ? TeamProfileStatus.INACTIVE
+            : team.organizationAffiliations.length > 0
+              ? TeamProfileStatus.ACTIVE
+              : TeamProfileStatus.HISTORICAL,
+      },
+      titles: titles.map((title) => ({
+        tournament: {
+          id: title.id,
+          name: title.name,
+          seasonId: title.seasonId,
+          seasonLabel: title.season.label,
+          startsAt: title.startsAt,
+          endsAt: title.endsAt,
+        },
+      })),
+      statistics: {
+        results: {
+          measuredGames: resultRows.length,
+          winRate: average(
+            resultRows.map((row) => (row.result === MatchResult.WIN ? 1 : 0)),
+          ),
+          scoreMeasuredGames: scoredRows.length,
+          pointsForPerGame: average(scoredRows.map(([pointsFor]) => pointsFor)),
+          pointsAgainstPerGame: average(
+            scoredRows.map(([, pointsAgainst]) => pointsAgainst),
+          ),
+          pointDiffPerGame: average(
+            scoredRows.map(
+              ([pointsFor, pointsAgainst]) => pointsFor - pointsAgainst,
+            ),
+          ),
+        },
+        boxScore: {
+          measuredGames: this.selectBoxMetrics(boxScore.measuredGames),
+          perGame: this.selectBoxMetrics(boxScore.perGame),
+          shooting: boxScore.shooting,
+          efficiency: {
+            measuredGames: boxScore.efficiency.measuredGames,
+            perGame: boxScore.efficiency.perGame,
+          },
+        },
+      },
+    };
+  }
+
   async update(id: number, dto: UpdateTeamDto): Promise<TeamResponseDto> {
     const existing = await this.prisma.team.findFirst({
       where: { id, isDeleted: false },
@@ -166,5 +297,147 @@ export class TeamsService {
       where: { id },
       data: { isDeleted: true, status: EntityStatus.INACTIVE },
     });
+  }
+
+  private async findVisibleTeamOrThrow(organizationId: number, teamId: number) {
+    const affiliation = {
+      organizationId,
+      isDeleted: false,
+      status: AffiliationStatus.ACTIVE,
+    } satisfies Prisma.OrganizationTeamAffiliationWhereInput;
+    const team = await this.prisma.team.findFirst({
+      where: {
+        id: teamId,
+        isDeleted: false,
+        OR: [
+          { organizationAffiliations: { some: affiliation } },
+          {
+            tournamentTeams: {
+              some: {
+                organizationId,
+                isDeleted: false,
+                tournament: { is: { organizationId, isDeleted: false } },
+              },
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        shortName: true,
+        city: true,
+        state: true,
+        status: true,
+        organizationAffiliations: {
+          where: affiliation,
+          take: 1,
+          select: { id: true },
+        },
+      },
+    });
+    if (!team) throw ApiException.notFound('Team not found');
+    return team;
+  }
+
+  private findTeamStatisticRows(
+    organizationId: number,
+    teamId: number,
+    tournamentTeamIds?: readonly number[],
+  ) {
+    return this.prisma.matchTeam.findMany({
+      where: {
+        organizationId,
+        isDeleted: false,
+        tournamentTeam: {
+          is: {
+            organizationId,
+            teamId,
+            isDeleted: false,
+            ...(tournamentTeamIds
+              ? { id: { in: [...tournamentTeamIds] } }
+              : {}),
+            tournament: { is: { organizationId, isDeleted: false } },
+          },
+        },
+        match: {
+          is: {
+            organizationId,
+            isDeleted: false,
+            status: MatchStatus.FINISHED,
+            tournament: { is: { organizationId, isDeleted: false } },
+          },
+        },
+      },
+      select: {
+        id: true,
+        tournamentTeamId: true,
+        finalScore: true,
+        result: true,
+        lossType: true,
+        playerStatistics: {
+          where: { isDeleted: false },
+          select: Object.fromEntries(
+            STATISTIC_METRICS.map((metric) => [metric, true]),
+          ) as Prisma.PlayerMatchStatisticSelect,
+        },
+        match: {
+          select: {
+            status: true,
+            periods: {
+              where: { isDeleted: false },
+              select: { homePoints: true, awayPoints: true },
+            },
+            teams: {
+              where: {
+                organizationId,
+                isDeleted: false,
+                tournamentTeam: {
+                  is: {
+                    organizationId,
+                    isDeleted: false,
+                    tournament: { is: { organizationId, isDeleted: false } },
+                  },
+                },
+              },
+              select: {
+                id: true,
+                side: true,
+                finalScore: true,
+                lossType: true,
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  private toStatisticLine(lines: readonly StatisticLine[]): StatisticLine {
+    return Object.fromEntries(
+      STATISTIC_METRICS.map((metric) => {
+        const values = lines
+          .map((line) => line[metric])
+          .filter((value): value is number => value !== null);
+        return [
+          metric,
+          values.length === 0
+            ? null
+            : values.reduce((sum, value) => sum + value, 0),
+        ];
+      }),
+    ) as StatisticLine;
+  }
+
+  private selectBoxMetrics<T>(values: {
+    reb: T;
+    ast: T;
+    stl: T;
+    blk: T;
+    tov: T;
+    pf: T;
+  }) {
+    const { reb, ast, stl, blk, tov, pf } = values;
+    return { reb, ast, stl, blk, tov, pf };
   }
 }
