@@ -414,20 +414,21 @@ export class TeamsService {
       isDeleted: false,
       tournament: { is: { organizationId, isDeleted: false } },
     };
-    const [count, rows] = await Promise.all([
-      this.prisma.tournamentTeam.count({ where }),
-      this.prisma.tournamentTeam.findMany({
-        where,
-        skip: (query.page - 1) * query.limit,
-        take: query.limit,
-        orderBy: [
-          { tournament: { startsAt: { sort: 'desc', nulls: 'last' } } },
-          { tournamentId: 'desc' },
-          { id: 'asc' },
-        ],
-        select: teamTournamentHistorySelect,
-      }),
-    ]);
+    const [count, rows]: [number, TeamTournamentHistoryRow[]] =
+      await Promise.all([
+        this.prisma.tournamentTeam.count({ where }),
+        this.prisma.tournamentTeam.findMany({
+          where,
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+          orderBy: [
+            { tournament: { startsAt: { sort: 'desc', nulls: 'last' } } },
+            { tournamentId: 'desc' },
+            { id: 'asc' },
+          ],
+          select: teamTournamentHistorySelect,
+        }),
+      ]);
     if (rows.length === 0) return { count, data: [] };
 
     const statisticRows = await this.findTeamStatisticRows(
