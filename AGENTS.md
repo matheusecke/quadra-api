@@ -50,3 +50,8 @@ This file supplements the repository-level `AGENTS.md` for work inside `quadra-a
 - After changes, run the most specific relevant test file first, then broader validation only if needed.
 - Do not rely on retries to pass flaky tests.
 - Prefer real implementations and mock only at system boundaries.
+
+## Commit Attribution
+
+- Keep commit messages limited to the repository change.
+- Do not add `Co-authored-by`, `Signed-off-by`, `Generated-by`, or equivalent authorship, provenance, or tool-identification trailers or commit-body metadata.
