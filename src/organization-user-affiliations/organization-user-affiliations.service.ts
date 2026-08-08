@@ -283,6 +283,57 @@ export class OrganizationUserAffiliationsService {
     );
   }
 
+  private async assertCanManage(
+    client: Pick<Prisma.TransactionClient, 'organizationUserAffiliation'>,
+    organizationId: number,
+    target: { userId: number; teamId: number | null; role: OrgRole },
+    actor: OrganizationActor,
+  ): Promise<void> {
+    if (actor.role === OrgRole.ORG_ADMIN) {
+      if (target.userId === actor.userId && target.role === OrgRole.ORG_ADMIN) {
+        throw ApiException.forbidden(
+          'You cannot change your own organization administrator affiliation',
+        );
+      }
+      return;
+    }
+
+    const own = await client.organizationUserAffiliation.findFirst({
+      where: {
+        organizationId,
+        userId: actor.userId,
+        role: OrgRole.TEAM_ADMIN,
+        status: AffiliationStatus.ACTIVE,
+        isDeleted: false,
+        teamId: target.teamId,
+        team: {
+          is: {
+            status: EntityStatus.ACTIVE,
+            isDeleted: false,
+            organizationAffiliations: {
+              some: {
+                organizationId,
+                status: AffiliationStatus.ACTIVE,
+                isDeleted: false,
+              },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (
+      !own ||
+      target.teamId === null ||
+      (target.role !== OrgRole.ATHLETE &&
+        target.role !== OrgRole.COACHING_STAFF)
+    ) {
+      throw ApiException.forbidden(
+        'You can only manage users from your own team',
+      );
+    }
+  }
+
   async findAll(
     organizationId: number,
     query: ListUserAffiliationsQueryDto,
@@ -433,92 +484,270 @@ export class OrganizationUserAffiliationsService {
     return updated;
   }
 
-  async update(orgId: number, id: number, dto: UpdateUserAffiliationDto) {
-    const aff = await this.prisma.organizationUserAffiliation.findUnique({
+  async updateMember(
+    organizationId: number,
+    affiliationId: number,
+    dto: UpdateUserAffiliationDto,
+    actorUserId: number,
+  ): Promise<UserAffiliationResponseDto> {
+    if (dto.jerseyNumber === undefined && dto.position === undefined) {
+      throw ApiException.badRequest('At least one editable field is required');
+    }
+    const target = await this.prisma.organizationUserAffiliation.findFirst({
       where: {
-        id,
-        organizationId: orgId,
-        isDeleted: false,
+        id: affiliationId,
+        organizationId,
         status: AffiliationStatus.ACTIVE,
+        isDeleted: false,
+      },
+      select: {
+        id: true,
+        userId: true,
+        teamId: true,
+        role: true,
+        jerseyNumber: true,
+        position: true,
       },
     });
-    if (!aff) throw ApiException.notFound('Active affiliation not found');
+    if (!target) throw ApiException.notFound('Affiliation not found');
+    await this.assertCanManage(this.prisma, organizationId, target, {
+      userId: actorUserId,
+      role: OrgRole.TEAM_ADMIN,
+    });
 
-    const newRole = dto.role ?? aff.role;
-    const newTeamId = dto.teamId !== undefined ? dto.teamId : aff.teamId;
-
-    if (newRole !== OrgRole.ORG_ADMIN) {
-      if (!newTeamId)
-        throw ApiException.unprocessable(
-          'teamId is required for non-ORG_ADMIN roles',
-        );
-      const teamAff = await this.prisma.organizationTeamAffiliation.findFirst({
-        where: {
-          organizationId: orgId,
-          teamId: newTeamId,
-          isDeleted: false,
-          status: AffiliationStatus.ACTIVE,
-        },
-      });
-      if (!teamAff)
-        throw ApiException.unprocessable(
-          'Team is not actively affiliated with this organization',
-        );
+    const jerseyNumber =
+      dto.jerseyNumber === undefined ? target.jerseyNumber : dto.jerseyNumber;
+    const position =
+      dto.position === undefined ? target.position : dto.position;
+    if (
+      target.role === OrgRole.ATHLETE &&
+      (jerseyNumber === null || position === null)
+    ) {
+      throw ApiException.badRequest(
+        'Athlete jerseyNumber and position are required',
+      );
     }
-
-    const data: Record<string, unknown> = {};
-    if (dto.role !== undefined) data.role = dto.role;
-    if (dto.teamId !== undefined) data.teamId = dto.teamId;
-    if (dto.jerseyNumber !== undefined) data.jerseyNumber = dto.jerseyNumber;
-    if (newRole === OrgRole.ORG_ADMIN) {
-      data.teamId = null;
-      data.jerseyNumber = null;
-    }
-
     return this.prisma.organizationUserAffiliation.update({
-      where: { id },
-      data,
+      where: { id: affiliationId },
+      data: {
+        ...(dto.jerseyNumber !== undefined
+          ? { jerseyNumber: dto.jerseyNumber }
+          : {}),
+        ...(dto.position !== undefined ? { position: dto.position } : {}),
+      },
       select: affiliationSelect,
     });
   }
 
-  async resend(orgId: number, id: number) {
-    const aff = await this.prisma.organizationUserAffiliation.findUnique({
-      where: { id, organizationId: orgId, isDeleted: false },
+  async resend(
+    organizationId: number,
+    affiliationId: number,
+    actor: OrganizationActor,
+  ): Promise<PendingUserInviteBundle> {
+    const target = await this.prisma.organizationUserAffiliation.findFirst({
+      where: { id: affiliationId, organizationId, isDeleted: false },
+      select: {
+        id: true,
+        userId: true,
+        teamId: true,
+        role: true,
+        status: true,
+      },
     });
-    if (!aff) throw ApiException.notFound('Affiliation not found');
-    if (aff.status !== AffiliationStatus.PENDING)
-      throw ApiException.unprocessable(
-        'Can only resend invite for PENDING affiliations',
-      );
+    if (!target) throw ApiException.notFound('Affiliation not found');
+    if (target.status !== AffiliationStatus.PENDING) {
+      throw ApiException.unprocessable('Affiliation must be PENDING to resend');
+    }
+    await this.assertCanManage(this.prisma, organizationId, target, actor);
 
     const { raw, hash, expiresAt } = AffiliationToken.generate();
-    const updated = await this.prisma.organizationUserAffiliation.update({
-      where: { id },
+    const rotated = await this.prisma.organizationUserAffiliation.updateMany({
+      where: {
+        id: target.id,
+        userId: target.userId,
+        status: AffiliationStatus.PENDING,
+        isDeleted: false,
+      },
       data: { inviteToken: hash, inviteExpiresAt: expiresAt },
-      select: affiliationSelect,
     });
-    return { affiliation: updated, inviteToken: raw };
+    if (rotated.count !== 1) {
+      throw ApiException.unprocessable('Invite is no longer pending');
+    }
+    const affiliation =
+      await this.prisma.organizationUserAffiliation.findUnique({
+        where: { id: target.id },
+        select: affiliationSelect,
+      });
+    if (!affiliation) throw ApiException.notFound('Affiliation not found');
+    return { affiliation, inviteToken: raw, inviteExpiresAt: expiresAt };
   }
 
   async remove(
-    orgId: number,
-    id: number,
-    currentUserId: number,
-    isSystemAdmin: boolean,
-  ) {
-    const aff = await this.prisma.organizationUserAffiliation.findUnique({
-      where: { id, organizationId: orgId, isDeleted: false },
-    });
-    if (!aff) throw ApiException.notFound('Affiliation not found');
-    if (!isSystemAdmin && aff.userId === currentUserId)
-      throw ApiException.unprocessable(
-        'You cannot remove your own affiliation',
-      );
+    organizationId: number,
+    affiliationId: number,
+    actor: OrganizationActor,
+  ): Promise<void> {
+    await this.runSerializable(async (tx) => {
+      const target = await tx.organizationUserAffiliation.findFirst({
+        where: { id: affiliationId, organizationId, isDeleted: false },
+        select: {
+          id: true,
+          userId: true,
+          teamId: true,
+          role: true,
+          status: true,
+        },
+      });
+      if (!target) throw ApiException.notFound('Affiliation not found');
+      if (target.status !== AffiliationStatus.PENDING) {
+        throw ApiException.unprocessable(
+          'Affiliation must be PENDING to cancel',
+        );
+      }
+      await this.assertCanManage(tx, organizationId, target, actor);
 
-    await this.prisma.organizationUserAffiliation.update({
-      where: { id },
-      data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+      const removed = await tx.organizationUserAffiliation.updateMany({
+        where: {
+          id: target.id,
+          userId: target.userId,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+        },
+        data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+      });
+      if (removed.count !== 1) {
+        throw ApiException.unprocessable('Invite is no longer pending');
+      }
+
+      if (target.role !== OrgRole.TEAM_ADMIN || target.teamId === null) return;
+      const teamAffiliation = await tx.organizationTeamAffiliation.findFirst({
+        where: {
+          organizationId,
+          teamId: target.teamId,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+        },
+        select: { id: true, teamId: true },
+      });
+      if (!teamAffiliation) return;
+
+      const remainingAdmin = await tx.organizationUserAffiliation.findFirst({
+        where: {
+          organizationId,
+          teamId: target.teamId,
+          role: OrgRole.TEAM_ADMIN,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+      if (remainingAdmin) return;
+
+      await tx.organizationTeamAffiliation.update({
+        where: { id: teamAffiliation.id },
+        data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+      });
+      const otherHistoryCount = await tx.organizationTeamAffiliation.count({
+        where: { teamId: target.teamId, id: { not: teamAffiliation.id } },
+      });
+      if (otherHistoryCount === 0) {
+        await tx.team.update({
+          where: { id: target.teamId },
+          data: { isDeleted: true, status: EntityStatus.INACTIVE },
+        });
+      }
+    });
+  }
+
+  async deactivate(
+    organizationId: number,
+    affiliationId: number,
+    actor: OrganizationActor,
+  ): Promise<UserAffiliationResponseDto> {
+    const target = await this.prisma.organizationUserAffiliation.findFirst({
+      where: { id: affiliationId, organizationId, isDeleted: false },
+      select: {
+        id: true,
+        userId: true,
+        teamId: true,
+        role: true,
+        status: true,
+      },
+    });
+    if (!target) throw ApiException.notFound('Affiliation not found');
+    await this.assertCanManage(this.prisma, organizationId, target, actor);
+    if (target.status !== AffiliationStatus.ACTIVE) {
+      throw ApiException.unprocessable(
+        'Affiliation must be ACTIVE to deactivate',
+      );
+    }
+    return this.prisma.organizationUserAffiliation.update({
+      where: { id: target.id },
+      data: { status: AffiliationStatus.INACTIVE },
+      select: affiliationSelect,
+    });
+  }
+
+  async activate(
+    organizationId: number,
+    affiliationId: number,
+    actor: OrganizationActor,
+  ): Promise<UserAffiliationResponseDto> {
+    return this.runSerializable(async (tx) => {
+      const target = await tx.organizationUserAffiliation.findFirst({
+        where: { id: affiliationId, organizationId, isDeleted: false },
+        select: {
+          id: true,
+          userId: true,
+          teamId: true,
+          role: true,
+          status: true,
+        },
+      });
+      if (!target) throw ApiException.notFound('Affiliation not found');
+      await this.assertCanManage(tx, organizationId, target, actor);
+      if (target.status !== AffiliationStatus.INACTIVE) {
+        throw ApiException.unprocessable(
+          'Affiliation must be INACTIVE to activate',
+        );
+      }
+
+      if (target.teamId !== null) {
+        const teamAffiliation = await tx.organizationTeamAffiliation.findFirst({
+          where: {
+            organizationId,
+            teamId: target.teamId,
+            status: AffiliationStatus.ACTIVE,
+            isDeleted: false,
+            team: { is: { status: EntityStatus.ACTIVE, isDeleted: false } },
+          },
+          select: { id: true },
+        });
+        if (!teamAffiliation) {
+          throw ApiException.unprocessable(
+            'Team affiliation is inactive; activate it before inviting users',
+          );
+        }
+      }
+
+      const conflict = await tx.organizationUserAffiliation.findFirst({
+        where: {
+          userId: target.userId,
+          organizationId,
+          id: { not: target.id },
+          status: AffiliationStatus.ACTIVE,
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+      if (conflict) {
+        throw ApiException.conflict('User already has an active affiliation');
+      }
+      return tx.organizationUserAffiliation.update({
+        where: { id: target.id },
+        data: { status: AffiliationStatus.ACTIVE },
+        select: affiliationSelect,
+      });
     });
   }
 

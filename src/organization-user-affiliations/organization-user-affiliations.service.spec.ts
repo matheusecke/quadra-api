@@ -560,119 +560,6 @@ describe('OrganizationUserAffiliationsService', () => {
     });
   });
 
-  describe('update()', () => {
-    it('throws 422 when setting non-ORG_ADMIN role without teamId', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1,
-        status: 'ACTIVE',
-        role: 'ATHLETE',
-        teamId: 2,
-      });
-      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(null);
-      await expect(
-        service.update(1, 1, { role: OrgRole.TEAM_ADMIN, teamId: null }),
-      ).rejects.toMatchObject({ status: 422 });
-    });
-  });
-
-  describe('update() additional', () => {
-    it('throws 404 if active affiliation not found', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
-      await expect(
-        service.update(1, 1, { role: OrgRole.ATHLETE }),
-      ).rejects.toMatchObject({ status: 404 });
-    });
-
-    it('updates affiliation successfully', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1,
-        status: 'ACTIVE',
-        role: 'ATHLETE',
-        teamId: 2,
-      });
-      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
-        id: 1,
-        status: 'ACTIVE',
-      });
-      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
-        id: 1,
-        role: 'TEAM_ADMIN',
-        teamId: 2,
-        status: 'ACTIVE',
-      });
-      const result = await service.update(1, 1, {
-        role: OrgRole.TEAM_ADMIN,
-        teamId: 2,
-      });
-      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalled();
-      expect(result).toBeDefined();
-    });
-
-    it('clears teamId and jerseyNumber when switching to ORG_ADMIN', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1,
-        status: 'ACTIVE',
-        role: 'ATHLETE',
-        teamId: 2,
-      });
-      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
-        id: 1,
-        role: 'ORG_ADMIN',
-        teamId: null,
-        jerseyNumber: null,
-        status: 'ACTIVE',
-      });
-      await service.update(1, 1, { role: OrgRole.ORG_ADMIN });
-      expect(
-        mockPrisma.organizationUserAffiliation.update,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ teamId: null, jerseyNumber: null }),
-        }),
-      );
-    });
-  });
-
-  describe('resend()', () => {
-    it('throws 404 if affiliation not found', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
-      await expect(service.resend(1, 99)).rejects.toMatchObject({
-        status: 404,
-      });
-    });
-
-    it('throws 422 if affiliation is not PENDING', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1,
-        status: 'ACTIVE',
-      });
-      await expect(service.resend(1, 1)).rejects.toMatchObject({ status: 422 });
-    });
-
-    it('regenerates token and returns raw token', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1,
-        status: 'PENDING',
-      });
-      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
-        id: 1,
-        status: 'PENDING',
-      });
-      const result = await service.resend(1, 1);
-      expect(result.inviteToken).toHaveLength(64);
-      expect(
-        mockPrisma.organizationUserAffiliation.update,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            inviteToken: expect.any(String),
-            inviteExpiresAt: expect.any(Date),
-          }),
-        }),
-      );
-    });
-  });
-
   describe('updateStatus()', () => {
     it('throws 404 if affiliation not found', async () => {
       mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(null);
@@ -977,47 +864,220 @@ describe('OrganizationUserAffiliationsService', () => {
     });
   });
 
-  describe('remove()', () => {
-    it('throws 422 if ORG_ADMIN tries to remove themselves', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1,
-        userId: 99,
-      });
-      await expect(service.remove(1, 1, 99, false)).rejects.toMatchObject({
-        status: 422,
-      });
-    });
+  describe('managed member lifecycle', () => {
+    it('lets an active own-team admin edit only an active athlete profile', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(
+          activeAffiliation({ id: 21, teamId: 8, role: OrgRole.ATHLETE }),
+        )
+        .mockResolvedValueOnce({ id: 30 });
+      mockPrisma.organizationUserAffiliation.update.mockResolvedValue(
+        activeAffiliation({
+          id: 21,
+          jerseyNumber: 7,
+          position: BasketballPosition.SG,
+        }),
+      );
 
-    it('soft deletes if user is different from admin', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1,
-        userId: 10,
-      });
-      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
-        id: 1,
-        isDeleted: true,
-      });
-      await service.remove(1, 1, 99, false);
-      expect(
-        mockPrisma.organizationUserAffiliation.update,
-      ).toHaveBeenCalledWith(
+      await service.updateMember(
+        1,
+        21,
+        { jerseyNumber: 7, position: BasketballPosition.SG },
+        77,
+      );
+
+      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ isDeleted: true }),
+          where: { id: 21 },
+          data: { jerseyNumber: 7, position: BasketballPosition.SG },
         }),
       );
     });
 
-    it('system admin can remove any affiliation (including self)', async () => {
-      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
-        id: 1,
-        userId: 99,
+    it.each([OrgRole.TEAM_ADMIN, OrgRole.ORG_ADMIN])(
+      'does not let a team admin mutate a %s row',
+      async (role) => {
+        mockPrisma.organizationUserAffiliation.findFirst
+          .mockResolvedValueOnce(activeAffiliation({ id: 21, teamId: 8, role }))
+          .mockResolvedValueOnce({ id: 30 });
+        const error = await service
+          .updateMember(1, 21, { jerseyNumber: 7 }, 77)
+          .catch((caught: unknown) => caught);
+        expect(apiErrorMessage(error)).toBe(
+          'You can only manage users from your own team',
+        );
+      },
+    );
+
+    it('forbids an org admin from deactivating their own affiliation', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        activeAffiliation({ id: 9, userId: 99, role: OrgRole.ORG_ADMIN }),
+      );
+      const error = await service
+        .deactivate(1, 9, { userId: 99, role: OrgRole.ORG_ADMIN })
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(
+        'You cannot change your own organization administrator affiliation',
+      );
+    });
+
+    it('deactivates only ACTIVE and activates the same INACTIVE row', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(activeAffiliation({ id: 21, userId: 55 }))
+        .mockResolvedValueOnce(inactiveAffiliation({ id: 21, userId: 55 }))
+        .mockResolvedValueOnce(null);
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
+        id: 15,
       });
-      mockPrisma.organizationUserAffiliation.update.mockResolvedValue({
-        id: 1,
-        isDeleted: true,
+      mockPrisma.organizationUserAffiliation.update
+        .mockResolvedValueOnce(inactiveAffiliation({ id: 21, userId: 55 }))
+        .mockResolvedValueOnce(activeAffiliation({ id: 21, userId: 55 }));
+
+      await service.deactivate(1, 21, { userId: 99, role: OrgRole.ORG_ADMIN });
+      await service.activate(1, 21, { userId: 99, role: OrgRole.ORG_ADMIN });
+
+      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: { id: 21 },
+          data: { status: AffiliationStatus.ACTIVE },
+        }),
+      );
+    });
+
+    it('cancels and resends only manageable pending rows', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation({ id: 22, teamId: 8, role: OrgRole.ATHLETE }),
+      );
+      mockPrisma.organizationUserAffiliation.update.mockResolvedValue(
+        pendingAffiliation({ id: 22, teamId: 8, role: OrgRole.ATHLETE }),
+      );
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
       });
-      await service.remove(1, 1, 99, true);
-      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalled();
+      const actor = { userId: 99, role: OrgRole.ORG_ADMIN };
+
+      await expect(service.resend(1, 22, actor)).resolves.toMatchObject({
+        inviteToken: expect.any(String),
+        inviteExpiresAt: expect.any(Date),
+      });
+      await service.remove(1, 22, actor);
+      expect(
+        mockPrisma.organizationUserAffiliation.updateMany,
+      ).toHaveBeenCalledWith({
+        where: {
+          id: 22,
+          userId: expect.any(Number),
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+        },
+        data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+      });
+    });
+
+    it('rejects deactivation unless the current row is ACTIVE', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation({ userId: 55 }),
+      );
+      const error = await service
+        .deactivate(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN })
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(
+        'Affiliation must be ACTIVE to deactivate',
+      );
+    });
+
+    it('rejects an athlete edit that removes a required value', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(activeAffiliation({ userId: 55 }))
+        .mockResolvedValueOnce({ id: 30 });
+      const error = await service
+        .updateMember(1, 1, { position: null }, 77)
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(
+        'Athlete jerseyNumber and position are required',
+      );
+    });
+
+    it('rejects activation while the target team affiliation is inactive', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        inactiveAffiliation({ userId: 55 }),
+      );
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(null);
+      const error = await service
+        .activate(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN })
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(
+        'Team affiliation is inactive; activate it before inviting users',
+      );
+    });
+
+    it('rejects activation when another live ACTIVE row exists', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(inactiveAffiliation({ userId: 55 }))
+        .mockResolvedValueOnce({ id: 88 });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
+        id: 15,
+      });
+      const error = await service
+        .activate(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN })
+        .catch((caught: unknown) => caught as ApiException);
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
+      expect(apiErrorMessage(error)).toBe('User already has an active affiliation');
+    });
+
+    it('rejects a team admin outside the target team', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(activeAffiliation({ userId: 55, teamId: 8 }))
+        .mockResolvedValueOnce(null);
+      const error = await service
+        .deactivate(1, 1, { userId: 77, role: OrgRole.TEAM_ADMIN })
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(
+        'You can only manage users from your own team',
+      );
+    });
+
+    it('keeps pending onboarding while another pending team admin remains', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(
+          pendingAffiliation({ userId: 42, role: OrgRole.TEAM_ADMIN }),
+        )
+        .mockResolvedValueOnce({ id: 32 });
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
+        id: 15,
+        teamId: 8,
+      });
+      await service.remove(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN });
+      expect(mockPrisma.organizationTeamAffiliation.update).not.toHaveBeenCalled();
+      expect(mockPrisma.organizationTeamAffiliation.count).not.toHaveBeenCalled();
+    });
+
+    it('closes pending onboarding and applies B1 after the last admin is cancelled', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(
+          pendingAffiliation({ userId: 42, role: OrgRole.TEAM_ADMIN }),
+        )
+        .mockResolvedValueOnce(null);
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
+        id: 15,
+        teamId: 8,
+      });
+      mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
+      await service.remove(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN });
+      expect(mockPrisma.organizationTeamAffiliation.count).toHaveBeenCalledWith({
+        where: { teamId: 8, id: { not: 15 } },
+      });
+      expect(mockPrisma.team.update).toHaveBeenCalledWith({
+        where: { id: 8 },
+        data: { isDeleted: true, status: EntityStatus.INACTIVE },
+      });
     });
   });
 });

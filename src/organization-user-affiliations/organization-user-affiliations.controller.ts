@@ -149,21 +149,23 @@ export class OrganizationUserAffiliationsController {
 
   @Patch('organization-user-affiliations/:id')
   @UseGuards(OrgRoleGuard)
-  @OrgRoles(OrgRole.ORG_ADMIN)
+  @OrgRoles(OrgRole.TEAM_ADMIN)
   @ApiOperation({
-    summary:
-      'Update an active user affiliation in the active JWT organization (org admin)',
-    description:
-      'Role, team, or jersey number updates for ACTIVE affiliations.',
+    summary: 'Update an active athlete or staff member from the own team',
   })
   @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
   @ApiOkResponse({ type: UserAffiliationResponseDto })
-  update(
+  updateMember(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateUserAffiliationDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.update(user.organizationId as number, id, dto);
+    return this.service.updateMember(
+      user.organizationId as number,
+      id,
+      dto,
+      user.sub,
+    );
   }
 
   @Patch('organizations/:orgId/user-affiliations/:id/status')
@@ -187,42 +189,61 @@ export class OrganizationUserAffiliationsController {
   // Invite email resend abuse: stricter than global. Details: docs/HTTP-LAYER.md (Rate limiting).
   @Post('organization-user-affiliations/:id/resend')
   @UseGuards(OrgRoleGuard)
-  @OrgRoles(OrgRole.ORG_ADMIN)
+  @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @ApiOperation({
-    summary:
-      'Re-send invite for a pending affiliation in the active JWT organization (org admin)',
-  })
-  @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
+  @ApiOperation({ summary: 'Rotate one manageable pending user invite' })
   @ApiOkResponse({ type: UserAffiliationInviteBundleDto })
   resend(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.resend(user.organizationId as number, id);
+    return this.service.resend(user.organizationId as number, id, {
+      userId: user.sub,
+      role: user.role as OrgRole,
+    });
   }
 
   @Delete('organization-user-affiliations/:id')
   @UseGuards(OrgRoleGuard)
-  @OrgRoles(OrgRole.ORG_ADMIN)
+  @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({
-    summary:
-      'Soft-delete a user affiliation in the active JWT organization (org admin)',
-    description:
-      'System admins may remove any affiliation; org admins cannot remove their own.',
-  })
-  @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
-  @ApiNoContentResponse({ description: 'Affiliation removed.' })
-  remove(
+  @ApiOperation({ summary: 'Cancel one manageable pending user invite' })
+  @ApiNoContentResponse({ description: 'Pending invite cancelled.' })
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    await this.service.remove(user.organizationId as number, id, {
+      userId: user.sub,
+      role: user.role as OrgRole,
+    });
+  }
+
+  @Post('organization-user-affiliations/:id/deactivate')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
+  @ApiOkResponse({ type: UserAffiliationResponseDto })
+  deactivate(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.remove(
-      user.organizationId as number,
-      id,
-      user.sub,
-      user.isSystemAdmin,
-    );
+    return this.service.deactivate(user.organizationId as number, id, {
+      userId: user.sub,
+      role: user.role as OrgRole,
+    });
+  }
+
+  @Post('organization-user-affiliations/:id/activate')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
+  @ApiOkResponse({ type: UserAffiliationResponseDto })
+  activate(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.activate(user.organizationId as number, id, {
+      userId: user.sub,
+      role: user.role as OrgRole,
+    });
   }
 }
