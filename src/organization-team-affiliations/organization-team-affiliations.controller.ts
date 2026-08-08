@@ -56,7 +56,8 @@ export class OrganizationTeamAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Create or reuse a team affiliation and invite one team administrator',
+    summary:
+      'Create or reuse a team affiliation and invite one team administrator',
   })
   @ApiCreatedResponse({ type: TeamAffiliationInviteBundleDto })
   create(
@@ -85,7 +86,8 @@ export class OrganizationTeamAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Get a team affiliation by id within the active JWT organization (org admin)',
+    summary:
+      'Get a team affiliation by id within the active JWT organization (org admin)',
   })
   @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
   @ApiOkResponse({ type: TeamAffiliationResponseDto })

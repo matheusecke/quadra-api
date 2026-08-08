@@ -1,7 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrganizationTeamAffiliationsService } from './organization-team-affiliations.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { AffiliationStatus, EntityStatus, OrgRole, Prisma } from '@prisma/client';
+import {
+  AffiliationStatus,
+  EntityStatus,
+  OrgRole,
+  Prisma,
+} from '@prisma/client';
 import { InviteDecision } from './dto/team-invite-response.dto';
 import { ApiException } from '../common/exceptions/api.exception';
 import { slugify } from '../common/utils/slugify';
@@ -222,9 +227,12 @@ describe('OrganizationTeamAffiliationsService', () => {
         pendingAdminInviteBundle(),
       );
       await service.create(1, { teamName: 'Águias', adminUserId: 42 }, 99);
-      expect(mockPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      });
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
       expect(mockUserAffiliations.createPendingInvite).toHaveBeenCalledWith(
         mockPrisma,
         expect.objectContaining({ role: OrgRole.TEAM_ADMIN, teamId: 8 }),
@@ -247,7 +255,9 @@ describe('OrganizationTeamAffiliationsService', () => {
       const error = await service
         .create(1, { teamName: 'Águias', adminUserId: 42 }, 99)
         .catch((caught: unknown) => caught);
-      expect(apiErrorMessage(error)).toBe('A team with this name already exists.');
+      expect(apiErrorMessage(error)).toBe(
+        'A team with this name already exists.',
+      );
     });
 
     it('rejects a punctuation-only team name', async () => {
