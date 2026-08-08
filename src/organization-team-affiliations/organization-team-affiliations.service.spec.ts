@@ -1,8 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrganizationTeamAffiliationsService } from './organization-team-affiliations.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { AffiliationStatus } from '@prisma/client';
+import { AffiliationStatus, EntityStatus, OrgRole, Prisma } from '@prisma/client';
 import { InviteDecision } from './dto/team-invite-response.dto';
+import { ApiException } from '../common/exceptions/api.exception';
+import { slugify } from '../common/utils/slugify';
+import { OrganizationUserAffiliationsService } from '../organization-user-affiliations/organization-user-affiliations.service';
 
 const mockPrisma = {
   organizationTeamAffiliation: {
@@ -13,9 +16,90 @@ const mockPrisma = {
     findUnique: jest.fn(),
     update: jest.fn(),
   },
-  team: { findUnique: jest.fn() },
+  organizationUserAffiliation: {
+    findMany: jest.fn(),
+    updateMany: jest.fn(),
+  },
+  team: {
+    findFirst: jest.fn(),
+    findUnique: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+  },
   organization: { findUnique: jest.fn() },
+  $transaction: jest.fn((callback: (tx: typeof mockPrisma) => unknown) =>
+    callback(mockPrisma),
+  ),
 };
+
+const mockUserAffiliations = {
+  createPendingInvite: jest.fn(),
+};
+
+const apiErrorMessage = (error: unknown): string =>
+  ((error as ApiException).getResponse() as { error: { message: string } })
+    .error.message;
+
+const apiErrorCode = (error: unknown): string | undefined =>
+  ((error as ApiException).getResponse() as { error: { code?: string } }).error
+    .code;
+
+const activeTeam = (overrides: Record<string, unknown> = {}) => ({
+  id: 8,
+  name: 'Águias Campinas',
+  shortName: 'AGC',
+  city: 'Campinas',
+  state: null,
+  status: EntityStatus.ACTIVE,
+  isDeleted: false,
+  ...overrides,
+});
+
+const teamAffiliation = (overrides: Record<string, unknown> = {}) => ({
+  id: 15,
+  organizationId: 1,
+  teamId: 8,
+  status: AffiliationStatus.PENDING,
+  createdByUserId: 99,
+  createdAt: new Date('2026-08-01T12:00:00.000Z'),
+  updatedAt: new Date('2026-08-01T12:00:00.000Z'),
+  team: activeTeam(),
+  ...overrides,
+});
+
+const pendingTeamAffiliation = (overrides: Record<string, unknown> = {}) =>
+  teamAffiliation({ status: AffiliationStatus.PENDING, ...overrides });
+
+const activeTeamAffiliation = (overrides: Record<string, unknown> = {}) =>
+  teamAffiliation({ status: AffiliationStatus.ACTIVE, ...overrides });
+
+const inactiveTeamAffiliation = (overrides: Record<string, unknown> = {}) =>
+  teamAffiliation({ status: AffiliationStatus.INACTIVE, ...overrides });
+
+const pendingAdminInviteBundle = (overrides: Record<string, unknown> = {}) => ({
+  affiliation: {
+    id: 31,
+    organizationId: 1,
+    userId: 42,
+    role: OrgRole.TEAM_ADMIN,
+    teamId: 8,
+    jerseyNumber: null,
+    position: null,
+    status: AffiliationStatus.PENDING,
+    inviteExpiresAt: new Date('2026-08-15T12:00:00.000Z'),
+    user: { id: 42, name: 'Marina', email: 'marina@example.com' },
+    team: { id: 8, name: 'Águias Campinas' },
+  },
+  inviteToken: 'a'.repeat(64),
+  inviteExpiresAt: new Date('2026-08-15T12:00:00.000Z'),
+  ...overrides,
+});
+
+const p2034Error = (): Prisma.PrismaClientKnownRequestError =>
+  new Prisma.PrismaClientKnownRequestError(
+    'Transaction failed due to a write conflict or a deadlock.',
+    { code: 'P2034', clientVersion: '7.7.0' },
+  );
 
 describe('OrganizationTeamAffiliationsService', () => {
   let service: OrganizationTeamAffiliationsService;
@@ -25,81 +109,180 @@ describe('OrganizationTeamAffiliationsService', () => {
       providers: [
         OrganizationTeamAffiliationsService,
         { provide: PrismaService, useValue: mockPrisma },
+        {
+          provide: OrganizationUserAffiliationsService,
+          useValue: mockUserAffiliations,
+        },
       ],
     }).compile();
     service = module.get(OrganizationTeamAffiliationsService);
     jest.clearAllMocks();
   });
 
-  describe('create()', () => {
-    const orgId = 1;
-    const dto = { teamId: 2 };
-    const currentUserId = 10;
-
-    it('throws 404 if team does not exist', async () => {
-      mockPrisma.team.findUnique.mockResolvedValue(null);
-      await expect(
-        service.create(orgId, dto, currentUserId),
-      ).rejects.toMatchObject({
-        status: 404,
+  describe('composite team onboarding', () => {
+    it.each([
+      ['Águias', 'AGU'],
+      ['Engenharia PUC', 'EPU'],
+      ['São Paulo', 'SPA'],
+      ['Equipe A', 'EQA'],
+      ['São Paulo Futebol Clube', 'SPF'],
+    ])('derives %s as %s for a new team', async (teamName, shortName) => {
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.team.create.mockResolvedValue({
+        id: 8,
+        name: teamName,
+        shortName,
       });
-    });
-
-    it('throws 409 if team already has PENDING affiliation with org', async () => {
-      mockPrisma.team.findUnique.mockResolvedValue({ id: 2, isDeleted: false });
-      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
-        id: 99,
-        status: AffiliationStatus.PENDING,
-      });
-      await expect(
-        service.create(orgId, dto, currentUserId),
-      ).rejects.toMatchObject({
-        status: 409,
-      });
-    });
-
-    it('throws 409 if team already has ACTIVE affiliation with org', async () => {
-      mockPrisma.team.findUnique.mockResolvedValue({ id: 2, isDeleted: false });
-      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
-        id: 99,
-        status: AffiliationStatus.ACTIVE,
-      });
-      await expect(
-        service.create(orgId, dto, currentUserId),
-      ).rejects.toMatchObject({
-        status: 409,
-      });
-    });
-
-    it('creates affiliation and returns raw token', async () => {
-      mockPrisma.team.findUnique.mockResolvedValue({ id: 2, isDeleted: false });
-      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(null);
-      mockPrisma.organizationTeamAffiliation.create.mockResolvedValue({
-        id: 1,
-        organizationId: orgId,
-        teamId: 2,
-        status: AffiliationStatus.PENDING,
-        createdByUserId: currentUserId,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        team: { id: 2, name: 'Equipe A' },
-      });
-
-      const result = await service.create(orgId, dto, currentUserId);
-      expect(result.inviteToken).toHaveLength(64);
-      expect(result.affiliation.status).toBe(AffiliationStatus.PENDING);
-      expect(
-        mockPrisma.organizationTeamAffiliation.create,
-      ).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            organizationId: orgId,
-            teamId: dto.teamId,
-            createdByUserId: currentUserId,
-            status: AffiliationStatus.PENDING,
-          }),
-        }),
+      mockPrisma.organizationTeamAffiliation.create.mockResolvedValue(
+        pendingTeamAffiliation({ teamId: 8 }),
       );
+      mockUserAffiliations.createPendingInvite.mockResolvedValue(
+        pendingAdminInviteBundle(),
+      );
+
+      await service.create(1, { teamName, adminUserId: 42 }, 99);
+
+      expect(mockPrisma.team.create).toHaveBeenCalledWith({
+        data: {
+          name: teamName,
+          shortName,
+          slug: slugify(teamName),
+          city: null,
+          state: null,
+          status: EntityStatus.ACTIVE,
+        },
+        select: expect.any(Object),
+      });
+    });
+
+    it.each([
+      [{ adminUserId: 42 }, 'Exactly one of teamId or teamName is required'],
+      [
+        { teamId: 8, teamName: 'Águias', adminUserId: 42 },
+        'Exactly one of teamId or teamName is required',
+      ],
+    ])('rejects an invalid selector %#', async (dto, message) => {
+      const error = await service
+        .create(1, dto, 99)
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(message);
+    });
+
+    it.each([AffiliationStatus.PENDING, AffiliationStatus.ACTIVE])(
+      'reuses a live %s team affiliation and adds another admin invite',
+      async (status) => {
+        mockPrisma.team.findFirst.mockResolvedValue(activeTeam({ id: 8 }));
+        mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+          teamAffiliation({ id: 15, teamId: 8, status }),
+        );
+        mockUserAffiliations.createPendingInvite.mockResolvedValue(
+          pendingAdminInviteBundle(),
+        );
+
+        const result = await service.create(
+          1,
+          { teamId: 8, adminUserId: 42 },
+          99,
+        );
+
+        expect(
+          mockPrisma.organizationTeamAffiliation.create,
+        ).not.toHaveBeenCalled();
+        expect(result.teamAffiliation.id).toBe(15);
+      },
+    );
+
+    it('rejects a live inactive team affiliation without changing it', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(activeTeam({ id: 8 }));
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+        teamAffiliation({ teamId: 8, status: AffiliationStatus.INACTIVE }),
+      );
+      const error = await service
+        .create(1, { teamId: 8, adminUserId: 42 }, 99)
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(
+        'Team affiliation is inactive; activate it before inviting users',
+      );
+    });
+
+    it('creates the team link and admin invite in one serializable transaction', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(null);
+      mockPrisma.team.create.mockResolvedValue(activeTeam({ id: 8 }));
+      mockPrisma.organizationTeamAffiliation.create.mockResolvedValue(
+        pendingTeamAffiliation({ teamId: 8 }),
+      );
+      mockUserAffiliations.createPendingInvite.mockResolvedValue(
+        pendingAdminInviteBundle(),
+      );
+      await service.create(1, { teamName: 'Águias', adminUserId: 42 }, 99);
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+      expect(mockUserAffiliations.createPendingInvite).toHaveBeenCalledWith(
+        mockPrisma,
+        expect.objectContaining({ role: OrgRole.TEAM_ADMIN, teamId: 8 }),
+      );
+    });
+
+    it('rejects an inactive or deleted existing global team with 404', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      await expect(
+        service.create(1, { teamId: 8, adminUserId: 42 }, 99),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(mockPrisma.team.findFirst).toHaveBeenCalledWith({
+        where: { id: 8, status: EntityStatus.ACTIVE, isDeleted: false },
+        select: expect.any(Object),
+      });
+    });
+
+    it('returns 409 when a new-team slug already exists', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue({ id: 9 });
+      const error = await service
+        .create(1, { teamName: 'Águias', adminUserId: 42 }, 99)
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe('A team with this name already exists.');
+    });
+
+    it('rejects a punctuation-only team name', async () => {
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      const error = await service
+        .create(1, { teamName: '---', adminUserId: 42 }, 99)
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(
+        'Team name must contain an alphanumeric character',
+      );
+      expect(mockPrisma.team.create).not.toHaveBeenCalled();
+    });
+
+    it('retries one P2034 and returns the next successful transaction', async () => {
+      mockPrisma.$transaction
+        .mockRejectedValueOnce(p2034Error())
+        .mockImplementationOnce((callback) => callback(mockPrisma));
+      mockPrisma.team.findFirst.mockResolvedValue(null);
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(null);
+      mockPrisma.team.create.mockResolvedValue(activeTeam());
+      mockPrisma.organizationTeamAffiliation.create.mockResolvedValue(
+        pendingTeamAffiliation(),
+      );
+      mockUserAffiliations.createPendingInvite.mockResolvedValue(
+        pendingAdminInviteBundle(),
+      );
+
+      await expect(
+        service.create(1, { teamName: 'Águias', adminUserId: 42 }, 99),
+      ).resolves.toMatchObject({ teamAffiliation: { id: 15 } });
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns CONCURRENT_MODIFICATION after four P2034 conflicts', async () => {
+      mockPrisma.$transaction.mockRejectedValue(p2034Error());
+      const error = await service
+        .create(1, { teamId: 8, adminUserId: 42 }, 99)
+        .catch((caught: unknown) => caught);
+      expect((error as ApiException).getStatus()).toBe(409);
+      expect(apiErrorCode(error)).toBe('CONCURRENT_MODIFICATION');
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
     });
   });
 
@@ -194,7 +377,15 @@ describe('OrganizationTeamAffiliationsService', () => {
       ).toHaveBeenCalledWith(
         expect.objectContaining({
           select: expect.objectContaining({
-            team: { select: { id: true, name: true } },
+            team: {
+              select: {
+                id: true,
+                name: true,
+                shortName: true,
+                city: true,
+                state: true,
+              },
+            },
           }),
         }),
       );

@@ -54,13 +54,13 @@ export class OrganizationTeamAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Invite a team to affiliate with the active JWT organization (org admin)',
+    summary: 'Create or reuse a team affiliation and invite one team administrator',
   })
   @ApiCreatedResponse({ type: TeamAffiliationInviteBundleDto })
   create(
     @Body() dto: CreateTeamAffiliationDto,
     @CurrentUser() user: JwtPayload,
-  ) {
+  ): Promise<TeamAffiliationInviteBundleDto> {
     return this.service.create(user.organizationId as number, dto, user.sub);
   }
 
