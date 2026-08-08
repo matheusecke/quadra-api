@@ -3,21 +3,21 @@ import { Transform } from 'class-transformer';
 import {
   IsInt,
   IsNotEmpty,
-  IsOptional,
   IsPositive,
   IsString,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateTeamAffiliationDto {
   @ApiPropertyOptional({ example: 8 })
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsInt()
   @IsPositive()
   teamId?: number;
 
   @ApiPropertyOptional({ example: 'Águias Campinas', maxLength: 100 })
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)

@@ -222,6 +222,7 @@ export class OrganizationUserAffiliationsController {
   @Post('organization-user-affiliations/:id/deactivate')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
+  @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: UserAffiliationResponseDto })
   deactivate(
     @Param('id', ParseIntPipe) id: number,
@@ -236,6 +237,7 @@ export class OrganizationUserAffiliationsController {
   @Post('organization-user-affiliations/:id/activate')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
+  @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: UserAffiliationResponseDto })
   activate(
     @Param('id', ParseIntPipe) id: number,

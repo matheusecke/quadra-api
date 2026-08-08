@@ -5,13 +5,14 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { BrazilianState } from '@prisma/client';
 
 export class UpdateTeamDto {
   @ApiPropertyOptional({ maxLength: 100 })
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
@@ -19,7 +20,7 @@ export class UpdateTeamDto {
   name?: string;
 
   @ApiPropertyOptional({ maxLength: 10 })
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @IsNotEmpty()
   @MaxLength(10)

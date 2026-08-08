@@ -159,6 +159,7 @@ export class OrganizationTeamAffiliationsController {
   @Post('organization-team-affiliations/:id/deactivate')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: TeamAffiliationResponseDto })
   deactivate(
     @Param('id', ParseIntPipe) id: number,
@@ -170,6 +171,7 @@ export class OrganizationTeamAffiliationsController {
   @Post('organization-team-affiliations/:id/activate')
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: TeamAffiliationResponseDto })
   activate(
     @Param('id', ParseIntPipe) id: number,
