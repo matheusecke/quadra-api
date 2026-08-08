@@ -39,6 +39,7 @@ import { UpdateUserAffiliationDto } from './dto/update-user-affiliation.dto';
 import { UpdateUserAffiliationStatusDto } from './dto/update-user-affiliation-status.dto';
 import { ListUserAffiliationsQueryDto } from './dto/list-user-affiliations-query.dto';
 import { UserAffiliationResponseDto } from './dto/user-affiliation-response.dto';
+import { UserAffiliationListItemDto } from './dto/user-affiliation-list-item.dto';
 import { UserAffiliationInviteBundleDto } from './dto/user-affiliation-invite-bundle.dto';
 import { Throttle } from '@nestjs/throttler';
 import { ApiStandardCrudErrors } from '../common/swagger/api-error-responses.decorators';
@@ -98,18 +99,21 @@ export class OrganizationUserAffiliationsController {
 
   @Get('organization-user-affiliations')
   @UseGuards(OrgRoleGuard)
-  @OrgRoles(OrgRole.ORG_ADMIN)
+  @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
   @UseInterceptors(PaginationInterceptor)
   @ApiOperation({
     summary:
-      'List user affiliations for the active JWT organization (org admin)',
+      'List user affiliations for the active JWT organization (org admin, team admin)',
   })
-  @ApiPaginatedOkResponse(UserAffiliationResponseDto)
+  @ApiPaginatedOkResponse(UserAffiliationListItemDto)
   findAll(
     @Query() query: ListUserAffiliationsQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.findAll(user.organizationId as number, query);
+    return this.service.findAll(user.organizationId as number, query, {
+      userId: user.sub,
+      role: user.role as OrgRole,
+    });
   }
 
   @Get('organization-user-affiliations/:id')

@@ -236,7 +236,11 @@ describe('OrganizationUserAffiliationsService', () => {
           team: { id: 2, name: 'Equipe A' },
         },
       ]);
-      const result = await service.findAll(1, { page: 1, limit: 10 });
+      const result = await service.findAll(
+        1,
+        { page: 1, limit: 10 },
+        { userId: 99, role: OrgRole.ORG_ADMIN },
+      );
       expect(result.count).toBe(1);
       expect(result.data).toHaveLength(1);
     });
@@ -244,21 +248,31 @@ describe('OrganizationUserAffiliationsService', () => {
     it('includes user OR filter when q is provided', async () => {
       mockPrisma.organizationUserAffiliation.count.mockResolvedValue(0);
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
-      await service.findAll(1, { page: 1, limit: 10, q: 'john' });
+      await service.findAll(
+        1,
+        { page: 1, limit: 10, q: 'john' },
+        { userId: 99, role: OrgRole.ORG_ADMIN },
+      );
       const where =
         mockPrisma.organizationUserAffiliation.findMany.mock.calls[0][0].where;
       expect(where.user).toEqual({
-        OR: [
-          { name: { contains: 'john', mode: 'insensitive' } },
-          { email: { contains: 'john', mode: 'insensitive' } },
-        ],
+        is: {
+          OR: [
+            { name: { contains: 'john', mode: 'insensitive' } },
+            { email: { contains: 'john', mode: 'insensitive' } },
+          ],
+        },
       });
     });
 
     it('does not include user key when q is not provided', async () => {
       mockPrisma.organizationUserAffiliation.count.mockResolvedValue(0);
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
-      await service.findAll(1, { page: 1, limit: 10 });
+      await service.findAll(
+        1,
+        { page: 1, limit: 10 },
+        { userId: 99, role: OrgRole.ORG_ADMIN },
+      );
       const where =
         mockPrisma.organizationUserAffiliation.findMany.mock.calls[0][0].where;
       expect(where.user).toBeUndefined();
@@ -267,7 +281,11 @@ describe('OrganizationUserAffiliationsService', () => {
     it('includes PENDING status and inviteExpiresAt lt filter when inviteExpired=true', async () => {
       mockPrisma.organizationUserAffiliation.count.mockResolvedValue(0);
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
-      await service.findAll(1, { page: 1, limit: 10, inviteExpired: true });
+      await service.findAll(
+        1,
+        { page: 1, limit: 10, inviteExpired: true },
+        { userId: 99, role: OrgRole.ORG_ADMIN },
+      );
       const where =
         mockPrisma.organizationUserAffiliation.findMany.mock.calls[0][0].where;
       expect(where.status).toBe('PENDING');
@@ -277,7 +295,11 @@ describe('OrganizationUserAffiliationsService', () => {
     it('does not include inviteExpiresAt in where when inviteExpired is absent', async () => {
       mockPrisma.organizationUserAffiliation.count.mockResolvedValue(0);
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
-      await service.findAll(1, { page: 1, limit: 10 });
+      await service.findAll(
+        1,
+        { page: 1, limit: 10 },
+        { userId: 99, role: OrgRole.ORG_ADMIN },
+      );
       const where =
         mockPrisma.organizationUserAffiliation.findMany.mock.calls[0][0].where;
       expect(where.inviteExpiresAt).toBeUndefined();
@@ -287,7 +309,11 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.count.mockResolvedValue(1);
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
 
-      await service.findAll(1, { page: 1, limit: 20 });
+      await service.findAll(
+        1,
+        { page: 1, limit: 20 },
+        { userId: 99, role: OrgRole.ORG_ADMIN },
+      );
 
       expect(
         mockPrisma.organizationUserAffiliation.findMany,
@@ -298,6 +324,70 @@ describe('OrganizationUserAffiliationsService', () => {
             team: { select: { id: true, name: true } },
           }),
         }),
+      );
+    });
+  });
+
+  describe('findAll by organization actor', () => {
+    it('lets an org admin filter the entire organization', async () => {
+      mockPrisma.organizationUserAffiliation.count.mockResolvedValue(1);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        pendingAffiliation({ userId: 10, inviteExpiresAt: new Date('2026-08-01') }),
+      ]);
+
+      const result = await service.findAll(
+        1,
+        { page: 1, limit: 20, teamId: 8 },
+        { userId: 99, role: OrgRole.ORG_ADMIN },
+      );
+
+      expect(mockPrisma.organizationUserAffiliation.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ organizationId: 1, teamId: 8 }),
+      });
+      expect(result.data[0]).toMatchObject({
+        isInviteExpired: true,
+        canManage: true,
+      });
+    });
+
+    it('forces a team admin to their active own team and keeps co-admins read-only', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        teamId: 8,
+      });
+      mockPrisma.organizationUserAffiliation.count.mockResolvedValue(2);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        activeAffiliation({
+          id: 20,
+          userId: 77,
+          teamId: 8,
+          role: OrgRole.TEAM_ADMIN,
+        }),
+        activeAffiliation({ id: 21, userId: 55, teamId: 8, role: OrgRole.ATHLETE }),
+      ]);
+
+      const result = await service.findAll(
+        1,
+        { page: 1, limit: 20, teamId: 999 },
+        { userId: 77, role: OrgRole.TEAM_ADMIN },
+      );
+
+      expect(mockPrisma.organizationUserAffiliation.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ organizationId: 1, teamId: 8 }),
+      });
+      expect(result.data.map(({ canManage }) => canManage)).toEqual([false, true]);
+    });
+
+    it('rejects a team-admin token without a matching active team-admin row', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+      const error = await service
+        .findAll(
+          1,
+          { page: 1, limit: 20 },
+          { userId: 77, role: OrgRole.TEAM_ADMIN },
+        )
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe(
+        'You can only manage users from your own team',
       );
     });
   });

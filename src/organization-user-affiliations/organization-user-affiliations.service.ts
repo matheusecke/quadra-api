@@ -18,6 +18,7 @@ import { UpdateUserAffiliationDto } from './dto/update-user-affiliation.dto';
 import { UpdateUserAffiliationStatusDto } from './dto/update-user-affiliation-status.dto';
 import { ListUserAffiliationsQueryDto } from './dto/list-user-affiliations-query.dto';
 import type { UserAffiliationResponseDto } from './dto/user-affiliation-response.dto';
+import type { UserAffiliationListItemDto } from './dto/user-affiliation-list-item.dto';
 import type { MyInviteDto } from '../auth/dto/my-invite.dto';
 
 const affiliationSelect = {
@@ -282,11 +283,50 @@ export class OrganizationUserAffiliationsService {
     );
   }
 
-  async findAll(orgId: number, query: ListUserAffiliationsQueryDto) {
-    const { page, limit, status, role, teamId, q, inviteExpired } = query;
-    const skip = (page - 1) * limit;
-    const where = {
-      organizationId: orgId,
+  async findAll(
+    organizationId: number,
+    query: ListUserAffiliationsQueryDto,
+    actor: OrganizationActor,
+  ): Promise<{ count: number; data: UserAffiliationListItemDto[] }> {
+    const { page, limit, status, role, q, inviteExpired } = query;
+    let effectiveTeamId = query.teamId;
+
+    if (actor.role === OrgRole.TEAM_ADMIN) {
+      const ownAffiliation =
+        await this.prisma.organizationUserAffiliation.findFirst({
+          where: {
+            organizationId,
+            userId: actor.userId,
+            role: OrgRole.TEAM_ADMIN,
+            status: AffiliationStatus.ACTIVE,
+            isDeleted: false,
+            teamId: { not: null },
+            team: {
+              is: {
+                status: EntityStatus.ACTIVE,
+                isDeleted: false,
+                organizationAffiliations: {
+                  some: {
+                    organizationId,
+                    status: AffiliationStatus.ACTIVE,
+                    isDeleted: false,
+                  },
+                },
+              },
+            },
+          },
+          select: { teamId: true },
+        });
+      if (!ownAffiliation || ownAffiliation.teamId === null) {
+        throw ApiException.forbidden(
+          'You can only manage users from your own team',
+        );
+      }
+      effectiveTeamId = ownAffiliation.teamId;
+    }
+
+    const where: Prisma.OrganizationUserAffiliationWhereInput = {
+      organizationId,
       isDeleted: false,
       ...(inviteExpired
         ? {
@@ -297,14 +337,26 @@ export class OrganizationUserAffiliationsService {
           ? { status }
           : {}),
       ...(role ? { role } : {}),
-      ...(teamId ? { teamId } : {}),
+      ...(effectiveTeamId !== undefined ? { teamId: effectiveTeamId } : {}),
       ...(q
         ? {
             user: {
-              OR: [
-                { name: { contains: q, mode: 'insensitive' as const } },
-                { email: { contains: q, mode: 'insensitive' as const } },
-              ],
+              is: {
+                OR: [
+                  {
+                    name: {
+                      contains: q,
+                      mode: Prisma.QueryMode.insensitive,
+                    },
+                  },
+                  {
+                    email: {
+                      contains: q,
+                      mode: Prisma.QueryMode.insensitive,
+                    },
+                  },
+                ],
+              },
             },
           }
         : {}),
@@ -314,12 +366,29 @@ export class OrganizationUserAffiliationsService {
       this.prisma.organizationUserAffiliation.findMany({
         where,
         select: affiliationSelect,
-        skip,
+        skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
       }),
     ]);
-    return { count, data };
+
+    const now = Date.now();
+    return {
+      count,
+      data: data.map((row) => ({
+        ...row,
+        isInviteExpired:
+          row.status === AffiliationStatus.PENDING &&
+          row.inviteExpiresAt !== null &&
+          row.inviteExpiresAt.getTime() < now,
+        canManage:
+          actor.role === OrgRole.ORG_ADMIN
+            ? row.userId !== actor.userId
+            : row.teamId === effectiveTeamId &&
+              (row.role === OrgRole.ATHLETE ||
+                row.role === OrgRole.COACHING_STAFF),
+      })),
+    };
   }
 
   async findById(orgId: number, id: number) {

@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsInt,
   IsOptional,
+  IsPositive,
   IsString,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -22,6 +23,7 @@ export class ListUserAffiliationsQueryDto extends PaginationDefaultsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()
+  @IsPositive()
   @Type(() => Number)
   teamId?: number;
   @ApiPropertyOptional()
