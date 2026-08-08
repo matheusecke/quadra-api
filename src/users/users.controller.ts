@@ -22,11 +22,16 @@ import {
   ApiTags,
   ApiParam,
 } from '@nestjs/swagger';
+import { OrgRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
+import { LookupUserQueryDto } from './dto/lookup-user-query.dto';
+import { UserLookupResponseDto } from './dto/user-lookup-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SystemAdminGuard } from '../auth/guards/system-admin.guard';
+import { OrgRoleGuard } from '../auth/guards/org-role.guard';
+import { OrgRoles } from '../auth/decorators/org-roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { PaginationInterceptor } from '../common/interceptors/pagination.interceptor';
@@ -64,6 +69,16 @@ export class UsersController {
     @Query() query: ListUsersQueryDto,
   ): Promise<{ count: number; data: UserResponseDto[] }> {
     return this.usersService.findAll(query);
+  }
+
+  @Get('lookup')
+  @UseGuards(JwtAuthGuard, OrgRoleGuard)
+  @OrgRoles(OrgRole.ORG_ADMIN, OrgRole.TEAM_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Look up one active user by exact email' })
+  @ApiOkResponse({ type: UserLookupResponseDto })
+  lookup(@Query() query: LookupUserQueryDto): Promise<UserLookupResponseDto> {
+    return this.usersService.lookupActiveByEmail(query.email);
   }
 
   @Get(':id')
