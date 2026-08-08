@@ -162,15 +162,24 @@ export class TeamsController {
   }
 
   @Patch(':id')
-  @UseGuards(SystemAdminGuard)
-  @ApiOperation({ summary: 'Update team name (system admin only)' })
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.TEAM_ADMIN)
+  @ApiOperation({
+    summary: 'Update global identity of the active administrator own team',
+  })
   @ApiParam({ name: 'id', example: 1, description: 'Team id.' })
   @ApiOkResponse({ type: TeamResponseDto })
   update(
     @Param('id', ParseIntApiPipe) id: number,
     @Body() dto: UpdateTeamDto,
+    @CurrentUser() user: JwtPayload,
   ): Promise<TeamResponseDto> {
-    return this.teamsService.update(id, dto);
+    return this.teamsService.updateForTeamAdmin(
+      user.organizationId as number,
+      user.sub,
+      id,
+      dto,
+    );
   }
 
   @Patch(':id/status')

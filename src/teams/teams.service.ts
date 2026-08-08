@@ -4,6 +4,7 @@ import {
   EntityStatus,
   MatchResult,
   MatchStatus,
+  OrgRole,
   Prisma,
   TournamentStatus,
 } from '@prisma/client';
@@ -555,35 +556,84 @@ export class TeamsService {
     };
   }
 
-  async update(id: number, dto: UpdateTeamDto): Promise<TeamResponseDto> {
+  async updateForTeamAdmin(
+    organizationId: number,
+    actorUserId: number,
+    teamId: number,
+    dto: UpdateTeamDto,
+  ): Promise<TeamResponseDto> {
+    if (
+      dto.name === undefined &&
+      dto.shortName === undefined &&
+      dto.city === undefined &&
+      dto.state === undefined
+    ) {
+      throw ApiException.badRequest('At least one editable field is required');
+    }
+
+    const actor = await this.prisma.organizationUserAffiliation.findFirst({
+      where: {
+        organizationId,
+        userId: actorUserId,
+        teamId,
+        role: OrgRole.TEAM_ADMIN,
+        status: AffiliationStatus.ACTIVE,
+        isDeleted: false,
+        team: {
+          is: {
+            status: EntityStatus.ACTIVE,
+            isDeleted: false,
+            organizationAffiliations: {
+              some: {
+                organizationId,
+                status: AffiliationStatus.ACTIVE,
+                isDeleted: false,
+              },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (!actor) {
+      throw ApiException.forbidden('You can only manage your own team');
+    }
+
     const existing = await this.prisma.team.findFirst({
-      where: { id, isDeleted: false },
+      where: { id: teamId, isDeleted: false },
       select: { id: true, slug: true },
     });
-
     if (!existing) {
       throw ApiException.notFound('Team not found');
     }
 
-    const newSlug = slugify(dto.name);
+    const data: Prisma.TeamUpdateInput = {
+      ...(dto.shortName !== undefined ? { shortName: dto.shortName } : {}),
+      ...(dto.city !== undefined ? { city: dto.city } : {}),
+      ...(dto.state !== undefined ? { state: dto.state } : {}),
+    };
 
-    if (newSlug !== existing.slug) {
-      const conflict = await this.prisma.team.findFirst({
-        where: { slug: newSlug, isDeleted: false, id: { not: id } },
-        select: { id: true },
-      });
-
-      if (conflict) {
-        throw ApiException.conflict(
-          'A team with this name already exists.',
-          'DUPLICATE_RECORD',
-        );
+    if (dto.name !== undefined) {
+      const slug = slugify(dto.name);
+      if (slug !== existing.slug) {
+        const conflict = await this.prisma.team.findFirst({
+          where: { slug, isDeleted: false, id: { not: teamId } },
+          select: { id: true },
+        });
+        if (conflict) {
+          throw ApiException.conflict(
+            'A team with this name already exists.',
+            'DUPLICATE_RECORD',
+          );
+        }
       }
+      data.name = dto.name;
+      data.slug = slug;
     }
 
     return this.prisma.team.update({
-      where: { id },
-      data: { name: dto.name, slug: newSlug },
+      where: { id: teamId },
+      data,
       select: teamSelect,
     });
   }
