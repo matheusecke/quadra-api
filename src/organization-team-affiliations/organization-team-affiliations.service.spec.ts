@@ -778,6 +778,30 @@ describe('OrganizationTeamAffiliationsService', () => {
       },
     );
 
+    it.each([
+      ['resend', () => service.resend(1, 15)],
+      ['cancel', () => service.remove(1, 15)],
+      ['deactivate', () => service.deactivate(1, 15)],
+      ['activate', () => service.activate(1, 15)],
+    ] as const)(
+      'throws 404 when the affiliation is missing for %s',
+      async (_action, invoke) => {
+        mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+          null,
+        );
+        const error = await invoke().catch((caught: unknown) => caught);
+        expect((error as ApiException).getStatus()).toBe(404);
+        expect(apiErrorMessage(error)).toBe('Affiliation not found');
+        expect(
+          mockPrisma.organizationTeamAffiliation.update,
+        ).not.toHaveBeenCalled();
+        expect(
+          mockPrisma.organizationUserAffiliation.updateMany,
+        ).not.toHaveBeenCalled();
+        expect(mockPrisma.team.update).not.toHaveBeenCalled();
+      },
+    );
+
     it('treats expiry as a read filter and performs no cancellation or B1 write', async () => {
       mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
       mockPrisma.organizationTeamAffiliation.findMany.mockResolvedValue([]);
