@@ -1347,7 +1347,7 @@ describe('OrganizationUserAffiliationsService', () => {
         .activate(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN })
         .catch((caught: unknown) => caught);
       expect(apiErrorMessage(error)).toBe(
-        'Team affiliation is inactive; activate it before inviting users',
+        'Team affiliation is inactive; activate it before activating users',
       );
     });
 

@@ -593,42 +593,12 @@ export class OrganizationUserAffiliationsService {
         throw ApiException.unprocessable('Invite is no longer pending');
       }
 
-      if (target.role !== OrgRole.TEAM_ADMIN || target.teamId === null) return;
-      const teamAffiliation = await tx.organizationTeamAffiliation.findFirst({
-        where: {
+      if (target.role === OrgRole.TEAM_ADMIN && target.teamId !== null) {
+        await this.closePendingTeamAfterLastAdmin(
+          tx,
           organizationId,
-          teamId: target.teamId,
-          status: AffiliationStatus.PENDING,
-          isDeleted: false,
-        },
-        select: { id: true, teamId: true },
-      });
-      if (!teamAffiliation) return;
-
-      const remainingAdmin = await tx.organizationUserAffiliation.findFirst({
-        where: {
-          organizationId,
-          teamId: target.teamId,
-          role: OrgRole.TEAM_ADMIN,
-          status: AffiliationStatus.PENDING,
-          isDeleted: false,
-        },
-        select: { id: true },
-      });
-      if (remainingAdmin) return;
-
-      await tx.organizationTeamAffiliation.update({
-        where: { id: teamAffiliation.id },
-        data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
-      });
-      const otherHistoryCount = await tx.organizationTeamAffiliation.count({
-        where: { teamId: target.teamId, id: { not: teamAffiliation.id } },
-      });
-      if (otherHistoryCount === 0) {
-        await tx.team.update({
-          where: { id: target.teamId },
-          data: { isDeleted: true, status: EntityStatus.INACTIVE },
-        });
+          target.teamId,
+        );
       }
     });
   }
@@ -699,7 +669,7 @@ export class OrganizationUserAffiliationsService {
         });
         if (!teamAffiliation) {
           throw ApiException.unprocessable(
-            'Team affiliation is inactive; activate it before inviting users',
+            'Team affiliation is inactive; activate it before activating users',
           );
         }
       }

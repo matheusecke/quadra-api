@@ -89,7 +89,7 @@ model User {
 
 This is a direct consequence of the two partial unique indexes:
 
-- `organization_user_affiliations(user_id, organization_id) WHERE is_deleted = false AND status = 'ACTIVE'` constrains only `ACTIVE` rows, so a user may hold at most one live `INACTIVE` row at a time; reactivation still re-checks in application code for a conflicting `ACTIVE` row before flipping status back.
+- `organization_user_affiliations(user_id, organization_id) WHERE is_deleted = false AND status = 'ACTIVE'` constrains only `ACTIVE` rows and places no limit on `INACTIVE` ones; the at-most-one-live-`INACTIVE`-row invariant is enforced in application code by `createPendingInvite`, which soft-deletes every live `INACTIVE` row for that user/organization before creating the new `PENDING` row. Reactivation still re-checks in application code for a conflicting `ACTIVE` row before flipping status back.
 - `organization_team_affiliations(organization_id, team_id) WHERE is_deleted = false` constrains **every** live (non-deleted) row regardless of status — `PENDING`, `ACTIVE`, and `INACTIVE` all count as the single live row for a given `(organization_id, team_id)`. There can only ever be one live row, so deactivate/activate must reuse it in place; there is no status-scoped variant of this index that would allow a second live row to exist alongside an `INACTIVE` one.
 
 ## Pending Migration: `20260808190043_add_inactive_affiliation_status`
