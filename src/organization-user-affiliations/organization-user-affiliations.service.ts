@@ -4,11 +4,12 @@ import { AffiliationToken } from '../common/utils/affiliation-token.util';
 import { ApiException } from '../common/exceptions/api.exception';
 import {
   AffiliationStatus,
+  BasketballPosition,
   EntityStatus,
   OrgRole,
   Prisma,
 } from '@prisma/client';
-import { CreateUserAffiliationDto } from './dto/create-user-affiliation.dto';
+import { CreateTeamMemberAffiliationDto } from './dto/create-team-member-affiliation.dto';
 import {
   UserInviteResponseDto,
   InviteDecision,
@@ -16,6 +17,7 @@ import {
 import { UpdateUserAffiliationDto } from './dto/update-user-affiliation.dto';
 import { UpdateUserAffiliationStatusDto } from './dto/update-user-affiliation-status.dto';
 import { ListUserAffiliationsQueryDto } from './dto/list-user-affiliations-query.dto';
+import type { UserAffiliationResponseDto } from './dto/user-affiliation-response.dto';
 import type { MyInviteDto } from '../auth/dto/my-invite.dto';
 
 const affiliationSelect = {
@@ -25,12 +27,35 @@ const affiliationSelect = {
   role: true,
   teamId: true,
   jerseyNumber: true,
+  position: true,
   status: true,
+  inviteExpiresAt: true,
   createdByUserId: true,
   createdAt: true,
   updatedAt: true,
   user: { select: { id: true, name: true, email: true } },
   team: { select: { id: true, name: true } },
+};
+
+export type OrganizationActor = {
+  userId: number;
+  role: OrgRole;
+};
+
+export type PendingUserInviteInput = {
+  organizationId: number;
+  userId: number;
+  role: OrgRole;
+  teamId: number | null;
+  jerseyNumber: number | null;
+  position: BasketballPosition | null;
+  createdByUserId: number;
+};
+
+export type PendingUserInviteBundle = {
+  affiliation: UserAffiliationResponseDto;
+  inviteToken: string;
+  inviteExpiresAt: Date;
 };
 
 const myInviteSelect = {
@@ -71,65 +96,190 @@ type InviteTransitionRecord = Prisma.OrganizationUserAffiliationGetPayload<{
 export class OrganizationUserAffiliationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(
-    orgId: number,
-    dto: CreateUserAffiliationDto,
-    currentUserId: number,
-  ) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: dto.userId, isDeleted: false, status: 'ACTIVE' },
-    });
-    if (!user) throw ApiException.notFound('User not found or inactive');
-
-    const existing = await this.prisma.organizationUserAffiliation.findFirst({
+  async createPendingInvite(
+    tx: Prisma.TransactionClient,
+    input: PendingUserInviteInput,
+  ): Promise<PendingUserInviteBundle> {
+    const user = await tx.user.findFirst({
       where: {
-        userId: dto.userId,
-        organizationId: orgId,
+        id: input.userId,
         isDeleted: false,
-        status: { in: [AffiliationStatus.PENDING, AffiliationStatus.ACTIVE] },
+        status: EntityStatus.ACTIVE,
       },
+      select: { id: true },
     });
-    if (existing)
-      throw ApiException.conflict(
-        'User already has a pending or active affiliation in this organization',
-      );
+    if (!user) throw ApiException.notFound('User not found');
 
-    if (dto.role !== OrgRole.ORG_ADMIN) {
-      if (!dto.teamId)
-        throw ApiException.unprocessable(
-          'teamId is required for non-ORG_ADMIN roles',
-        );
-      const teamAff = await this.prisma.organizationTeamAffiliation.findFirst({
+    const existing = await tx.organizationUserAffiliation.findMany({
+      where: {
+        userId: input.userId,
+        organizationId: input.organizationId,
+        isDeleted: false,
+      },
+      select: { id: true, status: true },
+    });
+    if (existing.some((row) => row.status === AffiliationStatus.ACTIVE)) {
+      throw ApiException.conflict('User already has an active affiliation');
+    }
+    if (existing.some((row) => row.status === AffiliationStatus.PENDING)) {
+      throw ApiException.conflict('User already has a pending invite');
+    }
+
+    const inactiveIds = existing
+      .filter((row) => row.status === AffiliationStatus.INACTIVE)
+      .map((row) => row.id);
+    if (inactiveIds.length > 0) {
+      await tx.organizationUserAffiliation.updateMany({
         where: {
-          organizationId: orgId,
-          teamId: dto.teamId,
+          id: { in: inactiveIds },
+          status: AffiliationStatus.INACTIVE,
           isDeleted: false,
-          status: AffiliationStatus.ACTIVE,
         },
+        data: { isDeleted: true },
       });
-      if (!teamAff)
-        throw ApiException.unprocessable(
-          'Team is not actively affiliated with this organization',
-        );
     }
 
     const { raw, hash, expiresAt } = AffiliationToken.generate();
-    const affiliation = await this.prisma.organizationUserAffiliation.create({
+    const affiliation = await tx.organizationUserAffiliation.create({
       data: {
-        userId: dto.userId,
-        organizationId: orgId,
-        role: dto.role,
-        teamId: dto.teamId ?? null,
-        jerseyNumber: dto.jerseyNumber ?? null,
+        ...input,
         status: AffiliationStatus.PENDING,
-        createdByUserId: currentUserId,
         inviteToken: hash,
         inviteExpiresAt: expiresAt,
       },
       select: affiliationSelect,
     });
+    return { affiliation, inviteToken: raw, inviteExpiresAt: expiresAt };
+  }
 
-    return { affiliation, inviteToken: raw };
+  async createOrganizationAdmin(
+    organizationId: number,
+    userId: number,
+    actorUserId: number,
+  ): Promise<PendingUserInviteBundle> {
+    try {
+      return await this.runSerializable((tx) =>
+        this.createPendingInvite(tx, {
+          organizationId,
+          userId,
+          role: OrgRole.ORG_ADMIN,
+          teamId: null,
+          jerseyNumber: null,
+          position: null,
+          createdByUserId: actorUserId,
+        }),
+      );
+    } catch (error) {
+      if (this.isPrismaError(error, 'P2002')) {
+        throw ApiException.conflict(
+          'User affiliation changed during invitation',
+        );
+      }
+      throw error;
+    }
+  }
+
+  async createTeamMember(
+    organizationId: number,
+    routeTeamId: number,
+    dto: CreateTeamMemberAffiliationDto,
+    actorUserId: number,
+  ): Promise<PendingUserInviteBundle> {
+    if (
+      dto.role === OrgRole.ATHLETE &&
+      (dto.jerseyNumber === undefined ||
+        dto.jerseyNumber === null ||
+        dto.position === undefined ||
+        dto.position === null)
+    ) {
+      throw ApiException.badRequest(
+        'Athlete jerseyNumber and position are required',
+      );
+    }
+
+    try {
+      return await this.runSerializable(async (tx) => {
+        const actor = await tx.organizationUserAffiliation.findFirst({
+          where: {
+            organizationId,
+            userId: actorUserId,
+            teamId: routeTeamId,
+            role: OrgRole.TEAM_ADMIN,
+            status: AffiliationStatus.ACTIVE,
+            isDeleted: false,
+          },
+          select: { id: true },
+        });
+        if (!actor) {
+          throw ApiException.forbidden(
+            'You can only manage users from your own team',
+          );
+        }
+
+        const teamAffiliation = await tx.organizationTeamAffiliation.findFirst({
+          where: {
+            organizationId,
+            teamId: routeTeamId,
+            status: AffiliationStatus.ACTIVE,
+            isDeleted: false,
+            team: { is: { status: EntityStatus.ACTIVE, isDeleted: false } },
+          },
+          select: { id: true },
+        });
+        if (!teamAffiliation) {
+          throw ApiException.unprocessable(
+            'Team affiliation is inactive; activate it before inviting users',
+          );
+        }
+
+        return this.createPendingInvite(tx, {
+          organizationId,
+          userId: dto.userId,
+          role: dto.role,
+          teamId: routeTeamId,
+          jerseyNumber: dto.jerseyNumber ?? null,
+          position: dto.position ?? null,
+          createdByUserId: actorUserId,
+        });
+      });
+    } catch (error) {
+      if (this.isPrismaError(error, 'P2002')) {
+        throw ApiException.conflict(
+          'User affiliation changed during invitation',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async runSerializable<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let retry = 0; retry <= 3; retry += 1) {
+      try {
+        return await this.prisma.$transaction(operation, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        if (!this.isPrismaError(error, 'P2034')) throw error;
+        if (retry === 3) throw this.concurrentModification();
+      }
+    }
+    throw this.concurrentModification();
+  }
+
+  private isPrismaError(error: unknown, code: string): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === code
+    );
+  }
+
+  private concurrentModification(): ApiException {
+    return ApiException.conflict(
+      'The resource changed during this operation. Retry the request.',
+      'CONCURRENT_MODIFICATION',
+    );
   }
 
   async findAll(orgId: number, query: ListUserAffiliationsQueryDto) {

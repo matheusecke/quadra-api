@@ -13,4 +13,7 @@ export class UserAffiliationInviteBundleDto {
     maxLength: 64,
   })
   inviteToken!: string;
+
+  @ApiProperty({ example: '2026-08-15T12:00:00.000Z' })
+  inviteExpiresAt!: Date;
 }

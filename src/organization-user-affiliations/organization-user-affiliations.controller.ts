@@ -33,6 +33,7 @@ import { PaginationInterceptor } from '../common/interceptors/pagination.interce
 import { OrgRole } from '@prisma/client';
 import { OrganizationUserAffiliationsService } from './organization-user-affiliations.service';
 import { CreateUserAffiliationDto } from './dto/create-user-affiliation.dto';
+import { CreateTeamMemberAffiliationDto } from './dto/create-team-member-affiliation.dto';
 import { UserInviteResponseDto } from './dto/user-invite-response.dto';
 import { UpdateUserAffiliationDto } from './dto/update-user-affiliation.dto';
 import { UpdateUserAffiliationStatusDto } from './dto/update-user-affiliation-status.dto';
@@ -55,16 +56,44 @@ export class OrganizationUserAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Invite or add a user affiliation (org admin)',
+    summary: 'Invite an org admin to the active JWT organization (org admin)',
     description:
-      'Creates a PENDING affiliation in the active JWT organization and returns a raw invite token for non-admin roles. ORG_ADMIN may omit `teamId`.',
+      'Creates a PENDING ORG_ADMIN affiliation and returns a raw invite token for delivery.',
   })
   @ApiCreatedResponse({ type: UserAffiliationInviteBundleDto })
-  create(
+  createOrganizationAdmin(
     @Body() dto: CreateUserAffiliationDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.service.create(user.organizationId as number, dto, user.sub);
+    return this.service.createOrganizationAdmin(
+      user.organizationId as number,
+      dto.userId,
+      user.sub,
+    );
+  }
+
+  @Post('teams/:teamId/organization-user-affiliations')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.TEAM_ADMIN)
+  @ApiOperation({
+    summary:
+      'Invite an athlete or coaching staff member to a team (team admin)',
+    description:
+      "Creates a PENDING affiliation for the given team and returns a raw invite token for delivery. Restricted to the caller's own actively affiliated team.",
+  })
+  @ApiParam({ name: 'teamId', example: 8, description: 'Team id.' })
+  @ApiCreatedResponse({ type: UserAffiliationInviteBundleDto })
+  createTeamMember(
+    @Param('teamId', ParseIntPipe) teamId: number,
+    @Body() dto: CreateTeamMemberAffiliationDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.createTeamMember(
+      user.organizationId as number,
+      teamId,
+      dto,
+      user.sub,
+    );
   }
 
   @Get('organization-user-affiliations')
@@ -72,7 +101,8 @@ export class OrganizationUserAffiliationsController {
   @OrgRoles(OrgRole.ORG_ADMIN)
   @UseInterceptors(PaginationInterceptor)
   @ApiOperation({
-    summary: 'List user affiliations for the active JWT organization (org admin)',
+    summary:
+      'List user affiliations for the active JWT organization (org admin)',
   })
   @ApiPaginatedOkResponse(UserAffiliationResponseDto)
   findAll(
@@ -86,7 +116,8 @@ export class OrganizationUserAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Get a user affiliation by id in the active JWT organization (org admin)',
+    summary:
+      'Get a user affiliation by id in the active JWT organization (org admin)',
   })
   @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
   @ApiOkResponse({ type: UserAffiliationResponseDto })
@@ -116,7 +147,8 @@ export class OrganizationUserAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Update an active user affiliation in the active JWT organization (org admin)',
+    summary:
+      'Update an active user affiliation in the active JWT organization (org admin)',
     description:
       'Role, team, or jersey number updates for ACTIVE affiliations.',
   })
@@ -159,7 +191,10 @@ export class OrganizationUserAffiliationsController {
   })
   @ApiParam({ name: 'id', example: 10, description: 'Affiliation id.' })
   @ApiOkResponse({ type: UserAffiliationInviteBundleDto })
-  resend(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+  resend(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
     return this.service.resend(user.organizationId as number, id);
   }
 
