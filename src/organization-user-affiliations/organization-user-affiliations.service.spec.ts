@@ -47,6 +47,29 @@ const pendingAffiliation = (overrides: Record<string, unknown> = {}) =>
     ...overrides,
   });
 
+const teamAffiliationFixture = (overrides: Record<string, unknown> = {}) => ({
+  id: 15,
+  organizationId: 1,
+  teamId: 8,
+  status: AffiliationStatus.PENDING,
+  createdByUserId: 99,
+  inviteToken: null,
+  inviteExpiresAt: null,
+  isDeleted: false,
+  createdAt: new Date('2026-08-01T12:00:00.000Z'),
+  updatedAt: new Date('2026-08-01T12:00:00.000Z'),
+  ...overrides,
+});
+
+const pendingTeamAffiliation = (overrides: Record<string, unknown> = {}) =>
+  teamAffiliationFixture({ status: AffiliationStatus.PENDING, ...overrides });
+
+const activeTeamAffiliation = (overrides: Record<string, unknown> = {}) =>
+  teamAffiliationFixture({ status: AffiliationStatus.ACTIVE, ...overrides });
+
+const inactiveTeamAffiliation = (overrides: Record<string, unknown> = {}) =>
+  teamAffiliationFixture({ status: AffiliationStatus.INACTIVE, ...overrides });
+
 const mockPrisma = {
   organizationUserAffiliation: {
     findFirst: jest.fn(),
@@ -332,7 +355,10 @@ describe('OrganizationUserAffiliationsService', () => {
     it('lets an org admin filter the entire organization', async () => {
       mockPrisma.organizationUserAffiliation.count.mockResolvedValue(1);
       mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
-        pendingAffiliation({ userId: 10, inviteExpiresAt: new Date('2026-08-01') }),
+        pendingAffiliation({
+          userId: 10,
+          inviteExpiresAt: new Date('2026-08-01'),
+        }),
       ]);
 
       const result = await service.findAll(
@@ -341,9 +367,11 @@ describe('OrganizationUserAffiliationsService', () => {
         { userId: 99, role: OrgRole.ORG_ADMIN },
       );
 
-      expect(mockPrisma.organizationUserAffiliation.count).toHaveBeenCalledWith({
-        where: expect.objectContaining({ organizationId: 1, teamId: 8 }),
-      });
+      expect(mockPrisma.organizationUserAffiliation.count).toHaveBeenCalledWith(
+        {
+          where: expect.objectContaining({ organizationId: 1, teamId: 8 }),
+        },
+      );
       expect(result.data[0]).toMatchObject({
         isInviteExpired: true,
         canManage: true,
@@ -362,7 +390,12 @@ describe('OrganizationUserAffiliationsService', () => {
           teamId: 8,
           role: OrgRole.TEAM_ADMIN,
         }),
-        activeAffiliation({ id: 21, userId: 55, teamId: 8, role: OrgRole.ATHLETE }),
+        activeAffiliation({
+          id: 21,
+          userId: 55,
+          teamId: 8,
+          role: OrgRole.ATHLETE,
+        }),
       ]);
 
       const result = await service.findAll(
@@ -371,10 +404,15 @@ describe('OrganizationUserAffiliationsService', () => {
         { userId: 77, role: OrgRole.TEAM_ADMIN },
       );
 
-      expect(mockPrisma.organizationUserAffiliation.count).toHaveBeenCalledWith({
-        where: expect.objectContaining({ organizationId: 1, teamId: 8 }),
-      });
-      expect(result.data.map(({ canManage }) => canManage)).toEqual([false, true]);
+      expect(mockPrisma.organizationUserAffiliation.count).toHaveBeenCalledWith(
+        {
+          where: expect.objectContaining({ organizationId: 1, teamId: 8 }),
+        },
+      );
+      expect(result.data.map(({ canManage }) => canManage)).toEqual([
+        false,
+        true,
+      ]);
     });
 
     it('rejects a team-admin token without a matching active team-admin row', async () => {
@@ -433,6 +471,7 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
         id: 1,
         userId: 5,
+        teamId: null,
         status: 'PENDING',
         inviteExpiresAt: new Date(Date.now() + 99999),
         isDeleted: false,
@@ -461,6 +500,7 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
         id: 1,
         userId: 5,
+        teamId: null,
         status: 'PENDING',
         inviteExpiresAt: new Date(Date.now() + 99999),
         isDeleted: false,
@@ -542,13 +582,22 @@ describe('OrganizationUserAffiliationsService', () => {
       ).rejects.toMatchObject({ status: 422 });
     });
 
-    it('expired token reject still throws 422', async () => {
+    it('allows rejecting an expired token invite', async () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
         id: 1,
         userId: 5,
+        teamId: null,
         status: 'PENDING',
         inviteExpiresAt: new Date(Date.now() - 1000),
         isDeleted: false,
+      });
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue({
+        id: 1,
+        status: 'PENDING',
+        isDeleted: true,
       });
 
       await expect(
@@ -556,7 +605,7 @@ describe('OrganizationUserAffiliationsService', () => {
           { token: rawToken, decision: 'REJECT' as any },
           5,
         ),
-      ).rejects.toMatchObject({ status: 422 });
+      ).resolves.toMatchObject({ status: 'PENDING', isDeleted: true });
     });
   });
 
@@ -723,9 +772,17 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
         pendingAffiliation,
       );
+      mockPrisma.team.findFirst.mockResolvedValue({ id: 3 });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
+        id: 20,
+        status: AffiliationStatus.ACTIVE,
+      });
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 1,
       });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        updatedAffiliation,
+      );
 
       await service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT);
 
@@ -749,6 +806,9 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 1,
       });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        updatedAffiliation,
+      );
 
       await service.respondToInviteForUser(5, 1, InviteDecision.REJECT);
 
@@ -784,13 +844,16 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 1,
       });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        updatedAffiliation,
+      );
 
       await expect(
         service.respondToInviteForUser(5, 1, InviteDecision.REJECT),
       ).resolves.toBeUndefined();
     });
 
-    it('queries with pending status, active user, active organization, and active-or-null team', async () => {
+    it('queries by id, userId, active user, and active organization', async () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
 
       await service
@@ -803,16 +866,11 @@ describe('OrganizationUserAffiliationsService', () => {
         where: {
           id: 1,
           userId: 5,
-          status: AffiliationStatus.PENDING,
           isDeleted: false,
           user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
           organization: {
             is: { isDeleted: false, status: EntityStatus.ACTIVE },
           },
-          OR: [
-            { teamId: null },
-            { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
-          ],
         },
         select: expect.any(Object),
       });
@@ -830,9 +888,17 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
         pendingAffiliation,
       );
+      mockPrisma.team.findFirst.mockResolvedValue({ id: 3 });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
+        id: 20,
+        status: AffiliationStatus.ACTIVE,
+      });
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 1,
       });
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        updatedAffiliation,
+      );
 
       await service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT);
 
@@ -854,6 +920,11 @@ describe('OrganizationUserAffiliationsService', () => {
       mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
         pendingAffiliation,
       );
+      mockPrisma.team.findFirst.mockResolvedValue({ id: 3 });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue({
+        id: 20,
+        status: AffiliationStatus.ACTIVE,
+      });
       mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
         count: 0,
       });
@@ -861,6 +932,270 @@ describe('OrganizationUserAffiliationsService', () => {
       await expect(
         service.respondToInviteForUser(5, 1, InviteDecision.ACCEPT),
       ).rejects.toMatchObject({ status: 422 });
+    });
+  });
+
+  describe('shared invite response transition', () => {
+    it.each(['auth-id', 'raw-user-token'] as const)(
+      '%s accepts the first team admin and activates team plus user atomically',
+      async (entrypoint) => {
+        mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+          pendingAffiliation({
+            id: 31,
+            userId: 42,
+            teamId: 8,
+            role: OrgRole.TEAM_ADMIN,
+          }),
+        );
+        mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+          pendingTeamAffiliation({ id: 15, teamId: 8 }),
+        );
+        mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+          count: 1,
+        });
+        mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+          activeAffiliation({
+            id: 31,
+            userId: 42,
+            teamId: 8,
+            role: OrgRole.TEAM_ADMIN,
+          }),
+        );
+
+        if (entrypoint === 'auth-id') {
+          await service.respondToInviteForUser(42, 31, InviteDecision.ACCEPT);
+        } else {
+          await service.respondToInvite(
+            { token: 'raw-token', decision: InviteDecision.ACCEPT },
+            42,
+          );
+        }
+
+        expect(
+          mockPrisma.organizationTeamAffiliation.update,
+        ).toHaveBeenCalledWith({
+          where: { id: 15 },
+          data: {
+            status: AffiliationStatus.ACTIVE,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          },
+        });
+        expect(
+          mockPrisma.organizationUserAffiliation.updateMany,
+        ).toHaveBeenCalledWith({
+          where: {
+            id: 31,
+            userId: 42,
+            status: AffiliationStatus.PENDING,
+            isDeleted: false,
+          },
+          data: {
+            status: AffiliationStatus.ACTIVE,
+            inviteToken: null,
+            inviteExpiresAt: null,
+          },
+        });
+      },
+    );
+
+    it('keeps an already active team affiliation active on a later admin acceptance', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation({ role: OrgRole.TEAM_ADMIN, teamId: 8 }),
+      );
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+        activeTeamAffiliation({ teamId: 8 }),
+      );
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      await service.respondToInviteForUser(42, 31, InviteDecision.ACCEPT);
+      expect(
+        mockPrisma.organizationTeamAffiliation.update,
+      ).not.toHaveBeenCalled();
+    });
+
+    it.each([null, AffiliationStatus.INACTIVE])(
+      'rejects team-admin acceptance when the team affiliation is %s',
+      async (status) => {
+        mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+          pendingAffiliation({ role: OrgRole.TEAM_ADMIN, teamId: 8 }),
+        );
+        mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+          status === null ? null : inactiveTeamAffiliation({ teamId: 8 }),
+        );
+        const error = await service
+          .respondToInviteForUser(42, 31, InviteDecision.ACCEPT)
+          .catch((caught: unknown) => caught);
+        expect(apiErrorMessage(error)).toBe(
+          'Team affiliation is inactive; activate it before inviting users',
+        );
+      },
+    );
+
+    it('allows rejection after expiry but not acceptance', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation({ inviteExpiresAt: new Date('2026-08-01') }),
+      );
+      const error = await service
+        .respondToInviteForUser(42, 31, InviteDecision.ACCEPT)
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe('Invite has expired');
+
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      await expect(
+        service.respondToInviteForUser(42, 31, InviteDecision.REJECT),
+      ).resolves.toBeUndefined();
+    });
+
+    it('closes pending onboarding and applies B1 after the last admin rejects', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(
+          pendingAffiliation({ role: OrgRole.TEAM_ADMIN, teamId: 8 }),
+        )
+        .mockResolvedValueOnce(null);
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+        pendingTeamAffiliation({ id: 15, teamId: 8 }),
+      );
+      mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
+
+      await service.respondToInviteForUser(42, 31, InviteDecision.REJECT);
+
+      expect(
+        mockPrisma.organizationTeamAffiliation.update,
+      ).toHaveBeenCalledWith({
+        where: { id: 15 },
+        data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+      });
+      expect(mockPrisma.team.update).toHaveBeenCalledWith({
+        where: { id: 8 },
+        data: { isDeleted: true, status: EntityStatus.INACTIVE },
+      });
+    });
+
+    it('returns the stable 422 when the conditional response loses a race', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation(),
+      );
+      mockPrisma.team.findFirst.mockResolvedValue({ id: 8 });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+        activeTeamAffiliation({ teamId: 8 }),
+      );
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 0,
+      });
+      const error = await service
+        .respondToInviteForUser(42, 31, InviteDecision.ACCEPT)
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe('Invite is no longer pending');
+    });
+
+    it('preserves pending onboarding while another pending admin remains', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(
+          pendingAffiliation({ role: OrgRole.TEAM_ADMIN, teamId: 8 }),
+        )
+        .mockResolvedValueOnce({ id: 32 });
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+        pendingTeamAffiliation({ id: 15, teamId: 8 }),
+      );
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        pendingAffiliation({ isDeleted: true }),
+      );
+
+      await service.respondToInviteForUser(42, 31, InviteDecision.REJECT);
+
+      expect(
+        mockPrisma.organizationTeamAffiliation.update,
+      ).not.toHaveBeenCalled();
+      expect(mockPrisma.team.update).not.toHaveBeenCalled();
+    });
+
+    it('never closes an active team affiliation after an admin rejection', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+        pendingAffiliation({ role: OrgRole.TEAM_ADMIN, teamId: 8 }),
+      );
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(null);
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        pendingAffiliation({ isDeleted: true }),
+      );
+
+      await service.respondToInviteForUser(42, 31, InviteDecision.REJECT);
+
+      expect(
+        mockPrisma.organizationTeamAffiliation.findFirst,
+      ).toHaveBeenCalledWith({
+        where: {
+          organizationId: 1,
+          teamId: 8,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+      expect(
+        mockPrisma.organizationTeamAffiliation.update,
+      ).not.toHaveBeenCalled();
+    });
+
+    it.each([OrgRole.ATHLETE, OrgRole.COACHING_STAFF])(
+      'requires an active team affiliation when %s accepts',
+      async (role) => {
+        mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(
+          pendingAffiliation({ role, teamId: 8 }),
+        );
+        mockPrisma.team.findFirst.mockResolvedValue({ id: 8 });
+        mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+          inactiveTeamAffiliation(),
+        );
+        const error = await service
+          .respondToInviteForUser(42, 31, InviteDecision.ACCEPT)
+          .catch((caught: unknown) => caught);
+        expect(apiErrorMessage(error)).toBe(
+          'Team affiliation is inactive; activate it before inviting users',
+        );
+        expect(
+          mockPrisma.organizationUserAffiliation.updateMany,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it('counts all other history in B1 without excluding soft-deleted rows', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst
+        .mockResolvedValueOnce(
+          pendingAffiliation({ role: OrgRole.TEAM_ADMIN, teamId: 8 }),
+        )
+        .mockResolvedValueOnce(null);
+      mockPrisma.organizationUserAffiliation.updateMany.mockResolvedValue({
+        count: 1,
+      });
+      mockPrisma.organizationTeamAffiliation.findFirst.mockResolvedValue(
+        pendingTeamAffiliation({ id: 15, teamId: 8 }),
+      );
+      mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(1);
+      mockPrisma.organizationUserAffiliation.findUnique.mockResolvedValue(
+        pendingAffiliation({ isDeleted: true }),
+      );
+
+      await service.respondToInviteForUser(42, 31, InviteDecision.REJECT);
+
+      expect(mockPrisma.organizationTeamAffiliation.count).toHaveBeenCalledWith(
+        {
+          where: { teamId: 8, id: { not: 15 } },
+        },
+      );
+      expect(mockPrisma.team.update).not.toHaveBeenCalled();
     });
   });
 
@@ -886,7 +1221,9 @@ describe('OrganizationUserAffiliationsService', () => {
         77,
       );
 
-      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenCalledWith(
+      expect(
+        mockPrisma.organizationUserAffiliation.update,
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 21 },
           data: { jerseyNumber: 7, position: BasketballPosition.SG },
@@ -936,7 +1273,9 @@ describe('OrganizationUserAffiliationsService', () => {
       await service.deactivate(1, 21, { userId: 99, role: OrgRole.ORG_ADMIN });
       await service.activate(1, 21, { userId: 99, role: OrgRole.ORG_ADMIN });
 
-      expect(mockPrisma.organizationUserAffiliation.update).toHaveBeenNthCalledWith(
+      expect(
+        mockPrisma.organizationUserAffiliation.update,
+      ).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({
           where: { id: 21 },
@@ -1023,7 +1362,9 @@ describe('OrganizationUserAffiliationsService', () => {
         .activate(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN })
         .catch((caught: unknown) => caught as ApiException);
       expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
-      expect(apiErrorMessage(error)).toBe('User already has an active affiliation');
+      expect(apiErrorMessage(error)).toBe(
+        'User already has an active affiliation',
+      );
     });
 
     it('rejects a team admin outside the target team', async () => {
@@ -1052,8 +1393,12 @@ describe('OrganizationUserAffiliationsService', () => {
         teamId: 8,
       });
       await service.remove(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN });
-      expect(mockPrisma.organizationTeamAffiliation.update).not.toHaveBeenCalled();
-      expect(mockPrisma.organizationTeamAffiliation.count).not.toHaveBeenCalled();
+      expect(
+        mockPrisma.organizationTeamAffiliation.update,
+      ).not.toHaveBeenCalled();
+      expect(
+        mockPrisma.organizationTeamAffiliation.count,
+      ).not.toHaveBeenCalled();
     });
 
     it('closes pending onboarding and applies B1 after the last admin is cancelled', async () => {
@@ -1071,9 +1416,11 @@ describe('OrganizationUserAffiliationsService', () => {
       });
       mockPrisma.organizationTeamAffiliation.count.mockResolvedValue(0);
       await service.remove(1, 1, { userId: 99, role: OrgRole.ORG_ADMIN });
-      expect(mockPrisma.organizationTeamAffiliation.count).toHaveBeenCalledWith({
-        where: { teamId: 8, id: { not: 15 } },
-      });
+      expect(mockPrisma.organizationTeamAffiliation.count).toHaveBeenCalledWith(
+        {
+          where: { teamId: 8, id: { not: 15 } },
+        },
+      );
       expect(mockPrisma.team.update).toHaveBeenCalledWith({
         where: { id: 8 },
         data: { isDeleted: true, status: EntityStatus.INACTIVE },
