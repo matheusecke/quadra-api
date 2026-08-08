@@ -18,6 +18,11 @@ import {
 import { UpdateTeamAffiliationStatusDto } from './dto/update-team-affiliation-status.dto';
 import { ListTeamAffiliationsQueryDto } from './dto/list-team-affiliations-query.dto';
 import type { TeamAffiliationResponseDto } from './dto/team-affiliation-response.dto';
+import type { TeamAffiliationListItemDto } from './dto/team-affiliation-list-item.dto';
+import type {
+  TeamAdminInviteDeliveryDto,
+  TeamAdminInvitesBundleDto,
+} from './dto/team-admin-invites-bundle.dto';
 import type { UserAffiliationResponseDto } from '../organization-user-affiliations/dto/user-affiliation-response.dto';
 
 const teamIdentitySelect = {
@@ -173,11 +178,13 @@ export class OrganizationTeamAffiliationsService {
     }
   }
 
-  async findAll(orgId: number, query: ListTeamAffiliationsQueryDto) {
+  async findAll(
+    organizationId: number,
+    query: ListTeamAffiliationsQueryDto,
+  ): Promise<{ count: number; data: TeamAffiliationListItemDto[] }> {
     const { page, limit, status, q, inviteExpired } = query;
-    const skip = (page - 1) * limit;
-    const where = {
-      organizationId: orgId,
+    const where: Prisma.OrganizationTeamAffiliationWhereInput = {
+      organizationId,
       isDeleted: false,
       ...(inviteExpired
         ? {
@@ -188,20 +195,75 @@ export class OrganizationTeamAffiliationsService {
           ? { status }
           : {}),
       ...(q
-        ? { team: { name: { contains: q, mode: 'insensitive' as const } } }
+        ? {
+            team: {
+              is: {
+                name: { contains: q, mode: Prisma.QueryMode.insensitive },
+              },
+            },
+          }
         : {}),
     };
-    const [count, data] = await Promise.all([
+    const [count, rows] = await Promise.all([
       this.prisma.organizationTeamAffiliation.count({ where }),
       this.prisma.organizationTeamAffiliation.findMany({
         where,
-        select: affiliationSelect,
-        skip,
+        skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: {
+          id: true,
+          organizationId: true,
+          teamId: true,
+          status: true,
+          createdByUserId: true,
+          createdAt: true,
+          updatedAt: true,
+          team: {
+            select: {
+              id: true,
+              name: true,
+              shortName: true,
+              city: true,
+              state: true,
+              userAffiliations: {
+                where: {
+                  organizationId,
+                  isDeleted: false,
+                  user: {
+                    is: { status: EntityStatus.ACTIVE, isDeleted: false },
+                  },
+                  OR: [
+                    { status: AffiliationStatus.ACTIVE },
+                    {
+                      status: AffiliationStatus.PENDING,
+                      role: OrgRole.TEAM_ADMIN,
+                    },
+                  ],
+                },
+                select: { status: true, role: true },
+              },
+            },
+          },
+        },
       }),
     ]);
-    return { count, data };
+
+    return {
+      count,
+      data: rows.map(({ team: { userAffiliations, ...team }, ...row }) => ({
+        ...row,
+        team,
+        activeUserCount: userAffiliations.filter(
+          ({ status: userStatus }) => userStatus === AffiliationStatus.ACTIVE,
+        ).length,
+        pendingAdminInviteCount: userAffiliations.filter(
+          ({ status: userStatus, role }) =>
+            userStatus === AffiliationStatus.PENDING &&
+            role === OrgRole.TEAM_ADMIN,
+        ).length,
+      })),
+    };
   }
 
   async findById(orgId: number, id: number) {
@@ -243,33 +305,153 @@ export class OrganizationTeamAffiliationsService {
     });
   }
 
-  async resend(orgId: number, id: number) {
-    const aff = await this.prisma.organizationTeamAffiliation.findUnique({
-      where: { id, organizationId: orgId, isDeleted: false },
-    });
-    if (!aff) throw ApiException.notFound('Affiliation not found');
-    if (aff.status !== AffiliationStatus.PENDING)
-      throw ApiException.unprocessable(
-        'Can only resend invite for PENDING affiliations',
+  async resend(
+    organizationId: number,
+    affiliationId: number,
+  ): Promise<TeamAdminInvitesBundleDto> {
+    return this.runSerializable(async (tx) => {
+      const teamAffiliation = await this.findTeamAffiliationForAction(
+        tx,
+        organizationId,
+        affiliationId,
+        AffiliationStatus.PENDING,
+        'resend invites',
       );
-
-    const { raw, hash, expiresAt } = AffiliationToken.generate();
-    const updated = await this.prisma.organizationTeamAffiliation.update({
-      where: { id },
-      data: { inviteToken: hash, inviteExpiresAt: expiresAt },
-      select: affiliationSelect,
+      const pendingAdmins = await tx.organizationUserAffiliation.findMany({
+        where: {
+          organizationId,
+          teamId: teamAffiliation.teamId,
+          role: OrgRole.TEAM_ADMIN,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+      const invites: TeamAdminInviteDeliveryDto[] = [];
+      for (const { id } of pendingAdmins) {
+        const { raw, hash, expiresAt } = AffiliationToken.generate();
+        const updated = await tx.organizationUserAffiliation.updateMany({
+          where: {
+            id,
+            status: AffiliationStatus.PENDING,
+            isDeleted: false,
+          },
+          data: { inviteToken: hash, inviteExpiresAt: expiresAt },
+        });
+        if (updated.count !== 1) throw this.concurrentModification();
+        invites.push({
+          affiliationId: id,
+          inviteToken: raw,
+          inviteExpiresAt: expiresAt,
+        });
+      }
+      return { invites };
     });
-    return { affiliation: updated, inviteToken: raw };
   }
 
-  async remove(orgId: number, id: number) {
-    const aff = await this.prisma.organizationTeamAffiliation.findUnique({
-      where: { id, organizationId: orgId, isDeleted: false },
+  async remove(organizationId: number, affiliationId: number): Promise<void> {
+    await this.runSerializable(async (tx) => {
+      const teamAffiliation = await this.findTeamAffiliationForAction(
+        tx,
+        organizationId,
+        affiliationId,
+        AffiliationStatus.PENDING,
+        'cancel',
+      );
+      await tx.organizationUserAffiliation.updateMany({
+        where: {
+          organizationId,
+          teamId: teamAffiliation.teamId,
+          role: OrgRole.TEAM_ADMIN,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+        },
+        data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+      });
+      await tx.organizationTeamAffiliation.update({
+        where: { id: teamAffiliation.id },
+        data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+      });
+      const otherHistoryCount = await tx.organizationTeamAffiliation.count({
+        where: {
+          teamId: teamAffiliation.teamId,
+          id: { not: teamAffiliation.id },
+        },
+      });
+      if (otherHistoryCount === 0) {
+        await tx.team.update({
+          where: { id: teamAffiliation.teamId },
+          data: { isDeleted: true, status: EntityStatus.INACTIVE },
+        });
+      }
     });
-    if (!aff) throw ApiException.notFound('Affiliation not found');
-    await this.prisma.organizationTeamAffiliation.update({
-      where: { id },
-      data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+  }
+
+  async deactivate(
+    organizationId: number,
+    affiliationId: number,
+  ): Promise<TeamAffiliationResponseDto> {
+    return this.runSerializable(async (tx) => {
+      const teamAffiliation = await this.findTeamAffiliationForAction(
+        tx,
+        organizationId,
+        affiliationId,
+        AffiliationStatus.ACTIVE,
+        'deactivate',
+      );
+      const updated = await tx.organizationTeamAffiliation.update({
+        where: { id: teamAffiliation.id },
+        data: { status: AffiliationStatus.INACTIVE },
+        select: affiliationSelect,
+      });
+      await tx.organizationUserAffiliation.updateMany({
+        where: {
+          organizationId,
+          teamId: teamAffiliation.teamId,
+          status: AffiliationStatus.ACTIVE,
+          isDeleted: false,
+        },
+        data: { status: AffiliationStatus.INACTIVE },
+      });
+      await tx.organizationUserAffiliation.updateMany({
+        where: {
+          organizationId,
+          teamId: teamAffiliation.teamId,
+          status: AffiliationStatus.PENDING,
+          isDeleted: false,
+        },
+        data: { isDeleted: true, inviteToken: null, inviteExpiresAt: null },
+      });
+      return updated;
+    });
+  }
+
+  async activate(
+    organizationId: number,
+    affiliationId: number,
+  ): Promise<TeamAffiliationResponseDto> {
+    return this.runSerializable(async (tx) => {
+      const teamAffiliation = await this.findTeamAffiliationForAction(
+        tx,
+        organizationId,
+        affiliationId,
+        AffiliationStatus.INACTIVE,
+        'activate',
+      );
+      const team = await tx.team.findFirst({
+        where: {
+          id: teamAffiliation.teamId,
+          status: EntityStatus.ACTIVE,
+          isDeleted: false,
+        },
+        select: { id: true },
+      });
+      if (!team) throw ApiException.notFound('Team not found');
+      return tx.organizationTeamAffiliation.update({
+        where: { id: teamAffiliation.id },
+        data: { status: AffiliationStatus.ACTIVE },
+        select: affiliationSelect,
+      });
     });
   }
 
@@ -348,6 +530,26 @@ export class OrganizationTeamAffiliationsService {
     const missing = 2 - secondPart.length;
     const filler = (first.slice(1) + second.slice(2)).slice(0, missing);
     return (first[0] + filler + secondPart).slice(0, 3);
+  }
+
+  private async findTeamAffiliationForAction(
+    client: Pick<Prisma.TransactionClient, 'organizationTeamAffiliation'>,
+    organizationId: number,
+    affiliationId: number,
+    expectedStatus: AffiliationStatus,
+    action: string,
+  ) {
+    const affiliation = await client.organizationTeamAffiliation.findFirst({
+      where: { id: affiliationId, organizationId, isDeleted: false },
+      select: affiliationSelect,
+    });
+    if (!affiliation) throw ApiException.notFound('Affiliation not found');
+    if (affiliation.status !== expectedStatus) {
+      throw ApiException.unprocessable(
+        `Team affiliation must be ${expectedStatus} to ${action}`,
+      );
+    }
+    return affiliation;
   }
 
   private async runSerializable<T>(
