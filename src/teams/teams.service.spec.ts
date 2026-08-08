@@ -993,4 +993,77 @@ describe('TeamsService', () => {
       expect(mockPrisma.team.update).not.toHaveBeenCalled();
     });
   });
+
+  describe('findAffiliationCandidates', () => {
+    it('excludes live active/pending links and maps a live inactive link', async () => {
+      mockPrisma.team.count.mockResolvedValue(1);
+      mockPrisma.team.findMany.mockResolvedValue([
+        {
+          id: 8,
+          name: 'Águias Campinas',
+          shortName: 'AGC',
+          city: 'Campinas',
+          state: BrazilianState.SP,
+          organizationAffiliations: [
+            { id: 15, status: AffiliationStatus.INACTIVE },
+          ],
+        },
+      ]);
+
+      const result = await service.findAffiliationCandidates(7, {
+        page: 1,
+        limit: 10,
+        q: 'agc',
+      });
+
+      expect(result).toEqual({
+        count: 1,
+        data: [
+          {
+            id: 8,
+            name: 'Águias Campinas',
+            shortName: 'AGC',
+            city: 'Campinas',
+            state: BrazilianState.SP,
+            affiliation: { id: 15, status: AffiliationStatus.INACTIVE },
+          },
+        ],
+      });
+      expect(mockPrisma.team.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: EntityStatus.ACTIVE,
+            isDeleted: false,
+            organizationAffiliations: {
+              none: {
+                organizationId: 7,
+                isDeleted: false,
+                status: {
+                  in: [AffiliationStatus.PENDING, AffiliationStatus.ACTIVE],
+                },
+              },
+            },
+            OR: [
+              { name: { contains: 'agc', mode: 'insensitive' } },
+              { shortName: { contains: 'agc', mode: 'insensitive' } },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('maps null when no live inactive affiliation exists', async () => {
+      mockPrisma.team.count.mockResolvedValue(1);
+      mockPrisma.team.findMany.mockResolvedValue([
+        { ...baseTeam, organizationAffiliations: [] },
+      ]);
+
+      const result = await service.findAffiliationCandidates(7, {
+        page: 1,
+        limit: 10,
+      });
+
+      expect(result.data[0].affiliation).toBeNull();
+    });
+  });
 });

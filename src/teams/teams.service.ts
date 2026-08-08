@@ -14,7 +14,9 @@ import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 import { UpdateTeamStatusDto } from './dto/update-team-status.dto';
 import { ListTeamsQueryDto } from './dto/list-teams-query.dto';
+import { ListTeamAffiliationCandidatesQueryDto } from './dto/list-team-affiliation-candidates-query.dto';
 import { TeamResponseDto } from './dto/team-response.dto';
+import { TeamAffiliationCandidateResponseDto } from './dto/team-affiliation-candidate-response.dto';
 import {
   TeamMatchResponseDto,
   TeamProfileStatus,
@@ -257,6 +259,81 @@ export class TeamsService {
     ]);
 
     return { count, data };
+  }
+
+  async findAffiliationCandidates(
+    organizationId: number,
+    query: ListTeamAffiliationCandidatesQueryDto,
+  ): Promise<{ count: number; data: TeamAffiliationCandidateResponseDto[] }> {
+    const where: Prisma.TeamWhereInput = {
+      isDeleted: false,
+      status: EntityStatus.ACTIVE,
+      organizationAffiliations: {
+        none: {
+          organizationId,
+          isDeleted: false,
+          status: { in: [AffiliationStatus.PENDING, AffiliationStatus.ACTIVE] },
+        },
+      },
+      ...(query.q
+        ? {
+            OR: [
+              {
+                name: { contains: query.q, mode: Prisma.QueryMode.insensitive },
+              },
+              {
+                shortName: {
+                  contains: query.q,
+                  mode: Prisma.QueryMode.insensitive,
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [count, rows] = await Promise.all([
+      this.prisma.team.count({ where }),
+      this.prisma.team.findMany({
+        where,
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          shortName: true,
+          city: true,
+          state: true,
+          organizationAffiliations: {
+            where: {
+              organizationId,
+              isDeleted: false,
+              status: AffiliationStatus.INACTIVE,
+            },
+            take: 1,
+            select: { id: true, status: true },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      count,
+      data: rows.map(({ organizationAffiliations, ...team }) => {
+        const link = organizationAffiliations[0];
+        return {
+          ...team,
+          // Select filters to status: INACTIVE only, so this narrows safely.
+          affiliation: link
+            ? {
+                id: link.id,
+                status: link.status as Extract<AffiliationStatus, 'INACTIVE'>,
+              }
+            : null,
+        };
+      }),
+    };
   }
 
   async findById(id: number): Promise<TeamResponseDto> {
