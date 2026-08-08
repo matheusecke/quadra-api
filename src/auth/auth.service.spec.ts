@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { OrgRole } from '@prisma/client';
 import { validate } from 'class-validator';
+import * as bcrypt from 'bcryptjs';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
@@ -49,6 +50,83 @@ const mockOrganizationUserAffiliationsService = {
   findPendingInvitesForUser: jest.fn(),
   respondToInviteForUser: jest.fn(),
 };
+
+const apiErrorMessage = (error: unknown): string =>
+  ((error as ApiException).getResponse() as { error: { message: string } })
+    .error.message;
+
+const affiliationUser = {
+  id: 1,
+  email: 'admin@example.com',
+  isSystemAdmin: false,
+};
+
+const loginUser = {
+  id: 1,
+  email: 'admin@example.com',
+  name: 'Admin',
+  passwordHash: bcrypt.hashSync('pass1234', 10),
+  isSystemAdmin: false,
+  status: 'ACTIVE',
+};
+
+type TeamContextOverrides = Partial<{
+  status: string;
+  isDeleted: boolean;
+  organizationAffiliations: { organizationId: number }[];
+}>;
+
+const activeTeamContext = (overrides: TeamContextOverrides = {}) => ({
+  status: 'ACTIVE',
+  isDeleted: false,
+  organizationAffiliations: [{ organizationId: 1 }],
+  ...overrides,
+});
+
+const inactiveTeamContext = (overrides: TeamContextOverrides = {}) =>
+  activeTeamContext({ status: 'INACTIVE', ...overrides });
+
+const usableOrgAdminAffiliation = (
+  overrides: Record<string, unknown> = {},
+) => ({
+  userId: 1,
+  organizationId: 1,
+  role: OrgRole.ORG_ADMIN,
+  teamId: null,
+  organization: { name: 'Org One', slug: 'org-one' },
+  user: affiliationUser,
+  team: null,
+  ...overrides,
+});
+
+const teamRoleAffiliation = (overrides: Record<string, unknown> = {}) => ({
+  userId: 1,
+  organizationId: 1,
+  role: OrgRole.TEAM_ADMIN,
+  teamId: 8,
+  organization: { name: 'Org One', slug: 'org-one' },
+  user: affiliationUser,
+  team: activeTeamContext(),
+  ...overrides,
+});
+
+const usableTeamAffiliation = (overrides: Record<string, unknown> = {}) =>
+  teamRoleAffiliation({ team: activeTeamContext(), ...overrides });
+
+const validStoredRefreshToken = (overrides: Record<string, unknown> = {}) => ({
+  id: 20,
+  userId: 1,
+  organizationId: null,
+  expiresAt: new Date(Date.now() + 100_000),
+  user: {
+    id: 1,
+    email: 'u@e.com',
+    isSystemAdmin: false,
+    status: 'ACTIVE',
+    isDeleted: false,
+  },
+  ...overrides,
+});
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -373,10 +451,6 @@ describe('AuthService', () => {
             organization: {
               is: { isDeleted: false, status: 'ACTIVE' },
             },
-            OR: [
-              { teamId: null },
-              { team: { is: { isDeleted: false, status: 'ACTIVE' } } },
-            ],
           }),
         }),
       );
@@ -513,28 +587,29 @@ describe('AuthService', () => {
           isDeleted: false,
         },
       });
-      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
-        organizationId: 5,
-        role: OrgRole.ORG_ADMIN,
-      });
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        {
+          userId: 1,
+          organizationId: 5,
+          role: OrgRole.ORG_ADMIN,
+          teamId: null,
+          organization: { name: 'Org', slug: 'org' },
+          user: { id: 1, email: 'u@e.com', isSystemAdmin: false },
+          team: null,
+        },
+      ]);
       mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
 
       await service.refreshAccessToken('valid-uuid');
 
       expect(
-        mockPrisma.organizationUserAffiliation.findFirst,
-      ).toHaveBeenCalledWith({
-        where: expect.objectContaining({
-          userId: 1,
-          organizationId: 5,
-          isDeleted: false,
-          organization: {
-            is: { isDeleted: false, status: 'ACTIVE' },
-          },
+        mockPrisma.organizationUserAffiliation.findMany,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ userId: 1, organizationId: 5 }),
         }),
-        select: { organizationId: true, role: true },
-      });
+      );
       expect(mockJwtService.sign).toHaveBeenCalledWith(
         expect.objectContaining({ organizationId: 5, role: OrgRole.ORG_ADMIN }),
       );
@@ -581,7 +656,7 @@ describe('AuthService', () => {
           isDeleted: false,
         },
       });
-      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
       mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.refreshToken.create.mockResolvedValue({ id: 11 });
 
@@ -671,6 +746,9 @@ describe('AuthService', () => {
           role: 'TEAM_ADMIN',
           teamId: 7,
           organization: { id: 3, name: 'Clube B', slug: 'clube-b' },
+          team: activeTeamContext({
+            organizationAffiliations: [{ organizationId: 3 }],
+          }),
         },
       ]);
 
@@ -744,7 +822,7 @@ describe('AuthService', () => {
 
   describe('chooseOrg', () => {
     it('throws 403 when user has no affiliation with the org', async () => {
-      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
 
       await expect(
         service.chooseOrg(1, 99, 'raw-refresh-token'),
@@ -752,18 +830,21 @@ describe('AuthService', () => {
     });
 
     it('returns access token with org context and rotates refresh token when affiliation exists', async () => {
-      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
-        userId: 1,
-        organizationId: 5,
-        role: OrgRole.ORG_ADMIN,
-        user: {
-          id: 1,
-          email: 'u@e.com',
-          isSystemAdmin: false,
-          status: 'ACTIVE',
-          isDeleted: false,
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        {
+          userId: 1,
+          organizationId: 5,
+          role: OrgRole.ORG_ADMIN,
+          teamId: null,
+          organization: { name: 'Org', slug: 'org' },
+          user: {
+            id: 1,
+            email: 'u@e.com',
+            isSystemAdmin: false,
+          },
+          team: null,
         },
-      });
+      ]);
       mockPrisma.refreshToken.findFirst.mockResolvedValue({
         id: 20,
         userId: 1,
@@ -796,18 +877,21 @@ describe('AuthService', () => {
         organizationId: null,
         expiresAt: new Date(Date.now() + 100_000),
       });
-      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
-        userId: 1,
-        organizationId: 5,
-        role: OrgRole.ORG_ADMIN,
-        user: {
-          id: 1,
-          email: 'u@e.com',
-          isSystemAdmin: false,
-          status: 'ACTIVE',
-          isDeleted: false,
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        {
+          userId: 1,
+          organizationId: 5,
+          role: OrgRole.ORG_ADMIN,
+          teamId: null,
+          organization: { name: 'Org', slug: 'org' },
+          user: {
+            id: 1,
+            email: 'u@e.com',
+            isSystemAdmin: false,
+          },
+          team: null,
         },
-      });
+      ]);
       mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(
@@ -930,5 +1014,88 @@ describe('AuthService', () => {
         mockOrganizationUserAffiliationsService.respondToInviteForUser,
       ).toHaveBeenCalledWith(5, 1, InviteDecision.ACCEPT);
     });
+  });
+
+  describe('usable organization contexts', () => {
+    it('omits invalid team-linked rows from login organizations', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(loginUser);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        usableOrgAdminAffiliation(),
+        teamRoleAffiliation({ team: inactiveTeamContext() }),
+        teamRoleAffiliation({
+          organizationId: 7,
+          team: activeTeamContext({
+            organizationAffiliations: [{ organizationId: 999 }],
+          }),
+        }),
+      ]);
+
+      const result = await service.login('admin@example.com', 'pass1234');
+
+      expect(result.organizations).toEqual([
+        expect.objectContaining({ organizationId: 1, role: OrgRole.ORG_ADMIN }),
+      ]);
+    });
+
+    it('returns only usable rows from getUserOrgs', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 1 });
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        usableTeamAffiliation(),
+        teamRoleAffiliation({ teamId: null, team: null }),
+      ]);
+
+      await expect(service.getUserOrgs(1)).resolves.toEqual([
+        expect.objectContaining({ teamId: 8 }),
+      ]);
+    });
+
+    it('rejects chooseOrg when no usable row survives', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue(
+        validStoredRefreshToken(),
+      );
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        teamRoleAffiliation({ team: inactiveTeamContext() }),
+      ]);
+
+      const error = await service
+        .chooseOrg(1, 5, 'raw-refresh-token')
+        .catch((caught: unknown) => caught);
+
+      expect(apiErrorMessage(error)).toBe(
+        'No active affiliation with this organization.',
+      );
+      expect(mockPrisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('downgrades refresh to global when its stored organization is no longer usable', async () => {
+      mockPrisma.refreshToken.findFirst.mockResolvedValue(
+        validStoredRefreshToken({ organizationId: 5 }),
+      );
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.refreshAccessToken('valid-uuid');
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: null, role: null }),
+      );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ organizationId: null }),
+      });
+    });
+
+    it.each([OrgRole.TEAM_ADMIN, OrgRole.ATHLETE, OrgRole.COACHING_STAFF])(
+      'keeps a valid matching active team context for %s',
+      async (role) => {
+        mockPrisma.user.findFirst.mockResolvedValue({ id: 1 });
+        mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+          usableTeamAffiliation({ role }),
+        ]);
+
+        await expect(service.getUserOrgs(1)).resolves.toEqual([
+          expect.objectContaining({ role, teamId: 8 }),
+        ]);
+      },
+    );
   });
 });
