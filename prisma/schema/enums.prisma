@@ -17,6 +17,7 @@ enum EntityStatus {
 enum AffiliationStatus {
   PENDING
   ACTIVE
+  INACTIVE
   REJECTED
 
   @@map("affiliation_status")
