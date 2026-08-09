@@ -60,8 +60,28 @@ Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Re
 - Logout revokes the cookie’s token; password change revokes all active refresh tokens for the user.
 - Login and refresh require `ACTIVE` user and not soft-deleted.
 - Login, org listing, org choice, and org-scoped refresh only consider active, non-deleted affiliations, organizations, and teams.
-- If org-scoped refresh finds org/affiliation/team no longer valid, the backend rotates session back to global context instead of failing the user.
+- If org-scoped refresh finds org/affiliation/team no longer valid, the backend rotates session back to global context instead of failing the user (global refresh fallback — `organizationId: null`, `role: null`, no error).
 - Refresh tokens are also revoked on email change, user deactivation, system-admin flag changes, and user soft delete (see `AuthService` / `UsersService` coordination).
+
+### What counts as a usable organization affiliation
+
+`AuthService.findUsableOrgAffiliations` is the single query behind login, `GET /auth/org`, `POST /auth/org`, and org-scoped refresh. A row only counts as usable when:
+
+- `status: ACTIVE`, non-deleted, on the `OrganizationUserAffiliation` itself;
+- the user is non-deleted and `status: ACTIVE`;
+- the organization is non-deleted and `status: ACTIVE`;
+- for `role: ORG_ADMIN`, `teamId` must be `null`;
+- for every other role (`TEAM_ADMIN`, `ATHLETE`, `COACHING_STAFF`), the affiliated `Team` must be non-deleted, globally `status: ACTIVE`, **and** hold an `ACTIVE`, non-deleted `OrganizationTeamAffiliation` with that same organization.
+
+`AffiliationStatus.PENDING` and `AffiliationStatus.INACTIVE` rows are never usable — including a `TEAM_ADMIN`/`ATHLETE`/`COACHING_STAFF` row that is itself `ACTIVE` but whose team's organization affiliation has been deactivated. This is the hardening this plan adds: a team going `INACTIVE` at the organization level now transitively locks out org-context selection for its members, without touching their own `OrganizationUserAffiliation.status`.
+
+### JWT claims are unchanged
+
+`JwtPayload` still carries only `sub`, `email`, `isSystemAdmin`, `organizationId`, `role` — no `teamId` claim was added. Team-scoped authorization (own-team checks in `TeamsModule` and `OrganizationUserAffiliationsService`) derives the actor's current team from a live `OrganizationUserAffiliation` query at request time instead of trusting a JWT claim, precisely because the JWT has no team context and is not re-issued when a team affiliation changes.
+
+### Already-issued token TTL window
+
+An organization JWT already issued before a team affiliation is deactivated (or the user's own affiliation is deactivated) remains usable for the rest of its configured lifetime — 15 minutes by default (`JWT_EXPIRES_IN`). There is no per-request database revalidation, denylisting, or session versioning. The next `POST /auth/refresh` (or a fresh `POST /auth/org`) is what re-evaluates usability and either preserves org context or falls back to global context; until then, guards continue to trust the token's `organizationId`/`role` claims as issued.
 
 ## Authorization layers
 

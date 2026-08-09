@@ -1,12 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { AffiliationStatus, EntityStatus, Prisma } from '@prisma/client';
+import {
+  AffiliationStatus,
+  EntityStatus,
+  OrgRole,
+  Prisma,
+} from '@prisma/client';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiException } from '../common/exceptions/api.exception';
-import type { JwtPayload, OrgRole } from './interfaces/jwt-payload.interface';
+import type { JwtPayload } from './interfaces/jwt-payload.interface';
 import type { LoginResponseDto } from './dto/login-response.dto';
 import type { OrgAffiliationDto } from './dto/org-affiliation.dto';
 import type { MeResponseDto } from './dto/me-response.dto';
@@ -34,6 +39,22 @@ interface TokenUser {
 interface LoginUser extends TokenUser {
   name: string;
 }
+
+type ResolvedOrgContext = {
+  organizationId: number | null;
+  role: OrgRole | null;
+};
+
+type OrgContextReadClient = Pick<PrismaService, 'organizationUserAffiliation'>;
+
+type UsableOrgAffiliation = {
+  userId: number;
+  organizationId: number;
+  role: OrgRole;
+  teamId: number | null;
+  organization: { name: string; slug: string };
+  user: TokenUser;
+};
 
 @Injectable()
 export class AuthService {
@@ -85,18 +106,9 @@ export class AuthService {
       throw ApiException.unauthorized('Invalid credentials.');
     }
 
-    const affiliations = await this.prisma.organizationUserAffiliation.findMany(
-      {
-        where: this.activeAffiliationWhere(user.id),
-        select: {
-          organizationId: true,
-          role: true,
-          teamId: true,
-          organization: {
-            select: { id: true, name: true, slug: true },
-          },
-        },
-      },
+    const affiliations = await this.findUsableOrgAffiliations(
+      this.prisma,
+      user.id,
     );
 
     return this.issueLoginResult(user, this.mapAffiliations(affiliations));
@@ -211,18 +223,11 @@ export class AuthService {
   ): Promise<OrgAffiliationDto[]> {
     await this.ensureActiveUser(userId);
 
-    const affiliations = await this.prisma.organizationUserAffiliation.findMany(
-      {
-        where: this.activeAffiliationWhere(userId, undefined, filters),
-        select: {
-          organizationId: true,
-          role: true,
-          teamId: true,
-          organization: {
-            select: { id: true, name: true, slug: true },
-          },
-        },
-      },
+    const affiliations = await this.findUsableOrgAffiliations(
+      this.prisma,
+      userId,
+      undefined,
+      filters,
     );
 
     return this.mapAffiliations(affiliations);
@@ -267,23 +272,11 @@ export class AuthService {
         throw ApiException.unauthorized('Refresh token is invalid or expired.');
       }
 
-      const affiliation = await tx.organizationUserAffiliation.findFirst({
-        where: this.activeAffiliationWhere(userId, organizationId),
-        select: {
-          userId: true,
-          organizationId: true,
-          role: true,
-          user: {
-            select: {
-              id: true,
-              email: true,
-              isSystemAdmin: true,
-              status: true,
-              isDeleted: true,
-            },
-          },
-        },
-      });
+      const [affiliation] = await this.findUsableOrgAffiliations(
+        tx,
+        userId,
+        organizationId,
+      );
 
       if (!affiliation) {
         throw ApiException.forbidden(
@@ -381,57 +374,93 @@ export class AuthService {
     }
   }
 
-  private activeAffiliationWhere(
+  // Prisma cannot express equality between the outer affiliation's
+  // organizationId and the nested team affiliation's organizationId within a
+  // single relation filter, so this correlates them in memory. The nested
+  // select is bounded to active, non-deleted team links, so there is no N+1.
+  private async findUsableOrgAffiliations(
+    client: OrgContextReadClient,
     userId: number,
     organizationId?: number,
     filters: { name?: string } = {},
-  ): Prisma.OrganizationUserAffiliationWhereInput {
+  ): Promise<UsableOrgAffiliation[]> {
     const name = filters.name?.trim();
-
-    return {
-      userId,
-      ...(organizationId !== undefined ? { organizationId } : {}),
-      isDeleted: false,
-      status: AffiliationStatus.ACTIVE,
-      user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
-      organization: {
-        is: {
-          isDeleted: false,
-          status: EntityStatus.ACTIVE,
-          ...(name
-            ? { name: { contains: name, mode: Prisma.QueryMode.insensitive } }
-            : {}),
+    const rows = await client.organizationUserAffiliation.findMany({
+      where: {
+        userId,
+        ...(organizationId !== undefined ? { organizationId } : {}),
+        isDeleted: false,
+        status: AffiliationStatus.ACTIVE,
+        user: { is: { isDeleted: false, status: EntityStatus.ACTIVE } },
+        organization: {
+          is: {
+            isDeleted: false,
+            status: EntityStatus.ACTIVE,
+            ...(name
+              ? {
+                  name: { contains: name, mode: Prisma.QueryMode.insensitive },
+                }
+              : {}),
+          },
         },
       },
-      OR: [
-        { teamId: null },
-        { team: { is: { isDeleted: false, status: EntityStatus.ACTIVE } } },
-      ],
-    };
+      select: {
+        userId: true,
+        organizationId: true,
+        role: true,
+        teamId: true,
+        organization: { select: { name: true, slug: true } },
+        user: { select: { id: true, email: true, isSystemAdmin: true } },
+        team: {
+          select: {
+            status: true,
+            isDeleted: true,
+            organizationAffiliations: {
+              where: { status: AffiliationStatus.ACTIVE, isDeleted: false },
+              select: { organizationId: true },
+            },
+          },
+        },
+      },
+    });
+
+    return rows
+      .filter((row) => {
+        if (row.role === OrgRole.ORG_ADMIN) return row.teamId === null;
+        return (
+          row.teamId !== null &&
+          row.team !== null &&
+          !row.team.isDeleted &&
+          row.team.status === EntityStatus.ACTIVE &&
+          row.team.organizationAffiliations.some(
+            (link) => link.organizationId === row.organizationId,
+          )
+        );
+      })
+      .map((row) => ({
+        userId: row.userId,
+        organizationId: row.organizationId,
+        role: row.role,
+        teamId: row.teamId,
+        organization: row.organization,
+        user: row.user,
+      }));
   }
 
   private async getActiveOrgContext(
-    client: Pick<PrismaService, 'organizationUserAffiliation'>,
+    client: OrgContextReadClient,
     userId: number,
     organizationId: number | null,
-  ): Promise<{ organizationId: number | null; role: OrgRole | null }> {
-    if (organizationId === null) {
-      return { organizationId: null, role: null };
-    }
-
-    const affiliation = await client.organizationUserAffiliation.findFirst({
-      where: this.activeAffiliationWhere(userId, organizationId),
-      select: { organizationId: true, role: true },
-    });
-
-    if (!affiliation) {
-      return { organizationId: null, role: null };
-    }
-
-    return {
-      organizationId: affiliation.organizationId,
-      role: affiliation.role,
-    };
+  ): Promise<ResolvedOrgContext> {
+    if (organizationId === null) return { organizationId: null, role: null };
+    const [affiliation] = await this.findUsableOrgAffiliations(
+      client,
+      userId,
+      organizationId,
+    );
+    return affiliation
+      ? { organizationId: affiliation.organizationId, role: affiliation.role }
+      : { organizationId: null, role: null };
   }
 
   private async issueLoginResult(

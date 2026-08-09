@@ -38,6 +38,8 @@ import { UpdateTeamAffiliationStatusDto } from './dto/update-team-affiliation-st
 import { ListTeamAffiliationsQueryDto } from './dto/list-team-affiliations-query.dto';
 import { TeamAffiliationResponseDto } from './dto/team-affiliation-response.dto';
 import { TeamAffiliationInviteBundleDto } from './dto/team-affiliation-invite-bundle.dto';
+import { TeamAffiliationListItemDto } from './dto/team-affiliation-list-item.dto';
+import { TeamAdminInvitesBundleDto } from './dto/team-admin-invites-bundle.dto';
 import { Throttle } from '@nestjs/throttler';
 import { ApiStandardCrudErrors } from '../common/swagger/api-error-responses.decorators';
 import { ApiPaginatedOkResponse } from '../common/swagger/pagination-api.decorator';
@@ -54,13 +56,14 @@ export class OrganizationTeamAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Invite a team to affiliate with the active JWT organization (org admin)',
+    summary:
+      'Create or reuse a team affiliation and invite one team administrator',
   })
   @ApiCreatedResponse({ type: TeamAffiliationInviteBundleDto })
   create(
     @Body() dto: CreateTeamAffiliationDto,
     @CurrentUser() user: JwtPayload,
-  ) {
+  ): Promise<TeamAffiliationInviteBundleDto> {
     return this.service.create(user.organizationId as number, dto, user.sub);
   }
 
@@ -69,11 +72,9 @@ export class OrganizationTeamAffiliationsController {
   @OrgRoles(OrgRole.ORG_ADMIN)
   @UseInterceptors(PaginationInterceptor)
   @ApiOperation({
-    summary: 'List team affiliations for the active JWT organization (org admin)',
-    description:
-      'Requires ORG_ADMIN in the active JWT organization.',
+    summary: 'List team affiliations for the active JWT organization',
   })
-  @ApiPaginatedOkResponse(TeamAffiliationResponseDto)
+  @ApiPaginatedOkResponse(TeamAffiliationListItemDto)
   findAll(
     @Query() query: ListTeamAffiliationsQueryDto,
     @CurrentUser() user: JwtPayload,
@@ -85,7 +86,8 @@ export class OrganizationTeamAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @ApiOperation({
-    summary: 'Get a team affiliation by id within the active JWT organization (org admin)',
+    summary:
+      'Get a team affiliation by id within the active JWT organization (org admin)',
   })
   @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
   @ApiOkResponse({ type: TeamAffiliationResponseDto })
@@ -129,12 +131,14 @@ export class OrganizationTeamAffiliationsController {
   @OrgRoles(OrgRole.ORG_ADMIN)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
-    summary:
-      'Re-send invite for a pending team affiliation in the active JWT organization (org admin)',
+    summary: 'Rotate every pending administrator invite for a team',
   })
   @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
-  @ApiOkResponse({ type: TeamAffiliationInviteBundleDto })
-  resend(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
+  @ApiOkResponse({ type: TeamAdminInvitesBundleDto })
+  resend(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<TeamAdminInvitesBundleDto> {
     return this.service.resend(user.organizationId as number, id);
   }
 
@@ -142,13 +146,38 @@ export class OrganizationTeamAffiliationsController {
   @UseGuards(OrgRoleGuard)
   @OrgRoles(OrgRole.ORG_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({
-    summary: 'Soft-delete a team affiliation in the active JWT organization (org admin)',
-  })
+  @ApiOperation({ summary: 'Cancel one pending team onboarding' })
   @ApiParam({ name: 'id', example: 5, description: 'Affiliation id.' })
-  @ApiNoContentResponse({ description: 'Affiliation removed.' })
-  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtPayload) {
-    return this.service.remove(user.organizationId as number, id);
+  @ApiNoContentResponse({ description: 'Pending onboarding cancelled.' })
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    await this.service.remove(user.organizationId as number, id);
+  }
+
+  @Post('organization-team-affiliations/:id/deactivate')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: TeamAffiliationResponseDto })
+  deactivate(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.deactivate(user.organizationId as number, id);
+  }
+
+  @Post('organization-team-affiliations/:id/activate')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: TeamAffiliationResponseDto })
+  activate(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.activate(user.organizationId as number, id);
   }
 
   @Get('teams/:teamId/affiliations')

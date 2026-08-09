@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { AffiliationStatus, OrgRole } from '@prisma/client';
+import { AffiliationStatus, BasketballPosition, OrgRole } from '@prisma/client';
 
 export class AffiliationUserDto {
   @ApiProperty({ example: 10 })
@@ -49,12 +49,25 @@ export class UserAffiliationResponseDto {
   })
   jerseyNumber!: number | null;
 
+  @ApiPropertyOptional({
+    enum: BasketballPosition,
+    enumName: 'BasketballPosition',
+    nullable: true,
+  })
+  position!: BasketballPosition | null;
+
   @ApiProperty({
     enum: AffiliationStatus,
     enumName: 'AffiliationStatus',
     example: AffiliationStatus.ACTIVE,
   })
   status!: AffiliationStatus;
+
+  @ApiPropertyOptional({
+    example: '2026-08-15T12:00:00.000Z',
+    nullable: true,
+  })
+  inviteExpiresAt!: Date | null;
 
   @ApiPropertyOptional({ example: 1, nullable: true })
   createdByUserId!: number | null;

@@ -1,9 +1,31 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, IsPositive } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsPositive,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class CreateTeamAffiliationDto {
-  @ApiProperty({ description: 'ID of the team to invite' })
+  @ApiPropertyOptional({ example: 8 })
+  @ValidateIf((_object, value) => value !== undefined)
   @IsInt()
   @IsPositive()
-  teamId: number;
+  teamId?: number;
+
+  @ApiPropertyOptional({ example: 'Águias Campinas', maxLength: 100 })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  teamName?: string;
+
+  @ApiProperty({ example: 42 })
+  @IsInt()
+  @IsPositive()
+  adminUserId!: number;
 }

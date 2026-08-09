@@ -20,6 +20,7 @@ import { validate } from 'class-validator';
 import { ApiException } from '../common/exceptions/api.exception';
 import { validationExceptionFactory } from '../common/pipes/validation.factory';
 import { PrismaService } from '../prisma/prisma.service';
+import { ListMatchesQueryDto } from './dto/list-matches-query.dto';
 import type { MatchDetailResponseDto } from './dto/match-response.dto';
 import {
   MatchPlayerStatisticInputDto,
@@ -150,20 +151,20 @@ const summaryRow = {
     {
       side: MatchSide.HOME,
       tournamentTeamId: 41,
+      tournamentTeam: { teamId: 8, displayNameSnapshot: 'Engineering' },
       finalScore: null as number | null,
       result: null as MatchResult | null,
       lossType: null as LossType | null,
       isWinner: null as boolean | null,
-      tournamentTeam: { displayNameSnapshot: 'Engineering' },
     },
     {
       side: MatchSide.AWAY,
       tournamentTeamId: 52,
+      tournamentTeam: { teamId: 9, displayNameSnapshot: 'Law' },
       finalScore: null as number | null,
       result: null as MatchResult | null,
       lossType: null as LossType | null,
       isWinner: null as boolean | null,
-      tournamentTeam: { displayNameSnapshot: 'Law' },
     },
   ],
   periods: [] as { homePoints: number; awayPoints: number }[],
@@ -2427,6 +2428,39 @@ describe('MatchesService', () => {
   });
 
   describe('reads', () => {
+    it('maps global team ids without changing snapshot names or result masking', async () => {
+      mockPrisma.match.count.mockResolvedValue(1);
+      mockPrisma.match.findMany.mockResolvedValue([summaryRow]);
+      mockPrisma.match.findFirst.mockResolvedValue(detailRow);
+
+      const list = await service.findAll(42, { page: 1, limit: 10 });
+      const detail = await service.findOne(42, 501);
+
+      const expectedParticipants = {
+        homeTeam: {
+          tournamentTeamId: 41,
+          teamId: 8,
+          teamName: 'Engineering',
+          score: null,
+          result: null,
+          lossType: null,
+          isWinner: null,
+        },
+        awayTeam: {
+          tournamentTeamId: 52,
+          teamId: 9,
+          teamName: 'Law',
+          score: null,
+          result: null,
+          lossType: null,
+          isWinner: null,
+        },
+      };
+
+      expect(list.data[0]).toMatchObject(expectedParticipants);
+      expect(detail).toMatchObject(expectedParticipants);
+    });
+
     it('combines tenant scope, filters, pagination, and ordering', async () => {
       mockPrisma.match.count.mockResolvedValue(1);
       mockPrisma.match.findMany.mockResolvedValue([summaryRow]);
@@ -2881,6 +2915,134 @@ describe('MatchesService', () => {
         code: 'RECORD_NOT_FOUND',
         message: 'Match not found',
       });
+    });
+
+    it('filters by tournament group ids as a direct column clause', async () => {
+      mockPrisma.match.count.mockResolvedValue(0);
+      mockPrisma.match.findMany.mockResolvedValue([]);
+
+      await service.findAll(42, {
+        page: 1,
+        limit: 10,
+        tournamentGroupIds: [3, 4],
+      });
+
+      expect(mockPrisma.match.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: [{ tournamentGroupId: { in: [3, 4] } }],
+          }),
+        }),
+      );
+    });
+
+    it('filters by bracket round ids through the slot, ignoring deleted slots', async () => {
+      mockPrisma.match.count.mockResolvedValue(0);
+      mockPrisma.match.findMany.mockResolvedValue([]);
+
+      await service.findAll(42, {
+        page: 1,
+        limit: 10,
+        bracketRoundIds: [7],
+      });
+
+      expect(mockPrisma.match.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: [
+              {
+                bracketSlots: {
+                  some: { isDeleted: false, roundId: { in: [7] } },
+                },
+              },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('combines the phase filters with the team and status filters', async () => {
+      mockPrisma.tournament.findFirst.mockResolvedValue({ id: 12 });
+      mockPrisma.match.count.mockResolvedValue(0);
+      mockPrisma.match.findMany.mockResolvedValue([]);
+
+      await service.findAllByTournament(42, 12, {
+        page: 1,
+        limit: 10,
+        tournamentTeamIds: [41],
+        tournamentGroupIds: [3],
+        bracketRoundIds: [7],
+        status: MatchStatus.FINISHED,
+      });
+
+      expect(mockPrisma.match.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            tournamentId: 12,
+            status: MatchStatus.FINISHED,
+            AND: [
+              {
+                teams: {
+                  some: { isDeleted: false, tournamentTeamId: { in: [41] } },
+                },
+              },
+              { tournamentGroupId: { in: [3] } },
+              {
+                bracketSlots: {
+                  some: { isDeleted: false, roundId: { in: [7] } },
+                },
+              },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('adds no phase clause when neither phase filter is sent', async () => {
+      mockPrisma.match.count.mockResolvedValue(0);
+      mockPrisma.match.findMany.mockResolvedValue([]);
+
+      await service.findAll(42, { page: 1, limit: 10 });
+
+      const [[call]] = mockPrisma.match.findMany.mock.calls as [
+        [{ where: Prisma.MatchWhereInput }],
+      ];
+      expect(call.where.AND).toBeUndefined();
+    });
+
+    it('normalizes a single phase id into an array at the HTTP boundary', async () => {
+      const pipe = new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        exceptionFactory: validationExceptionFactory,
+      });
+
+      const dto = (await pipe.transform(
+        { tournamentGroupIds: '3', bracketRoundIds: '7' },
+        { type: 'query', metatype: ListMatchesQueryDto },
+      )) as ListMatchesQueryDto;
+
+      expect(dto.tournamentGroupIds).toEqual([3]);
+      expect(dto.bracketRoundIds).toEqual([7]);
+    });
+
+    it('rejects a phase id below one', async () => {
+      const pipe = new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        exceptionFactory: validationExceptionFactory,
+      });
+
+      const error = await captureApiException(
+        pipe.transform(
+          { tournamentGroupIds: '0' },
+          { type: 'query', metatype: ListMatchesQueryDto },
+        ),
+      );
+
+      expect(apiError(error).code).toBe('VALIDATION_ERROR');
     });
   });
 

@@ -26,6 +26,7 @@ import { UpdateTournamentBracketSlotDto } from './dto/update-tournament-bracket-
 
 const bracketSlotTeamSelect = {
   id: true,
+  teamId: true,
   displayNameSnapshot: true,
   team: { select: { shortName: true } },
 } satisfies Prisma.TournamentTeamSelect;
@@ -787,6 +788,7 @@ export class TournamentBracketsService {
     if (!registration) return null;
     return {
       tournamentTeamId: registration.id,
+      teamId: registration.teamId,
       name: registration.displayNameSnapshot,
       shortName: registration.team.shortName,
     };

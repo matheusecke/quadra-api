@@ -28,11 +28,14 @@ import {
 import { UpdateMatchDto } from './dto/update-match.dto';
 import {
   MatchDetailResponseDto,
-  MatchScoreSource,
   MatchSummaryResponseDto,
   MatchTeamResponseDto,
   PlayerMatchStatisticResponseDto,
 } from './dto/match-response.dto';
+import {
+  deriveMatchScoreSource,
+  type MatchScoreSource,
+} from './match-score-source';
 
 const matchTeamReadSelect = {
   side: true,
@@ -41,7 +44,7 @@ const matchTeamReadSelect = {
   result: true,
   lossType: true,
   isWinner: true,
-  tournamentTeam: { select: { displayNameSnapshot: true } },
+  tournamentTeam: { select: { teamId: true, displayNameSnapshot: true } },
 } satisfies Prisma.MatchTeamSelect;
 
 export const matchSummarySelect = {
@@ -375,6 +378,16 @@ export class MatchesService {
         },
       });
     }
+    if (query.tournamentGroupIds) {
+      filters.push({ tournamentGroupId: { in: query.tournamentGroupIds } });
+    }
+    if (query.bracketRoundIds) {
+      filters.push({
+        bracketSlots: {
+          some: { isDeleted: false, roundId: { in: query.bracketRoundIds } },
+        },
+      });
+    }
     return {
       organizationId,
       isDeleted: false,
@@ -403,7 +416,7 @@ export class MatchesService {
       endedAt: row.endedAt,
       venueName: row.venueName,
       bracketRound: row.bracketSlots[0]?.round ?? null,
-      scoreSource: this.deriveScoreSource(row),
+      scoreSource: deriveMatchScoreSource(row),
       homeTeam: this.toTeam(row, MatchSide.HOME, isFinished),
       awayTeam: this.toTeam(row, MatchSide.AWAY, isFinished),
     };
@@ -420,6 +433,7 @@ export class MatchesService {
     }
     return {
       tournamentTeamId: team.tournamentTeamId,
+      teamId: team.tournamentTeam.teamId,
       teamName: team.tournamentTeam.displayNameSnapshot,
       score: includeResult ? team.finalScore : null,
       result: includeResult ? team.result : null,
@@ -515,29 +529,6 @@ export class MatchesService {
             : tournamentRoster.displayNameSnapshot,
       },
     };
-  }
-
-  private deriveScoreSource(row: MatchSummaryRow): MatchScoreSource | null {
-    if (row.status !== MatchStatus.FINISHED) return null;
-    if (row.teams.some((team) => team.lossType === LossType.FORFEIT)) {
-      return 'AWARDED';
-    }
-    if (row.teams.some((team) => team.lossType === LossType.DEFAULT)) {
-      const homeTotal = row.periods.reduce(
-        (total, period) => total + period.homePoints,
-        0,
-      );
-      const awayTotal = row.periods.reduce(
-        (total, period) => total + period.awayPoints,
-        0,
-      );
-      const home = row.teams.find((team) => team.side === MatchSide.HOME);
-      const away = row.teams.find((team) => team.side === MatchSide.AWAY);
-      if (home?.finalScore !== homeTotal || away?.finalScore !== awayTotal) {
-        return 'AWARDED';
-      }
-    }
-    return 'PERIODS';
   }
 
   async create(
