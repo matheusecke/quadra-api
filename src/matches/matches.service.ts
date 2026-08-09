@@ -378,6 +378,16 @@ export class MatchesService {
         },
       });
     }
+    if (query.tournamentGroupIds) {
+      filters.push({ tournamentGroupId: { in: query.tournamentGroupIds } });
+    }
+    if (query.bracketRoundIds) {
+      filters.push({
+        bracketSlots: {
+          some: { isDeleted: false, roundId: { in: query.bracketRoundIds } },
+        },
+      });
+    }
     return {
       organizationId,
       isDeleted: false,

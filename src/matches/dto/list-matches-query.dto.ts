@@ -59,6 +59,32 @@ export class ListMatchesQueryDto extends PaginationDefaultsDto {
   @Min(1, { each: true })
   tournamentTeamIds?: number[];
 
+  @ApiPropertyOptional({
+    type: [Number],
+    example: [3, 4],
+    description:
+      'TournamentGroup ids. Repeat: ?tournamentGroupIds=3&tournamentGroupIds=4',
+  })
+  @IsOptional()
+  @Transform(repeatedPositiveIntegers)
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  tournamentGroupIds?: number[];
+
+  @ApiPropertyOptional({
+    type: [Number],
+    example: [7, 8],
+    description:
+      'TournamentBracketRound ids. Repeat: ?bracketRoundIds=7&bracketRoundIds=8',
+  })
+  @IsOptional()
+  @Transform(repeatedPositiveIntegers)
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  bracketRoundIds?: number[];
+
   @ApiPropertyOptional({ enum: MatchStatus, enumName: 'MatchStatus' })
   @IsOptional()
   @IsEnum(MatchStatus)
