@@ -21,12 +21,15 @@ import {
   ApiTags,
   ApiParam,
 } from '@nestjs/swagger';
+import { OrgRole } from '@prisma/client';
 import { TeamsService } from './teams.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 import { UpdateTeamStatusDto } from './dto/update-team-status.dto';
 import { ListTeamsQueryDto } from './dto/list-teams-query.dto';
+import { ListTeamAffiliationCandidatesQueryDto } from './dto/list-team-affiliation-candidates-query.dto';
 import { TeamResponseDto } from './dto/team-response.dto';
+import { TeamAffiliationCandidateResponseDto } from './dto/team-affiliation-candidate-response.dto';
 import {
   TeamMatchResponseDto,
   TeamSummaryResponseDto,
@@ -75,6 +78,24 @@ export class TeamsController {
     @CurrentUser() user: JwtPayload,
   ): Promise<{ count: number; data: TeamResponseDto[] }> {
     return this.teamsService.findAll(user.organizationId as number, query);
+  }
+
+  @Get('affiliation-candidates')
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.ORG_ADMIN)
+  @UseInterceptors(PaginationInterceptor)
+  @ApiOperation({
+    summary: 'List candidate teams for organization affiliation',
+  })
+  @ApiPaginatedOkResponse(TeamAffiliationCandidateResponseDto)
+  findAffiliationCandidates(
+    @Query() query: ListTeamAffiliationCandidatesQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<{ count: number; data: TeamAffiliationCandidateResponseDto[] }> {
+    return this.teamsService.findAffiliationCandidates(
+      user.organizationId as number,
+      query,
+    );
   }
 
   @Get(':id/tournaments')
@@ -141,15 +162,24 @@ export class TeamsController {
   }
 
   @Patch(':id')
-  @UseGuards(SystemAdminGuard)
-  @ApiOperation({ summary: 'Update team name (system admin only)' })
+  @UseGuards(OrgRoleGuard)
+  @OrgRoles(OrgRole.TEAM_ADMIN)
+  @ApiOperation({
+    summary: 'Update global identity of the active administrator own team',
+  })
   @ApiParam({ name: 'id', example: 1, description: 'Team id.' })
   @ApiOkResponse({ type: TeamResponseDto })
   update(
     @Param('id', ParseIntApiPipe) id: number,
     @Body() dto: UpdateTeamDto,
+    @CurrentUser() user: JwtPayload,
   ): Promise<TeamResponseDto> {
-    return this.teamsService.update(id, dto);
+    return this.teamsService.updateForTeamAdmin(
+      user.organizationId as number,
+      user.sub,
+      id,
+      dto,
+    );
   }
 
   @Patch(':id/status')

@@ -27,11 +27,16 @@ const mockPrisma: any = {
     findFirst: jest.fn(),
     update: jest.fn(),
   },
+  organizationUserAffiliation: { findFirst: jest.fn() },
   tournament: { findMany: jest.fn() },
   tournamentTeam: { count: jest.fn(), findMany: jest.fn() },
   match: { count: jest.fn(), findMany: jest.fn() },
   matchTeam: { findMany: jest.fn() },
 };
+
+const apiErrorMessage = (error: unknown): string =>
+  ((error as ApiException).getResponse() as { error: { message: string } })
+    .error.message;
 
 const baseTeam = {
   id: 1,
@@ -891,50 +896,82 @@ describe('TeamsService', () => {
     });
   });
 
-  describe('update', () => {
-    it('returns updated DTO on success', async () => {
+  describe('updateForTeamAdmin', () => {
+    it('partially edits global identity and locality for the active own-team admin', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 30,
+      });
       mockPrisma.team.findFirst
         .mockResolvedValueOnce({ id: 1, slug: 'sao-paulo-fc' })
         .mockResolvedValueOnce(null);
       mockPrisma.team.update.mockResolvedValue({
         ...baseTeam,
-        name: 'São Paulo FC Updated',
-        slug: 'sao-paulo-fc-updated',
+        name: 'Águias Campinas',
+        shortName: 'AGC',
+        city: 'Campinas',
+        state: BrazilianState.SP,
       });
 
-      const result = await service.update(1, { name: 'São Paulo FC Updated' });
+      await service.updateForTeamAdmin(42, 77, 1, {
+        name: 'Águias Campinas',
+        shortName: 'AGC',
+        city: 'Campinas',
+        state: BrazilianState.SP,
+      });
 
       expect(mockPrisma.team.update).toHaveBeenCalledWith({
         where: { id: 1 },
-        data: { name: 'São Paulo FC Updated', slug: 'sao-paulo-fc-updated' },
-        select: expect.objectContaining({ id: true }),
+        data: {
+          name: 'Águias Campinas',
+          shortName: 'AGC',
+          city: 'Campinas',
+          state: BrazilianState.SP,
+          slug: 'aguias-campinas',
+        },
+        select: expect.any(Object),
       });
-      expect(result.name).toBe('São Paulo FC Updated');
     });
 
-    it('throws 404 when team does not exist', async () => {
-      mockPrisma.team.findFirst.mockResolvedValue(null);
-
-      const err = await service
-        .update(999, { name: 'Does not exist' })
-        .catch((e: unknown) => e);
-
-      expect(err).toBeInstanceOf(ApiException);
-      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+    it('does not recalculate slug when name is absent', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 30,
+      });
+      mockPrisma.team.findFirst.mockResolvedValue({ id: 1, slug: 'same-slug' });
+      mockPrisma.team.update.mockResolvedValue({
+        ...baseTeam,
+        shortName: 'SP',
+      });
+      await service.updateForTeamAdmin(42, 77, 1, { shortName: 'SP' });
+      expect(mockPrisma.team.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { shortName: 'SP' } }),
+      );
     });
 
-    it('throws 409 when new slug conflicts with another existing team', async () => {
+    it('rejects a team admin from another team or an invalid org-scoped actor', async () => {
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue(null);
+      const error = await service
+        .updateForTeamAdmin(42, 77, 1, { shortName: 'SP' })
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(error)).toBe('You can only manage your own team');
+    });
+
+    it('rejects an empty update and a conflicting changed name', async () => {
+      const emptyError = await service
+        .updateForTeamAdmin(42, 77, 1, {})
+        .catch((caught: unknown) => caught);
+      expect(apiErrorMessage(emptyError)).toBe(
+        'At least one editable field is required',
+      );
+      mockPrisma.organizationUserAffiliation.findFirst.mockResolvedValue({
+        id: 30,
+      });
       mockPrisma.team.findFirst
-        .mockResolvedValueOnce({ id: 1, slug: 'old-slug' })
+        .mockResolvedValueOnce({ id: 1, slug: 'old' })
         .mockResolvedValueOnce({ id: 5 });
-
-      const err = await service
-        .update(1, { name: 'Conflicting Name' })
-        .catch((e: unknown) => e);
-
-      expect(err).toBeInstanceOf(ApiException);
-      expect((err as ApiException).getStatus()).toBe(HttpStatus.CONFLICT);
-      expect(mockPrisma.team.update).not.toHaveBeenCalled();
+      const error = await service
+        .updateForTeamAdmin(42, 77, 1, { name: 'Conflicting Name' })
+        .catch((caught: unknown) => caught as ApiException);
+      expect(error.getStatus()).toBe(HttpStatus.CONFLICT);
     });
   });
 
@@ -991,6 +1028,79 @@ describe('TeamsService', () => {
       expect(err).toBeInstanceOf(ApiException);
       expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
       expect(mockPrisma.team.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findAffiliationCandidates', () => {
+    it('excludes live active/pending links and maps a live inactive link', async () => {
+      mockPrisma.team.count.mockResolvedValue(1);
+      mockPrisma.team.findMany.mockResolvedValue([
+        {
+          id: 8,
+          name: 'Águias Campinas',
+          shortName: 'AGC',
+          city: 'Campinas',
+          state: BrazilianState.SP,
+          organizationAffiliations: [
+            { id: 15, status: AffiliationStatus.INACTIVE },
+          ],
+        },
+      ]);
+
+      const result = await service.findAffiliationCandidates(7, {
+        page: 1,
+        limit: 10,
+        q: 'agc',
+      });
+
+      expect(result).toEqual({
+        count: 1,
+        data: [
+          {
+            id: 8,
+            name: 'Águias Campinas',
+            shortName: 'AGC',
+            city: 'Campinas',
+            state: BrazilianState.SP,
+            affiliation: { id: 15, status: AffiliationStatus.INACTIVE },
+          },
+        ],
+      });
+      expect(mockPrisma.team.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: EntityStatus.ACTIVE,
+            isDeleted: false,
+            organizationAffiliations: {
+              none: {
+                organizationId: 7,
+                isDeleted: false,
+                status: {
+                  in: [AffiliationStatus.PENDING, AffiliationStatus.ACTIVE],
+                },
+              },
+            },
+            OR: [
+              { name: { contains: 'agc', mode: 'insensitive' } },
+              { shortName: { contains: 'agc', mode: 'insensitive' } },
+            ],
+          }),
+        }),
+      );
+    });
+
+    it('maps null when no live inactive affiliation exists', async () => {
+      mockPrisma.team.count.mockResolvedValue(1);
+      mockPrisma.team.findMany.mockResolvedValue([
+        { ...baseTeam, organizationAffiliations: [] },
+      ]);
+
+      const result = await service.findAffiliationCandidates(7, {
+        page: 1,
+        limit: 10,
+      });
+
+      expect(result.data[0].affiliation).toBeNull();
     });
   });
 });

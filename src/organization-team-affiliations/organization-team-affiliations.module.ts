@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
+import { OrganizationUserAffiliationsModule } from '../organization-user-affiliations/organization-user-affiliations.module';
 import { OrganizationTeamAffiliationsService } from './organization-team-affiliations.service';
 import { OrganizationTeamAffiliationsController } from './organization-team-affiliations.controller';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, OrganizationUserAffiliationsModule],
   controllers: [OrganizationTeamAffiliationsController],
   providers: [OrganizationTeamAffiliationsService],
   exports: [OrganizationTeamAffiliationsService],

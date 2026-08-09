@@ -464,6 +464,40 @@ describe('UsersService', () => {
     });
   });
 
+  describe('lookupActiveByEmail', () => {
+    it('returns only id, name, and email for an exact active email', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 42,
+        name: 'Marina Souza',
+        email: 'marina@example.com',
+      });
+
+      await expect(
+        service.lookupActiveByEmail('marina@example.com'),
+      ).resolves.toEqual({
+        id: 42,
+        name: 'Marina Souza',
+        email: 'marina@example.com',
+      });
+      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          email: { equals: 'marina@example.com', mode: 'insensitive' },
+          status: EntityStatus.ACTIVE,
+          isDeleted: false,
+        },
+        select: { id: true, name: true, email: true },
+      });
+    });
+
+    it('returns the same 404 for missing, inactive, and deleted users', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.lookupActiveByEmail('missing@example.com'),
+      ).rejects.toMatchObject({ status: 404 });
+    });
+  });
+
   describe('softDelete', () => {
     it('soft deletes the user and revokes refresh tokens', async () => {
       mockPrisma.user.findFirst.mockResolvedValue({ id: baseUser.id });

@@ -4,6 +4,7 @@ import {
   EntityStatus,
   MatchResult,
   MatchStatus,
+  OrgRole,
   Prisma,
   TournamentStatus,
 } from '@prisma/client';
@@ -14,7 +15,9 @@ import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 import { UpdateTeamStatusDto } from './dto/update-team-status.dto';
 import { ListTeamsQueryDto } from './dto/list-teams-query.dto';
+import { ListTeamAffiliationCandidatesQueryDto } from './dto/list-team-affiliation-candidates-query.dto';
 import { TeamResponseDto } from './dto/team-response.dto';
+import { TeamAffiliationCandidateResponseDto } from './dto/team-affiliation-candidate-response.dto';
 import {
   TeamMatchResponseDto,
   TeamProfileStatus,
@@ -259,6 +262,81 @@ export class TeamsService {
     return { count, data };
   }
 
+  async findAffiliationCandidates(
+    organizationId: number,
+    query: ListTeamAffiliationCandidatesQueryDto,
+  ): Promise<{ count: number; data: TeamAffiliationCandidateResponseDto[] }> {
+    const where: Prisma.TeamWhereInput = {
+      isDeleted: false,
+      status: EntityStatus.ACTIVE,
+      organizationAffiliations: {
+        none: {
+          organizationId,
+          isDeleted: false,
+          status: { in: [AffiliationStatus.PENDING, AffiliationStatus.ACTIVE] },
+        },
+      },
+      ...(query.q
+        ? {
+            OR: [
+              {
+                name: { contains: query.q, mode: Prisma.QueryMode.insensitive },
+              },
+              {
+                shortName: {
+                  contains: query.q,
+                  mode: Prisma.QueryMode.insensitive,
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [count, rows] = await Promise.all([
+      this.prisma.team.count({ where }),
+      this.prisma.team.findMany({
+        where,
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          shortName: true,
+          city: true,
+          state: true,
+          organizationAffiliations: {
+            where: {
+              organizationId,
+              isDeleted: false,
+              status: AffiliationStatus.INACTIVE,
+            },
+            take: 1,
+            select: { id: true, status: true },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      count,
+      data: rows.map(({ organizationAffiliations, ...team }) => {
+        const link = organizationAffiliations[0];
+        return {
+          ...team,
+          // Select filters to status: INACTIVE only, so this narrows safely.
+          affiliation: link
+            ? {
+                id: link.id,
+                status: link.status as Extract<AffiliationStatus, 'INACTIVE'>,
+              }
+            : null,
+        };
+      }),
+    };
+  }
+
   async findById(id: number): Promise<TeamResponseDto> {
     const team = await this.prisma.team.findFirst({
       where: { id, isDeleted: false },
@@ -478,35 +556,84 @@ export class TeamsService {
     };
   }
 
-  async update(id: number, dto: UpdateTeamDto): Promise<TeamResponseDto> {
+  async updateForTeamAdmin(
+    organizationId: number,
+    actorUserId: number,
+    teamId: number,
+    dto: UpdateTeamDto,
+  ): Promise<TeamResponseDto> {
+    if (
+      dto.name === undefined &&
+      dto.shortName === undefined &&
+      dto.city === undefined &&
+      dto.state === undefined
+    ) {
+      throw ApiException.badRequest('At least one editable field is required');
+    }
+
+    const actor = await this.prisma.organizationUserAffiliation.findFirst({
+      where: {
+        organizationId,
+        userId: actorUserId,
+        teamId,
+        role: OrgRole.TEAM_ADMIN,
+        status: AffiliationStatus.ACTIVE,
+        isDeleted: false,
+        team: {
+          is: {
+            status: EntityStatus.ACTIVE,
+            isDeleted: false,
+            organizationAffiliations: {
+              some: {
+                organizationId,
+                status: AffiliationStatus.ACTIVE,
+                isDeleted: false,
+              },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    if (!actor) {
+      throw ApiException.forbidden('You can only manage your own team');
+    }
+
     const existing = await this.prisma.team.findFirst({
-      where: { id, isDeleted: false },
+      where: { id: teamId, isDeleted: false },
       select: { id: true, slug: true },
     });
-
     if (!existing) {
       throw ApiException.notFound('Team not found');
     }
 
-    const newSlug = slugify(dto.name);
+    const data: Prisma.TeamUpdateInput = {
+      ...(dto.shortName !== undefined ? { shortName: dto.shortName } : {}),
+      ...(dto.city !== undefined ? { city: dto.city } : {}),
+      ...(dto.state !== undefined ? { state: dto.state } : {}),
+    };
 
-    if (newSlug !== existing.slug) {
-      const conflict = await this.prisma.team.findFirst({
-        where: { slug: newSlug, isDeleted: false, id: { not: id } },
-        select: { id: true },
-      });
-
-      if (conflict) {
-        throw ApiException.conflict(
-          'A team with this name already exists.',
-          'DUPLICATE_RECORD',
-        );
+    if (dto.name !== undefined) {
+      const slug = slugify(dto.name);
+      if (slug !== existing.slug) {
+        const conflict = await this.prisma.team.findFirst({
+          where: { slug, isDeleted: false, id: { not: teamId } },
+          select: { id: true },
+        });
+        if (conflict) {
+          throw ApiException.conflict(
+            'A team with this name already exists.',
+            'DUPLICATE_RECORD',
+          );
+        }
       }
+      data.name = dto.name;
+      data.slug = slug;
     }
 
     return this.prisma.team.update({
-      where: { id },
-      data: { name: dto.name, slug: newSlug },
+      where: { id: teamId },
+      data,
       select: teamSelect,
     });
   }

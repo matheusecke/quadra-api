@@ -11,6 +11,7 @@ import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { SetSystemAdminDto } from './dto/set-system-admin.dto';
+import { UserLookupResponseDto } from './dto/user-lookup-response.dto';
 
 const userSelect = {
   id: true,
@@ -87,6 +88,20 @@ export class UsersService {
       throw ApiException.notFound('User not found');
     }
 
+    return user;
+  }
+
+  async lookupActiveByEmail(email: string): Promise<UserLookupResponseDto> {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: { equals: email, mode: Prisma.QueryMode.insensitive },
+        status: EntityStatus.ACTIVE,
+        isDeleted: false,
+      },
+      select: { id: true, name: true, email: true },
+    });
+
+    if (!user) throw ApiException.notFound('User not found');
     return user;
   }
 

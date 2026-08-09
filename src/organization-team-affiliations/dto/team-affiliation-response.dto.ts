@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { AffiliationStatus } from '@prisma/client';
+import { AffiliationStatus, BrazilianState } from '@prisma/client';
 
 export class AffiliationTeamDto {
   @ApiProperty({ example: 3 })
@@ -7,6 +7,15 @@ export class AffiliationTeamDto {
 
   @ApiProperty({ example: 'Equipe A' })
   name!: string;
+
+  @ApiProperty({ example: 'AGC' })
+  shortName!: string;
+
+  @ApiPropertyOptional({ example: 'Campinas', nullable: true })
+  city!: string | null;
+
+  @ApiPropertyOptional({ enum: BrazilianState, nullable: true })
+  state!: BrazilianState | null;
 }
 
 export class TeamAffiliationResponseDto {
