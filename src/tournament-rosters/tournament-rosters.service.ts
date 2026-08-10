@@ -25,10 +25,6 @@ export const tournamentRosterSelect = {
   jerseyNumberSnapshot: true,
   displayNameSnapshot: true,
   status: true,
-  joinedAt: true,
-  leftAt: true,
-  createdAt: true,
-  updatedAt: true,
 } satisfies Prisma.TournamentRosterSelect;
 
 type TournamentRosterRow = Prisma.TournamentRosterGetPayload<{

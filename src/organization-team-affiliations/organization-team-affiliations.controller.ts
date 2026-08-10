@@ -181,9 +181,10 @@ export class OrganizationTeamAffiliationsController {
   }
 
   @Get('teams/:teamId/affiliations')
+  @UseGuards(SystemAdminGuard)
   @UseInterceptors(PaginationInterceptor)
   @ApiOperation({
-    summary: 'List organization affiliations for a team',
+    summary: 'List organization affiliations for a team (system admin only)',
     description: 'Paginated list scoped by global `teamId`.',
   })
   @ApiParam({ name: 'teamId', example: 3, description: 'Team id.' })

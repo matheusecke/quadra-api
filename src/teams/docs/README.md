@@ -9,7 +9,7 @@ Team lifecycle management. Teams are affiliated to organizations through `Organi
 | `POST`   | `/teams`                        | `JwtAuthGuard`, `SystemAdminGuard`              | Create team; requires `name` and `shortName`; auto-generates slug from name                           |
 | `GET`    | `/teams`                        | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Paginated catalog scoped to the active JWT organization; filters: `q` (name search), `ids`, `status`  |
 | `GET`    | `/teams/affiliation-candidates` | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)`       | Paginated search for teams the active organization can invite; filter: `q` (name/short name)          |
-| `GET`    | `/teams/:id`                    | `JwtAuthGuard`                                  | Authenticated global lookup by id                                                                     |
+| `GET`    | `/teams/:id`                    | `JwtAuthGuard`, `SystemAdminGuard`              | Global lookup by id; platform operation                                                               |
 | `GET`    | `/teams/:id/summary`            | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Team identity, all valid titles, and organization-scoped historical averages                          |
 | `GET`    | `/teams/:id/matches`            | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Paginated `upcoming` or `history` matches; `scope` is required                                        |
 | `GET`    | `/teams/:id/tournaments`        | `JwtAuthGuard`, `OrgRoleGuard` (`ANY_ORG_ROLE`) | Paginated tournament participations and per-participation averages                                    |
@@ -25,8 +25,9 @@ The three `/teams/:id/*` profile reads take the active organization only from
 the JWT. A team is visible when it is non-deleted and has either a live active
 organization affiliation or a non-deleted tournament participation in that
 organization. Missing, deleted, and organization-invisible ids all return the
-same `404 Team not found` response. The original `GET /teams/:id` route remains
-an authenticated global lookup and is unchanged.
+same `404 Team not found` response. The original `GET /teams/:id` route is a
+system-admin-only global lookup, distinct from the three tenant-scoped
+`/teams/:id/*` reads above.
 
 `summary` returns current global identity, every valid completed title, and
 historical statistics. Contextual status is `INACTIVE` for an inactive global
@@ -69,7 +70,7 @@ Exclusively an active own-team `TEAM_ADMIN` operation. The route no longer accep
 ## Rules
 
 - **`GET /teams`**: tenant-scoped catalog. A team qualifies when it has a non-deleted, `ACTIVE` `OrganizationTeamAffiliation` in the JWT's active organization. Requires an active org context (`OrgRoleGuard`); a token without one, including a platform-admin token, gets `403`. Ordering: `name ASC`, then `id ASC`. Response includes `city`/`state` (nullable). The old `organizationId` query parameter is removed — organization scope comes only from the JWT.
-- **Get by id** (`GET /teams/:id`): any authenticated user, no tenant scoping (global lookup).
+- **Get by id** (`GET /teams/:id`): system admin only. It is a global lookup with no tenant scoping, so an organization member has no legitimate use for it; the tenant-scoped surfaces are `GET /teams` and `GET /teams/:id/summary`.
 - **`PATCH /teams/:id`**: active own-team `TEAM_ADMIN` only (see above).
 - **Create, update status, delete**: system admin only — platform operations, documented separately below; no role-based exceptions.
 

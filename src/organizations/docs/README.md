@@ -7,8 +7,8 @@ Tenant lifecycle management. Organizations are the top-level multi-tenant bounda
 | Method  | Path                        | Guards                                     | Purpose |
 | ------- | --------------------------- | ------------------------------------------ | ------- |
 | `POST`  | `/organizations`            | `JwtAuthGuard`, `SystemAdminGuard`         | Create organization; auto-generates slug from name |
-| `GET`   | `/organizations`            | `JwtAuthGuard`                             | Paginated list; filters: `q` (name search), `status` |
-| `GET`   | `/organizations/:id`        | `JwtAuthGuard`                             | Get by id |
+| `GET`   | `/organizations`            | `JwtAuthGuard`, `SystemAdminGuard`         | Paginated list; filters: `q` (name search), `status` |
+| `GET`   | `/organizations/:id`        | `JwtAuthGuard`, `SystemAdminGuard`         | Get by id |
 | `PATCH` | `/organizations/:id`        | `JwtAuthGuard`                             | Update name; service enforces permission check (see Rules) |
 | `PATCH` | `/organizations/:id/status` | `JwtAuthGuard`, `SystemAdminGuard`         | Update status; system admin only |
 | `DELETE`| `/organizations/:id`        | `JwtAuthGuard`, `SystemAdminGuard`         | Soft delete; sets `isDeleted: true` + `status: INACTIVE`; revokes org refresh tokens |
@@ -17,7 +17,7 @@ Tenant lifecycle management. Organizations are the top-level multi-tenant bounda
 
 ## Rules
 
-- **Read** (list / get): any authenticated user.
+- **Read** (list / get): system admin only.
 - **Create**, **delete**, **update status**: system admin only.
 - **Update name** (`PATCH /organizations/:id`): system admin OR an `ORG_ADMIN` whose JWT `organizationId` matches the organization being updated. Any other caller receives `403 Forbidden`.
 

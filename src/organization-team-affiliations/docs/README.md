@@ -15,11 +15,11 @@ Manages the affiliation lifecycle between organizations and teams. An organizati
 | `DELETE` | `/organization-team-affiliations/:id`                | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Cancel one `PENDING` team onboarding; cascades to pending admin invites and B1                                               |
 | `POST`   | `/organization-team-affiliations/:id/deactivate`     | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Move an `ACTIVE` affiliation to `INACTIVE`; cascades to member affiliations                                                  |
 | `POST`   | `/organization-team-affiliations/:id/activate`       | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN)` | Move an `INACTIVE` affiliation back to `ACTIVE`                                                                              |
-| `GET`    | `/teams/:teamId/affiliations`                        | `JwtAuthGuard`                            | Paginated list of org affiliations for a team                                                                                |
+| `GET`    | `/teams/:teamId/affiliations`                        | `JwtAuthGuard`, `SystemAdminGuard`        | Paginated list of org affiliations for a team (system admin only)                                                            |
 
 Paginated routes use `PaginationInterceptor` — see [HTTP-LAYER.md](../../../docs/HTTP-LAYER.md).
 
-For org-admin routes in this module, the active organization comes only from `@CurrentUser().organizationId`. Controllers translate that JWT value into the numeric `orgId` argument expected by the service. The explicit `:orgId` route remains only on the system-admin status override endpoint. `GET /teams/:teamId/affiliations` also remains unchanged because it is a global team lookup, not an active-org endpoint.
+For org-admin routes in this module, the active organization comes only from `@CurrentUser().organizationId`. Controllers translate that JWT value into the numeric `orgId` argument expected by the service. The explicit `:orgId` route remains only on the system-admin status override endpoint. `GET /teams/:teamId/affiliations` is a cross-tenant global lookup, not an active-org endpoint, so it requires `SystemAdminGuard` instead of an organization role. Its rename to `/teams/:teamId/organization-team-affiliations` remains pending in `docs/roadmaps-decisions.md`, item 1.
 
 ## Business Rules
 
