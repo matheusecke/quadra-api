@@ -370,6 +370,107 @@ describe('UsersService', () => {
     });
   });
 
+  describe('updateMe', () => {
+    const activeUser = { id: 1 };
+    const updatedRow = {
+      id: 1,
+      email: 'test@example.com',
+      name: 'Renamed User',
+      birthDate: new Date('1998-04-23T00:00:00.000Z'),
+      heightCm: 182,
+    };
+
+    it('writes only the fields present in the request', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(activeUser);
+      mockPrisma.user.update.mockResolvedValue(updatedRow);
+
+      const result = await service.updateMe(1, { name: 'Renamed User' });
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { name: 'Renamed User' },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          birthDate: true,
+          heightCm: true,
+        },
+      });
+      expect(result.birthDate).toBe('1998-04-23');
+    });
+
+    it('converts the birth date to UTC midnight before writing', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(activeUser);
+      mockPrisma.user.update.mockResolvedValue(updatedRow);
+
+      await service.updateMe(1, { birthDate: '2000-12-31' });
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { birthDate: new Date('2000-12-31T00:00:00.000Z') },
+        }),
+      );
+    });
+
+    it('clears the height when heightCm is explicitly null', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(activeUser);
+      mockPrisma.user.update.mockResolvedValue({
+        ...updatedRow,
+        heightCm: null,
+      });
+
+      const result = await service.updateMe(1, { heightCm: null });
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { heightCm: null } }),
+      );
+      expect(result.heightCm).toBeNull();
+    });
+
+    it('leaves the height untouched when heightCm is absent', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(activeUser);
+      mockPrisma.user.update.mockResolvedValue(updatedRow);
+
+      await service.updateMe(1, { name: 'Only Name' });
+
+      expect(mockPrisma.user.update.mock.calls[0][0].data).not.toHaveProperty(
+        'heightCm',
+      );
+    });
+
+    it('rejects an empty body with EMPTY_UPDATE', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(activeUser);
+
+      const err = await service.updateMe(1, {}).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.BAD_REQUEST);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('throws 404 for an inactive, deleted or unknown user', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      const err = await service
+        .updateMe(1, { name: 'Renamed User' })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('never revokes refresh tokens', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(activeUser);
+      mockPrisma.user.update.mockResolvedValue(updatedRow);
+
+      await service.updateMe(1, { name: 'Renamed User' });
+
+      expect(mockPrisma.refreshToken.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('findById', () => {
     it('returns a non-deleted user by id', async () => {
       mockPrisma.user.findFirst.mockResolvedValue(baseUser);

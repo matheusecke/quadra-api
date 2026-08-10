@@ -13,6 +13,7 @@ import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { SetSystemAdminDto } from './dto/set-system-admin.dto';
 import { UserLookupResponseDto } from './dto/user-lookup-response.dto';
 import { MyProfileResponseDto } from './dto/my-profile-response.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 
 const userSelect = {
   id: true,
@@ -108,6 +109,42 @@ export class UsersService {
     if (!user) {
       throw ApiException.notFound('User not found.');
     }
+
+    return toMyProfile(user);
+  }
+
+  async updateMe(
+    userId: number,
+    dto: UpdateMyProfileDto,
+  ): Promise<MyProfileResponseDto> {
+    const current = await this.prisma.user.findFirst({
+      where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
+      select: { id: true },
+    });
+
+    if (!current) {
+      throw ApiException.notFound('User not found.');
+    }
+
+    const data: Prisma.UserUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.birthDate !== undefined) {
+      data.birthDate = new Date(`${dto.birthDate}T00:00:00.000Z`);
+    }
+    if (dto.heightCm !== undefined) data.heightCm = dto.heightCm;
+
+    if (Object.keys(data).length === 0) {
+      throw ApiException.badRequest(
+        'At least one profile field must be provided.',
+        'EMPTY_UPDATE',
+      );
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: myProfileSelect,
+    });
 
     return toMyProfile(user);
   }
