@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Expose, Transform } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsInt,
@@ -32,11 +32,9 @@ export class RegisterDto {
   password: string;
 
   @ApiProperty({
-    name: 'birth_date',
     example: '1998-04-23',
     description: 'Birth date as a date-only string in YYYY-MM-DD format.',
   })
-  @Expose({ name: 'birth_date' })
   @IsBirthDate()
   birthDate: string;
 
@@ -51,5 +49,5 @@ export class RegisterDto {
   @IsInt()
   @Min(50)
   @Max(250)
-  height?: number | null;
+  heightCm?: number | null;
 }

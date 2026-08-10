@@ -1,12 +1,12 @@
 # Module: Users (`UsersModule`)
 
-Platform-admin user lifecycle and identity/profile fields (`email`, `name`, optional `birthDate`, optional `height`). Not the primary API for roster, coaching staff, or stats screens — those should eventually live on organization/team/affiliation endpoints with user data as relations.
+Platform-admin user lifecycle and identity/profile fields (`email`, `name`, optional `birthDate`, optional `heightCm`). Not the primary API for roster, coaching staff, or stats screens — those should eventually live on organization/team/affiliation endpoints with user data as relations.
 
 ## Endpoints
 
 | Method   | Path                      | Guards                                                | Purpose                                                                                                                  |
 | -------- | ------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `POST`   | `/users`                  | `JwtAuthGuard`, `SystemAdminGuard`                    | Create global user; optional `birthDate`, optional nullable `height`, optional `isSystemAdmin`; does not log the user in |
+| `POST`   | `/users`                  | `JwtAuthGuard`, `SystemAdminGuard`                    | Create global user; optional `birthDate`, optional nullable `heightCm`, optional `isSystemAdmin`; does not log the user in |
 | `GET`    | `/users`                  | `JwtAuthGuard`, `SystemAdminGuard`                    | Paginated list; identity filters; optional `organizationId`, `teamId`, `role` for admin search                           |
 | `GET`    | `/users/lookup`           | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN, TEAM_ADMIN)` | Exact, case-insensitive active-user lookup by `email` query param; returns `{ id, name, email }`                         |
 | `GET`    | `/users/:id`              | `JwtAuthGuard`, `SystemAdminGuard`                    | Get by id                                                                                                                |

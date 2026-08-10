@@ -29,7 +29,7 @@ interface JwtPayload {
 
 | Method | Path                        | Auth   | Purpose                                                                                                                                                                                                          |
 | ------ | --------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST` | `/auth/register`            | —      | Creates an `ACTIVE` non-system-admin user with `email`, `name`, `password`, required `birth_date`, and optional nullable `height`; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
+| `POST` | `/auth/register`            | —      | Creates an `ACTIVE` non-system-admin user with `email`, `name`, `password`, required `birthDate`, and optional nullable `heightCm`; returns `accessToken`; stores hashed refresh token and sets `httpOnly` cookie |
 | `POST` | `/auth/login`               | —      | Authenticates; returns `accessToken`; refresh cookie                                                                                                                                                             |
 | `POST` | `/auth/refresh`             | Cookie | Rotates refresh token; new `accessToken`; preserves org context when still valid                                                                                                                                 |
 | `POST` | `/auth/logout`              | Cookie | Revokes current refresh token and clears cookie (no bearer required)                                                                                                                                             |
@@ -48,7 +48,7 @@ Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Re
 
 ## Register profile fields
 
-`POST /auth/register` accepts `birth_date` as a required date-only string (`YYYY-MM-DD`) and `height` as an optional nullable integer in centimeters. `birth_date` is persisted as PostgreSQL `DATE`; `height` is persisted as `users.height_cm`.
+`POST /auth/register` accepts `birthDate` as a required date-only string (`YYYY-MM-DD`) and `heightCm` as an optional nullable integer in centimeters. `birthDate` must be a real past date within the last 120 years (`IsBirthDate`, `src/common/validators/is-birth-date.validator.ts`) and is persisted as PostgreSQL `DATE`; `heightCm` is persisted as `users.height_cm`. Request bodies use camelCase across the whole API — snake_case is a database column convention only.
 
 ## Session and refresh token
 

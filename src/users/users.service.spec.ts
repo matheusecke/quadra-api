@@ -140,7 +140,7 @@ describe('UsersService', () => {
         name: 'Profile User',
         password: 'password123',
         birthDate,
-        height: 182,
+        heightCm: 182,
       } as any);
 
       expect(mockPrisma.user.create).toHaveBeenCalledWith({
@@ -175,7 +175,7 @@ describe('UsersService', () => {
         name: 'Nullable Height',
         password: 'password123',
         birthDate,
-        height: null,
+        heightCm: null,
       } as any);
 
       expect(mockPrisma.user.create).toHaveBeenCalledWith({

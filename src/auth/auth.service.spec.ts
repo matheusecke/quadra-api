@@ -179,7 +179,7 @@ describe('AuthService', () => {
           name: 'New User',
           password: 'password123',
           birthDate: expectedBirthDate,
-          height: null,
+          heightCm: null,
           isSystemAdmin: false,
         },
         mockPrisma,
@@ -224,7 +224,7 @@ describe('AuthService', () => {
         name: 'Profile User',
         password: 'password123',
         birthDate: '1998-04-23',
-        height: null,
+        heightCm: null,
       } as any);
 
       expect(mockUsersService.create).toHaveBeenCalledWith(
@@ -233,7 +233,7 @@ describe('AuthService', () => {
           name: 'Profile User',
           password: 'password123',
           birthDate: expectedBirthDate,
-          height: null,
+          heightCm: null,
           isSystemAdmin: false,
         },
         mockPrisma,
@@ -261,7 +261,7 @@ describe('AuthService', () => {
       } as any);
 
       expect(mockUsersService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ height: null }),
+        expect.objectContaining({ heightCm: null }),
         mockPrisma,
       );
     });
@@ -291,7 +291,7 @@ describe('AuthService', () => {
           name: 'Client User',
           password: 'password123',
           birthDate: expectedBirthDate,
-          height: null,
+          heightCm: null,
           isSystemAdmin: false,
         },
         mockPrisma,
@@ -325,7 +325,7 @@ describe('AuthService', () => {
           name: 'Rollback User',
           password: 'password123',
           birthDate: expectedBirthDate,
-          height: null,
+          heightCm: null,
           isSystemAdmin: false,
         },
         mockPrisma,

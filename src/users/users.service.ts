@@ -42,7 +42,7 @@ export class UsersService {
       email: dto.email,
       name: dto.name,
       passwordHash,
-      heightCm: dto.height ?? null,
+      heightCm: dto.heightCm ?? null,
       isSystemAdmin: dto.isSystemAdmin ?? false,
     };
 

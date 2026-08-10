@@ -74,7 +74,7 @@ export class AuthService {
           name: dto.name,
           password: dto.password,
           birthDate: this.parseDateOnly(dto.birthDate),
-          height: dto.height ?? null,
+          heightCm: dto.heightCm ?? null,
           isSystemAdmin: false,
         },
         tx,
