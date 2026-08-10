@@ -307,10 +307,16 @@ export class AuthService {
     userId: number,
     currentPassword: string,
     newPassword: string,
-  ): Promise<void> {
+    organizationId: number | null,
+  ): Promise<{ accessToken: string; rawRefreshToken: string }> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
-      select: { id: true, passwordHash: true },
+      select: {
+        id: true,
+        email: true,
+        isSystemAdmin: true,
+        passwordHash: true,
+      },
     });
 
     if (!user) {
@@ -328,16 +334,39 @@ export class AuthService {
       );
     }
 
+    // Hashing is slow by design; keep it out of the transaction.
     const newHash = await bcrypt.hash(newPassword, 10);
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash: newHash },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { passwordHash: newHash },
+      });
 
-    await this.prisma.refreshToken.updateMany({
-      where: { userId, isRevoked: false },
-      data: { isRevoked: true },
+      // Revokes the caller's own token too. The pair issued right below is what
+      // keeps this session alive; every other device has to log in again.
+      await tx.refreshToken.updateMany({
+        where: { userId, isRevoked: false },
+        data: { isRevoked: true },
+      });
+
+      const orgContext = await this.getActiveOrgContext(
+        tx,
+        userId,
+        organizationId,
+      );
+      const accessToken = this.signAccessToken(
+        user,
+        orgContext.organizationId,
+        orgContext.role,
+      );
+      const rawRefreshToken = await this.createRefreshToken(
+        userId,
+        tx,
+        orgContext.organizationId,
+      );
+
+      return { accessToken, rawRefreshToken };
     });
   }
 

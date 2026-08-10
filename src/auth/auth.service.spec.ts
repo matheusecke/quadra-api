@@ -904,44 +904,64 @@ describe('AuthService', () => {
   });
 
   describe('changePassword', () => {
+    const changePasswordUser = async () => ({
+      id: 1,
+      email: 'admin@example.com',
+      isSystemAdmin: false,
+      passwordHash: await bcrypt.hash('oldpassword', 10),
+    });
+
     it('throws 400 when current password is incorrect', async () => {
       mockPrisma.user.findFirst.mockResolvedValue({
         id: 1,
+        email: 'admin@example.com',
+        isSystemAdmin: false,
         passwordHash: '$2a$10$incorrecthash',
       });
 
-      await expect(
-        service.changePassword(1, 'wrongcurrent', 'newpass12'),
-      ).rejects.toThrow(ApiException);
+      const error = await service
+        .changePassword(1, 'wrongcurrent', 'newpass12', null)
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ApiException);
+      expect(apiErrorMessage(error)).toBe('Current password is incorrect.');
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.refreshToken.create).not.toHaveBeenCalled();
     });
 
     it('throws 404 for inactive or deleted users', async () => {
       mockPrisma.user.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.changePassword(1, 'oldpassword', 'newpassword1'),
+        service.changePassword(1, 'oldpassword', 'newpassword1', null),
       ).rejects.toThrow(ApiException);
 
       expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
         where: { id: 1, isDeleted: false, status: 'ACTIVE' },
-        select: { id: true, passwordHash: true },
+        select: {
+          id: true,
+          email: true,
+          isSystemAdmin: true,
+          passwordHash: true,
+        },
       });
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
-    it('updates password hash and revokes all refresh tokens', async () => {
-      const bcrypt = require('bcryptjs');
-      const hash = await bcrypt.hash('oldpassword', 10);
-
-      mockPrisma.user.findFirst.mockResolvedValue({
-        id: 1,
-        passwordHash: hash,
-      });
-      mockPrisma.user.update = jest.fn().mockResolvedValue({});
+    it('revokes every previous token and issues a new pair in one transaction', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(await changePasswordUser());
+      mockPrisma.user.update.mockResolvedValue({});
       mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 2 });
+      mockPrisma.refreshToken.create.mockResolvedValue({});
 
-      await service.changePassword(1, 'oldpassword', 'newpassword1');
+      const result = await service.changePassword(
+        1,
+        'oldpassword',
+        'newpassword1',
+        null,
+      );
 
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
       expect(mockPrisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 1 } }),
       );
@@ -949,6 +969,75 @@ describe('AuthService', () => {
         where: { userId: 1, isRevoked: false },
         data: { isRevoked: true },
       });
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ userId: 1, organizationId: null }),
+        }),
+      );
+      expect(result.accessToken).toBe('signed-jwt-token');
+      expect(typeof result.rawRefreshToken).toBe('string');
+      expect(result.rawRefreshToken.length).toBeGreaterThan(0);
+    });
+
+    it('stores a hash of the new password, never the plaintext', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(await changePasswordUser());
+      mockPrisma.user.update.mockResolvedValue({});
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({});
+
+      await service.changePassword(1, 'oldpassword', 'newpassword1', null);
+
+      const { data } = mockPrisma.user.update.mock.calls[0][0] as {
+        data: { passwordHash: string };
+      };
+      expect(data.passwordHash).not.toBe('newpassword1');
+      await expect(
+        bcrypt.compare('newpassword1', data.passwordHash),
+      ).resolves.toBe(true);
+    });
+
+    it('keeps the organization context when the affiliation is still usable', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(await changePasswordUser());
+      mockPrisma.user.update.mockResolvedValue({});
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({});
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([
+        usableOrgAdminAffiliation(),
+      ]);
+
+      await service.changePassword(1, 'oldpassword', 'newpassword1', 1);
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sub: 1,
+          organizationId: 1,
+          role: OrgRole.ORG_ADMIN,
+        }),
+      );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ organizationId: 1 }),
+        }),
+      );
+    });
+
+    it('falls back to global context when the organization is no longer usable', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(await changePasswordUser());
+      mockPrisma.user.update.mockResolvedValue({});
+      mockPrisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.refreshToken.create.mockResolvedValue({});
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+
+      await service.changePassword(1, 'oldpassword', 'newpassword1', 1);
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: null, role: null }),
+      );
+      expect(mockPrisma.refreshToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ organizationId: null }),
+        }),
+      );
     });
   });
 

@@ -36,7 +36,7 @@ interface JwtPayload {
 | `GET`  | `/auth/me`                  | Bearer | Current user and session context                                                                                                                                                                                 |
 | `GET`  | `/auth/org`                 | Bearer | User’s organization affiliations; optional `name` query filters organization names                                                                                                                               |
 | `POST` | `/auth/org`                 | Bearer | Chooses organization; rotates refresh with org context; org-scoped JWT                                                                                                                                           |
-| `POST` | `/auth/change-password`     | Bearer | Changes password; revokes active refresh tokens                                                                                                                                                                  |
+| `POST` | `/auth/change-password`     | Bearer | Changes password; revokes every active refresh token and returns a new `accessToken` plus refresh cookie, so the caller stays signed in and other devices do not                                                 |
 | `GET`  | `/auth/invites`             | Bearer | Lists pending invites for the current user; no active org context required                                                                                                                                       |
 | `POST` | `/auth/invites/:id/respond` | Bearer | Accepts or rejects a pending invite for the current user; no active org context required                                                                                                                         |
 
@@ -57,7 +57,7 @@ Rate limiting is enforced globally (`ThrottlerGuard` in `src/app.module.ts`). Re
 - `refresh_tokens.organization_id` optionally pins org; `role` is not stored on the row and is resolved from active affiliation on refresh.
 - Each `POST /auth/refresh` rotates the refresh token.
 - `POST /auth/org` also rotates the refresh token to bind the session to the chosen org.
-- Logout revokes the cookie’s token; password change revokes all active refresh tokens for the user.
+- Logout revokes the cookie’s token; a password change revokes every active refresh token of the user and immediately issues a new pair for the caller, keeping the current session and signing out every other device. The new session inherits the org context of the access token used to make the call, resolved through the same `getActiveOrgContext` fallback as `POST /auth/refresh`.
 - Login and refresh require `ACTIVE` user and not soft-deleted.
 - Login, org listing, org choice, and org-scoped refresh only consider active, non-deleted affiliations, organizations, and teams.
 - If org-scoped refresh finds org/affiliation/team no longer valid, the backend rotates session back to global context instead of failing the user (global refresh fallback — `organizationId: null`, `role: null`, no error).
