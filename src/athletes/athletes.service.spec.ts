@@ -43,7 +43,6 @@ const affiliationRow = {
   user: {
     id: 165,
     name: 'Rafael Moura',
-    status: EntityStatus.ACTIVE,
   },
 };
 
@@ -164,9 +163,20 @@ describe('AthletesService', () => {
           role: OrgRole.ATHLETE,
           jerseyNumber: 7,
           position: BasketballPosition.PG,
-          status: EntityStatus.ACTIVE,
         },
       ]);
+    });
+
+    it('does not read the account status column for the shared catalog', async () => {
+      mockPrisma.organizationUserAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+
+      await service.findAll(42, { page: 1, limit: 10 });
+
+      const { select } = mockPrisma.organizationUserAffiliation.findMany.mock
+        .calls[0][0] as { select: { user: { select: Record<string, true> } } };
+
+      expect(select.user.select).toEqual({ id: true, name: true });
     });
 
     it('combines q, ids, teamId and role and orders by user identity', async () => {

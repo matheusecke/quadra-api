@@ -30,7 +30,7 @@ const athleteSelect = {
   jerseyNumber: true,
   position: true,
   user: {
-    select: { id: true, name: true, status: true },
+    select: { id: true, name: true },
   },
 } satisfies Prisma.OrganizationUserAffiliationSelect;
 
@@ -199,7 +199,6 @@ export class AthletesService {
         role: row.role as RosterRole,
         jerseyNumber: row.jerseyNumber,
         position: row.position,
-        status: row.user.status,
       })),
     };
   }
