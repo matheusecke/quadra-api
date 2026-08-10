@@ -207,11 +207,20 @@ describe('AthletesService', () => {
   });
 
   describe('findOne', () => {
-    it('returns the active athlete affiliation fields and user status', async () => {
+    beforeEach(() => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T12:00:00.000Z'));
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('returns the active athlete affiliation fields with height and age', async () => {
       mockPrisma.user.findFirst.mockResolvedValue({
         id: 165,
         name: 'Rafael Moura',
-        status: EntityStatus.ACTIVE,
+        birthDate: new Date('2002-03-14T00:00:00.000Z'),
+        heightCm: 191,
         organizationAffiliations: [
           {
             teamId: 8,
@@ -227,20 +236,67 @@ describe('AthletesService', () => {
         currentTeamId: 8,
         jerseyNumber: 7,
         position: BasketballPosition.PG,
-        status: EntityStatus.ACTIVE,
+        heightCm: 191,
+        ageYears: 24,
       });
-      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ id: 165, isDeleted: false }),
-        }),
-      );
+    });
+
+    it('never exposes the birth date or the account status', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        birthDate: new Date('2002-03-14T00:00:00.000Z'),
+        heightCm: 191,
+        organizationAffiliations: [],
+      });
+
+      const profile = await service.findOne(42, 165);
+
+      expect(Object.keys(profile).sort()).toEqual([
+        'ageYears',
+        'currentTeamId',
+        'heightCm',
+        'id',
+        'jerseyNumber',
+        'name',
+        'position',
+      ]);
+    });
+
+    it('does not count a birthday that has not happened yet this year', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        birthDate: new Date('2002-08-11T00:00:00.000Z'),
+        heightCm: null,
+        organizationAffiliations: [],
+      });
+
+      await expect(service.findOne(42, 165)).resolves.toMatchObject({
+        ageYears: 23,
+      });
+    });
+
+    it('counts the birthday on the exact day it happens', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        birthDate: new Date('2002-08-10T00:00:00.000Z'),
+        heightCm: null,
+        organizationAffiliations: [],
+      });
+
+      await expect(service.findOne(42, 165)).resolves.toMatchObject({
+        ageYears: 24,
+      });
     });
 
     it('keeps a historical-only athlete visible with null current fields', async () => {
       mockPrisma.user.findFirst.mockResolvedValue({
         id: 165,
         name: 'Rafael Moura',
-        status: EntityStatus.INACTIVE,
+        birthDate: new Date('2002-03-14T00:00:00.000Z'),
+        heightCm: null,
         organizationAffiliations: [],
       });
 
@@ -248,7 +304,7 @@ describe('AthletesService', () => {
         currentTeamId: null,
         jerseyNumber: null,
         position: null,
-        status: EntityStatus.INACTIVE,
+        heightCm: null,
       });
     });
 
