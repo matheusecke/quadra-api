@@ -9,6 +9,7 @@ Platform-admin user lifecycle and identity/profile fields (`email`, `name`, opti
 | `POST`   | `/users`                  | `JwtAuthGuard`, `SystemAdminGuard`                    | Create global user; optional `birthDate`, optional nullable `heightCm`, optional `isSystemAdmin`; does not log the user in |
 | `GET`    | `/users`                  | `JwtAuthGuard`, `SystemAdminGuard`                    | Paginated list; identity filters; optional `organizationId`, `teamId`, `role` for admin search                           |
 | `GET`    | `/users/lookup`           | `JwtAuthGuard`, `OrgRoleGuard(ORG_ADMIN, TEAM_ADMIN)` | Exact, case-insensitive active-user lookup by `email` query param; returns `{ id, name, email }`                         |
+| `GET`    | `/users/me`               | `JwtAuthGuard`                                        | Current user own profile: `id`, `email`, `name`, `birthDate`, `heightCm`. No organization context required |
 | `GET`    | `/users/:id`              | `JwtAuthGuard`, `SystemAdminGuard`                    | Get by id                                                                                                                |
 | `PATCH`  | `/users/:id`              | `JwtAuthGuard`, `SystemAdminGuard`                    | Update `email`, `name`; revokes refresh tokens on email change                                                           |
 | `PATCH`  | `/users/:id/status`       | `JwtAuthGuard`, `SystemAdminGuard`                    | Status update; revokes refresh tokens when set to `INACTIVE`                                                             |
@@ -19,7 +20,7 @@ Platform-admin user lifecycle and identity/profile fields (`email`, `name`, opti
 
 ## Rules
 
-- Every route except `GET /users/lookup` is system-admin only.
+- Every route is system-admin only, except `GET /users/lookup` (org roles) and the self-service routes under `/users/me`, which any authenticated user may call for their own account.
 - Self-delete, self-deactivation, and self-demotion are rejected to avoid lockout.
 - Administrative filters on `GET /users` are not a substitute for future affiliation-based roster APIs.
 

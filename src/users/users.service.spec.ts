@@ -316,6 +316,60 @@ describe('UsersService', () => {
     });
   });
 
+  describe('findMe', () => {
+    const profileRow = {
+      id: 1,
+      email: 'test@example.com',
+      name: 'Test User',
+      birthDate: new Date('1998-04-23T00:00:00.000Z'),
+      heightCm: 182,
+    };
+
+    it('returns the self-service profile with a date-only birth date', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(profileRow);
+
+      const result = await service.findMe(1);
+
+      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
+        where: { id: 1, isDeleted: false, status: EntityStatus.ACTIVE },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          birthDate: true,
+          heightCm: true,
+        },
+      });
+      expect(result).toEqual({
+        id: 1,
+        email: 'test@example.com',
+        name: 'Test User',
+        birthDate: '1998-04-23',
+        heightCm: 182,
+      });
+    });
+
+    it('keeps a null height as null', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        ...profileRow,
+        heightCm: null,
+      });
+
+      const result = await service.findMe(1);
+
+      expect(result.heightCm).toBeNull();
+    });
+
+    it('throws 404 for an inactive, deleted or unknown user', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      const err = await service.findMe(1).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ApiException);
+      expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+    });
+  });
+
   describe('findById', () => {
     it('returns a non-deleted user by id', async () => {
       mockPrisma.user.findFirst.mockResolvedValue(baseUser);

@@ -12,6 +12,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { SetSystemAdminDto } from './dto/set-system-admin.dto';
 import { UserLookupResponseDto } from './dto/user-lookup-response.dto';
+import { MyProfileResponseDto } from './dto/my-profile-response.dto';
 
 const userSelect = {
   id: true,
@@ -24,6 +25,26 @@ const userSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.UserSelect;
+
+const myProfileSelect = {
+  id: true,
+  email: true,
+  name: true,
+  birthDate: true,
+  heightCm: true,
+} satisfies Prisma.UserSelect;
+
+type MyProfileRow = {
+  id: number;
+  email: string;
+  name: string;
+  birthDate: Date;
+  heightCm: number | null;
+};
+
+function toMyProfile(row: MyProfileRow): MyProfileResponseDto {
+  return { ...row, birthDate: row.birthDate.toISOString().slice(0, 10) };
+}
 
 type UserWhere = Prisma.UserWhereInput;
 type UserWriteClient = Pick<PrismaService, 'user'>;
@@ -76,6 +97,19 @@ export class UsersService {
     ]);
 
     return { count, data };
+  }
+
+  async findMe(userId: number): Promise<MyProfileResponseDto> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
+      select: myProfileSelect,
+    });
+
+    if (!user) {
+      throw ApiException.notFound('User not found.');
+    }
+
+    return toMyProfile(user);
   }
 
   async findById(id: number): Promise<UserResponseDto> {

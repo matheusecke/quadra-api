@@ -28,6 +28,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { LookupUserQueryDto } from './dto/lookup-user-query.dto';
 import { UserLookupResponseDto } from './dto/user-lookup-response.dto';
+import { MyProfileResponseDto } from './dto/my-profile-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SystemAdminGuard } from '../auth/guards/system-admin.guard';
 import { OrgRoleGuard } from '../auth/guards/org-role.guard';
@@ -79,6 +80,15 @@ export class UsersController {
   @ApiOkResponse({ type: UserLookupResponseDto })
   lookup(@Query() query: LookupUserQueryDto): Promise<UserLookupResponseDto> {
     return this.usersService.lookupActiveByEmail(query.email);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get the current user own profile' })
+  @ApiOkResponse({ type: MyProfileResponseDto })
+  findMe(@CurrentUser() user: JwtPayload): Promise<MyProfileResponseDto> {
+    return this.usersService.findMe(user.sub);
   }
 
   @Get(':id')
