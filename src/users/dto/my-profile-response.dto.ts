@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class MyProfileResponseDto {
   @ApiProperty({ example: 12 })
@@ -19,7 +19,7 @@ export class MyProfileResponseDto {
   })
   birthDate!: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: 182,
     nullable: true,
     description: 'Height in centimeters, or null when never informed.',
