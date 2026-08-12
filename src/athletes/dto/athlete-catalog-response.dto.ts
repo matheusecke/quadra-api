@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { BasketballPosition, EntityStatus, RosterRole } from '@prisma/client';
+import { BasketballPosition, RosterRole } from '@prisma/client';
 
 export class AthleteCatalogResponseDto {
   @ApiProperty({ example: 165, description: 'Global User.id.' })
@@ -23,11 +23,4 @@ export class AthleteCatalogResponseDto {
     nullable: true,
   })
   position!: BasketballPosition | null;
-
-  @ApiProperty({
-    enum: EntityStatus,
-    enumName: 'EntityStatus',
-    example: EntityStatus.ACTIVE,
-  })
-  status!: EntityStatus;
 }

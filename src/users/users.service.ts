@@ -12,6 +12,8 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { SetSystemAdminDto } from './dto/set-system-admin.dto';
 import { UserLookupResponseDto } from './dto/user-lookup-response.dto';
+import { MyProfileResponseDto } from './dto/my-profile-response.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 
 const userSelect = {
   id: true,
@@ -24,6 +26,26 @@ const userSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.UserSelect;
+
+const myProfileSelect = {
+  id: true,
+  email: true,
+  name: true,
+  birthDate: true,
+  heightCm: true,
+} satisfies Prisma.UserSelect;
+
+type MyProfileRow = {
+  id: number;
+  email: string;
+  name: string;
+  birthDate: Date;
+  heightCm: number | null;
+};
+
+function toMyProfile(row: MyProfileRow): MyProfileResponseDto {
+  return { ...row, birthDate: row.birthDate.toISOString().slice(0, 10) };
+}
 
 type UserWhere = Prisma.UserWhereInput;
 type UserWriteClient = Pick<PrismaService, 'user'>;
@@ -42,7 +64,7 @@ export class UsersService {
       email: dto.email,
       name: dto.name,
       passwordHash,
-      heightCm: dto.height ?? null,
+      heightCm: dto.heightCm ?? null,
       isSystemAdmin: dto.isSystemAdmin ?? false,
     };
 
@@ -76,6 +98,55 @@ export class UsersService {
     ]);
 
     return { count, data };
+  }
+
+  async findMe(userId: number): Promise<MyProfileResponseDto> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
+      select: myProfileSelect,
+    });
+
+    if (!user) {
+      throw ApiException.notFound('User not found.');
+    }
+
+    return toMyProfile(user);
+  }
+
+  async updateMe(
+    userId: number,
+    dto: UpdateMyProfileDto,
+  ): Promise<MyProfileResponseDto> {
+    const current = await this.prisma.user.findFirst({
+      where: { id: userId, isDeleted: false, status: EntityStatus.ACTIVE },
+      select: { id: true },
+    });
+
+    if (!current) {
+      throw ApiException.notFound('User not found.');
+    }
+
+    const data: Prisma.UserUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.birthDate !== undefined) {
+      data.birthDate = new Date(`${dto.birthDate}T00:00:00.000Z`);
+    }
+    if (dto.heightCm !== undefined) data.heightCm = dto.heightCm;
+
+    if (Object.keys(data).length === 0) {
+      throw ApiException.badRequest(
+        'At least one profile field must be provided.',
+        'EMPTY_UPDATE',
+      );
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: myProfileSelect,
+    });
+
+    return toMyProfile(user);
   }
 
   async findById(id: number): Promise<UserResponseDto> {

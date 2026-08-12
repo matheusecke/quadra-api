@@ -39,10 +39,6 @@ const activeRosterRow = {
   jerseyNumberSnapshot: 7,
   displayNameSnapshot: 'Rafael Moura',
   status: RosterStatus.ACTIVE,
-  joinedAt: new Date('2026-01-03T11:30:00.000Z'),
-  leftAt: null,
-  createdAt: new Date('2026-01-03T11:30:00.000Z'),
-  updatedAt: new Date('2026-07-26T18:10:00.000Z'),
 };
 
 const orgAdmin: JwtPayload = {
@@ -176,6 +172,29 @@ describe('TournamentRostersService', () => {
 
       expect(err).toBeInstanceOf(ApiException);
       expect((err as ApiException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+    });
+
+    it('does not read the internal control dates for the shared roster', async () => {
+      mockPrisma.tournamentTeam.findFirst.mockResolvedValue({ id: 41 });
+      mockPrisma.tournamentRoster.findMany.mockResolvedValue([]);
+
+      await service.findAll(42, 41);
+
+      const { select } = mockPrisma.tournamentRoster.findMany.mock
+        .calls[0][0] as {
+        select: Record<string, true>;
+      };
+
+      expect(Object.keys(select).sort()).toEqual([
+        'displayNameSnapshot',
+        'id',
+        'jerseyNumberSnapshot',
+        'role',
+        'status',
+        'tournamentId',
+        'tournamentTeamId',
+        'userId',
+      ]);
     });
   });
 

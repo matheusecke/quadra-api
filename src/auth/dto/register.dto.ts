@@ -1,17 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Expose, Transform } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
-  IsDateString,
   IsEmail,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
-  Matches,
   Max,
   Min,
   MinLength,
 } from 'class-validator';
+import { IsBirthDate } from '../../common/validators/is-birth-date.validator';
 
 export class RegisterDto {
   @ApiProperty({ example: 'user@example.com' })
@@ -33,14 +32,10 @@ export class RegisterDto {
   password: string;
 
   @ApiProperty({
-    name: 'birth_date',
     example: '1998-04-23',
     description: 'Birth date as a date-only string in YYYY-MM-DD format.',
   })
-  @Expose({ name: 'birth_date' })
-  @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
-  @IsDateString({ strict: true })
+  @IsBirthDate()
   birthDate: string;
 
   @ApiPropertyOptional({
@@ -54,5 +49,5 @@ export class RegisterDto {
   @IsInt()
   @Min(50)
   @Max(250)
-  height?: number | null;
+  heightCm?: number | null;
 }

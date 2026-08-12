@@ -43,7 +43,6 @@ const affiliationRow = {
   user: {
     id: 165,
     name: 'Rafael Moura',
-    status: EntityStatus.ACTIVE,
   },
 };
 
@@ -164,9 +163,20 @@ describe('AthletesService', () => {
           role: OrgRole.ATHLETE,
           jerseyNumber: 7,
           position: BasketballPosition.PG,
-          status: EntityStatus.ACTIVE,
         },
       ]);
+    });
+
+    it('does not read the account status column for the shared catalog', async () => {
+      mockPrisma.organizationUserAffiliation.count.mockResolvedValue(0);
+      mockPrisma.organizationUserAffiliation.findMany.mockResolvedValue([]);
+
+      await service.findAll(42, { page: 1, limit: 10 });
+
+      const { select } = mockPrisma.organizationUserAffiliation.findMany.mock
+        .calls[0][0] as { select: { user: { select: Record<string, true> } } };
+
+      expect(select.user.select).toEqual({ id: true, name: true });
     });
 
     it('combines q, ids, teamId and role and orders by user identity', async () => {
@@ -207,11 +217,20 @@ describe('AthletesService', () => {
   });
 
   describe('findOne', () => {
-    it('returns the active athlete affiliation fields and user status', async () => {
+    beforeEach(() => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T12:00:00.000Z'));
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('returns the active athlete affiliation fields with height and age', async () => {
       mockPrisma.user.findFirst.mockResolvedValue({
         id: 165,
         name: 'Rafael Moura',
-        status: EntityStatus.ACTIVE,
+        birthDate: new Date('2002-03-14T00:00:00.000Z'),
+        heightCm: 191,
         organizationAffiliations: [
           {
             teamId: 8,
@@ -227,20 +246,67 @@ describe('AthletesService', () => {
         currentTeamId: 8,
         jerseyNumber: 7,
         position: BasketballPosition.PG,
-        status: EntityStatus.ACTIVE,
+        heightCm: 191,
+        ageYears: 24,
       });
-      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ id: 165, isDeleted: false }),
-        }),
-      );
+    });
+
+    it('never exposes the birth date or the account status', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        birthDate: new Date('2002-03-14T00:00:00.000Z'),
+        heightCm: 191,
+        organizationAffiliations: [],
+      });
+
+      const profile = await service.findOne(42, 165);
+
+      expect(Object.keys(profile).sort()).toEqual([
+        'ageYears',
+        'currentTeamId',
+        'heightCm',
+        'id',
+        'jerseyNumber',
+        'name',
+        'position',
+      ]);
+    });
+
+    it('does not count a birthday that has not happened yet this year', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        birthDate: new Date('2002-08-11T00:00:00.000Z'),
+        heightCm: null,
+        organizationAffiliations: [],
+      });
+
+      await expect(service.findOne(42, 165)).resolves.toMatchObject({
+        ageYears: 23,
+      });
+    });
+
+    it('counts the birthday on the exact day it happens', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({
+        id: 165,
+        name: 'Rafael Moura',
+        birthDate: new Date('2002-08-10T00:00:00.000Z'),
+        heightCm: null,
+        organizationAffiliations: [],
+      });
+
+      await expect(service.findOne(42, 165)).resolves.toMatchObject({
+        ageYears: 24,
+      });
     });
 
     it('keeps a historical-only athlete visible with null current fields', async () => {
       mockPrisma.user.findFirst.mockResolvedValue({
         id: 165,
         name: 'Rafael Moura',
-        status: EntityStatus.INACTIVE,
+        birthDate: new Date('2002-03-14T00:00:00.000Z'),
+        heightCm: null,
         organizationAffiliations: [],
       });
 
@@ -248,7 +314,7 @@ describe('AthletesService', () => {
         currentTeamId: null,
         jerseyNumber: null,
         position: null,
-        status: EntityStatus.INACTIVE,
+        heightCm: null,
       });
     });
 

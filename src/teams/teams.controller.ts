@@ -153,8 +153,9 @@ export class TeamsController {
   }
 
   @Get(':id')
+  @UseGuards(SystemAdminGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get a team by ID' })
+  @ApiOperation({ summary: 'Get a team by ID (system admin only)' })
   @ApiParam({ name: 'id', example: 1, description: 'Team id.' })
   @ApiOkResponse({ type: TeamResponseDto })
   findById(@Param('id', ParseIntApiPipe) id: number): Promise<TeamResponseDto> {

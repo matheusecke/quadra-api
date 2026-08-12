@@ -36,7 +36,7 @@ export class CreateUserDto {
   @ApiPropertyOptional({
     example: '1998-04-23',
     description:
-      'Optional for admin creation; register requires birth_date separately.',
+      'Optional for admin creation; register requires birthDate separately.',
   })
   @IsOptional()
   @Type(() => Date)
@@ -54,7 +54,7 @@ export class CreateUserDto {
   @IsInt()
   @Min(50)
   @Max(250)
-  height?: number | null;
+  heightCm?: number | null;
 
   @ApiProperty({ example: false, required: false, default: false })
   @IsOptional()

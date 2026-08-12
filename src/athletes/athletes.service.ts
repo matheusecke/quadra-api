@@ -30,7 +30,7 @@ const athleteSelect = {
   jerseyNumber: true,
   position: true,
   user: {
-    select: { id: true, name: true, status: true },
+    select: { id: true, name: true },
   },
 } satisfies Prisma.OrganizationUserAffiliationSelect;
 
@@ -132,13 +132,26 @@ type AthleteTournamentHistoryRow = Prisma.PlayerMatchStatisticGetPayload<{
 type AthleteIdentity = {
   id: number;
   name: string;
-  status: EntityStatus;
+  birthDate: Date;
+  heightCm: number | null;
   organizationAffiliations: Array<{
     teamId: number | null;
     jerseyNumber: number | null;
     position: BasketballPosition | null;
   }>;
 };
+
+// NOTE: birth_date is a DATE column, so Prisma hands it back at UTC midnight.
+// Comparing both sides in UTC keeps the result stable regardless of server timezone.
+function toAgeYears(birthDate: Date): number {
+  const now = new Date();
+  const years = now.getUTCFullYear() - birthDate.getUTCFullYear();
+  const monthDelta = now.getUTCMonth() - birthDate.getUTCMonth();
+  const hasHadBirthday =
+    monthDelta > 0 ||
+    (monthDelta === 0 && now.getUTCDate() >= birthDate.getUTCDate());
+  return hasHadBirthday ? years : years - 1;
+}
 
 @Injectable()
 export class AthletesService {
@@ -186,7 +199,6 @@ export class AthletesService {
         role: row.role as RosterRole,
         jerseyNumber: row.jerseyNumber,
         position: row.position,
-        status: row.user.status,
       })),
     };
   }
@@ -203,7 +215,8 @@ export class AthletesService {
       currentTeamId: current?.teamId ?? null,
       jerseyNumber: current?.jerseyNumber ?? null,
       position: current?.position ?? null,
-      status: athlete.status,
+      heightCm: athlete.heightCm,
+      ageYears: toAgeYears(athlete.birthDate),
     };
   }
 
@@ -339,7 +352,8 @@ export class AthletesService {
       select: {
         id: true,
         name: true,
-        status: true,
+        birthDate: true,
+        heightCm: true,
         organizationAffiliations: {
           where: currentAffiliation,
           orderBy: [{ id: 'asc' }],

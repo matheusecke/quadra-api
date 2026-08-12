@@ -25,6 +25,8 @@ Writes are allowed while the tournament is `DRAFT`, `REGISTRATION`, or `IN_PROGR
 
 `GET /tournament-teams/:id/tournament-rosters` returns only `status: ACTIVE`, non-deleted rows, ordered `role ASC`, `displayNameSnapshot ASC`, then `id ASC`.
 
+The shared read model is `id`, `tournamentId`, `tournamentTeamId`, `userId`, `role`, `jerseyNumber`, `displayNameSnapshot`, and `status`. `joinedAt`, `leftAt`, `createdAt`, and `updatedAt` are written and persisted but never returned — they are internal control columns with no consumer.
+
 ## Membership creation and reactivation
 
 `POST` accepts `{ userId, tournamentTeamId, role, jerseyNumber? }`. Ordered validations: the target registration exists and is tenant-scoped (`404`); its tournament is mutable (`409 TOURNAMENT_NOT_MUTABLE`); the registration is `ACTIVE` (`422 INACTIVE_REGISTRATION`); the actor has write access to that team (`403 FORBIDDEN`); the target user exists, is `ACTIVE`, and non-deleted (`422 INVALID_ROSTER_MEMBER`); the user has an active, non-deleted `OrganizationUserAffiliation` in the same organization and global team (`422 INVALID_ROSTER_MEMBER` if absent); the affiliation role exactly matches the requested roster role (`422 INVALID_ROSTER_ROLE` otherwise); the user has no active roster row already on this registration (`409 DUPLICATE_RECORD`); for `ATHLETE` only, the user has no other active athlete roster row in the same tournament on a different team (`409 ATHLETE_ALREADY_REGISTERED` — this cross-team uniqueness rule does not apply to `COACHING_STAFF`, who may be active on multiple tournament teams).

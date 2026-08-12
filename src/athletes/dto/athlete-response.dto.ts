@@ -1,10 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  BasketballPosition,
-  EntityStatus,
-  LossType,
-  MatchResult,
-} from '@prisma/client';
+import { BasketballPosition, LossType, MatchResult } from '@prisma/client';
 import { StatisticsResponseDto } from '../../statistics/dto/statistics-response.dto';
 
 export class AthleteProfileResponseDto {
@@ -14,8 +9,8 @@ export class AthleteProfileResponseDto {
   @ApiProperty({ example: 7, nullable: true }) jerseyNumber!: number | null;
   @ApiProperty({ enum: BasketballPosition, nullable: true })
   position!: BasketballPosition | null;
-  @ApiProperty({ enum: EntityStatus, enumName: 'EntityStatus' })
-  status!: EntityStatus;
+  @ApiProperty({ example: 191, nullable: true }) heightCm!: number | null;
+  @ApiProperty({ example: 24 }) ageYears!: number;
 }
 
 export class AthleteMatchReferenceResponseDto {

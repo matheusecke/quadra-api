@@ -54,8 +54,9 @@ export class OrganizationsController {
   }
 
   @Get()
+  @UseGuards(SystemAdminGuard)
   @UseInterceptors(PaginationInterceptor)
-  @ApiOperation({ summary: 'List organizations' })
+  @ApiOperation({ summary: 'List organizations (system admin only)' })
   @ApiPaginatedOkResponse(OrganizationResponseDto)
   findAll(
     @Query() query: ListOrganizationsQueryDto,
@@ -64,8 +65,9 @@ export class OrganizationsController {
   }
 
   @Get(':id')
+  @UseGuards(SystemAdminGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get an organization by ID' })
+  @ApiOperation({ summary: 'Get an organization by ID (system admin only)' })
   @ApiParam({ name: 'id', example: 1, description: 'Organization id.' })
   @ApiOkResponse({ type: OrganizationResponseDto })
   findById(

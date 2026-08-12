@@ -19,10 +19,17 @@ organization role. List routes use the standard pagination envelope.
 
 ## Visibility and history
 
-The catalog remains restricted to active roster-eligible affiliations. Detail
-routes accept a non-deleted user who has either an active `ATHLETE` affiliation
-or a non-deleted historical athlete tournament roster in the organization.
+The catalog remains restricted to active roster-eligible affiliations and returns
+`id`, `name`, `teamId`, `role`, `jerseyNumber`, and `position` only. Detail routes
+accept a non-deleted user who has either an active `ATHLETE` affiliation or a
+non-deleted historical athlete tournament roster in the organization.
 Historical-only profiles return null current team, jersey, and position.
+
+The shared profile read model is `id`, `name`, `currentTeamId`, `jerseyNumber`,
+`position`, `heightCm`, and `ageYears`. `ageYears` is derived in the service from
+the non-null `User.birthDate` column, compared in UTC, and is never null; the
+birth date itself is never returned. The account-wide `EntityStatus` is not part
+of any sports read model — it filters rows, it is not exposed.
 
 Only non-deleted `PlayerMatchStatistic` rows from visible `FINISHED` matches
 contribute. LIVE draft/reopened rows do not contribute. Match names prefer the
