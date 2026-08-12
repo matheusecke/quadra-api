@@ -263,22 +263,29 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Change current user password (requires current password)',
+    description:
+      'Revokes every refresh token of the user and issues a fresh pair for the caller, so the current session survives and all other devices are signed out.',
   })
-  @ApiNoContentResponse({ description: 'Password updated.' })
+  @ApiOkResponse({ type: TokenResponseDto })
   @ApiBadRequestErrorResponse()
   @ApiUnauthorizedErrorResponse()
   async changePassword(
     @CurrentUser() user: JwtPayload,
     @Body() dto: ChangePasswordDto,
-  ): Promise<void> {
-    await this.authService.changePassword(
-      user.sub,
-      dto.currentPassword,
-      dto.newPassword,
-    );
+    @Res({ passthrough: true }) res: express.Response,
+  ): Promise<TokenResponseDto> {
+    const { accessToken, rawRefreshToken } =
+      await this.authService.changePassword(
+        user.sub,
+        dto.currentPassword,
+        dto.newPassword,
+        user.organizationId,
+      );
+    this.setRefreshCookie(res, rawRefreshToken);
+    return { accessToken };
   }
 
   private setRefreshCookie(res: express.Response, token: string): void {
