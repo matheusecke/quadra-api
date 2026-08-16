@@ -21,11 +21,16 @@ JWT_SECRET=change-me
 PORT=3001
 ```
 
-Production receives `DATABASE_SECRET` as the RDS-managed JSON secret. To test
+Production receives `DATABASE_SECRET` as the RDS-managed JSON secret, which
+carries only `username` and `password`; the host, port, database, and schema
+come from the environment. To test
 that parsing path locally, remove `DATABASE_URL` and use synthetic values only:
 
 ```env
-DATABASE_SECRET={"engine":"postgres","host":"localhost","port":5432,"username":"postgres","password":"postgres","dbname":"quadra"}
+DATABASE_SECRET={"username":"postgres","password":"postgres"}
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_NAME=quadra
 DATABASE_SCHEMA=public
 ```
 
