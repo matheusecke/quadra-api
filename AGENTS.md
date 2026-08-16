@@ -167,9 +167,15 @@ To exercise the production `DATABASE_SECRET` parsing path locally, remove
 `DATABASE_URL` and set synthetic values only (never copy the production secret):
 
 ```env
-DATABASE_SECRET={"engine":"postgres","host":"localhost","port":5432,"username":"postgres","password":"postgres","dbname":"quadra"}
+DATABASE_SECRET={"username":"postgres","password":"postgres"}
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_NAME=quadra
 DATABASE_SCHEMA=public
 ```
+
+The RDS-managed secret carries only `username` and `password`; the host, port,
+database, and schema come from the environment.
 
 `DATABASE_SECRET` and `DATABASE_URL` are mutually exclusive.
 
