@@ -1,28 +1,9 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@prisma/client';
-import { Pool } from 'pg';
+import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
+import { Pool } from "pg";
 
-function getDatabaseConfig(): { connectionString: string; schema?: string } {
-  const databaseUrl = process.env.DATABASE_URL;
-
-  if (!databaseUrl) {
-    throw new Error(
-      'DATABASE_URL must be defined before PrismaService is initialized.',
-    );
-  }
-
-  const url = new URL(databaseUrl);
-  const schema = url.searchParams.get('schema') ?? undefined;
-
-  // Prisma keeps schema selection outside the pg connection string when using driver adapters.
-  url.searchParams.delete('schema');
-
-  return {
-    connectionString: url.toString(),
-    schema,
-  };
-}
+import { resolveDatabaseConfig } from "./database-config";
 
 @Injectable()
 export class PrismaService
@@ -32,15 +13,20 @@ export class PrismaService
   private readonly pool: Pool;
 
   constructor() {
-    const { connectionString, schema } = getDatabaseConfig();
-    const pool = new Pool({ connectionString });
+    const config = resolveDatabaseConfig();
+    const pool = new Pool({
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      password: config.password,
+      database: config.database,
+    });
     const adapter = new PrismaPg(pool, {
-      ...(schema ? { schema } : {}),
+      schema: config.schema,
       disposeExternalPool: false,
     });
 
     super({ adapter });
-
     this.pool = pool;
   }
 
