@@ -6,6 +6,16 @@ Small global module that exposes the database client to the rest of the app.
 
 - `PrismaService` (`src/prisma/prisma.service.ts`) extends `PrismaClient`, connects in `onModuleInit`, disconnects in `onModuleDestroy` (works with `enableShutdownHooks()` in `main.ts`).
 - `PrismaModule` (`src/prisma/prisma.module.ts`) is `@Global()` and exports `PrismaService`.
+- `resolveDatabaseConfig` in `src/prisma/database-config.ts` is the single resolver for database connectivity. It has two consumers:
+  - **Runtime:** `PrismaService` builds the `pg` pool from the resolved config (local `DATABASE_URL` or ECS `DATABASE_SECRET`).
+  - **CLI:** `prisma.config.ts` imports the same resolver so `prisma migrate`, `prisma generate`, and related commands see identical connection settings.
+
+## Production migrations
+
+The GitHub Actions `deploy` job applies pending migrations in an isolated ECS
+task before updating the API Service. The one-off task overrides the container
+command to `npm run prisma:migrate:deploy`; the long-running service never runs
+migrate on startup. See `.github/workflows/ci.yml` and [DATABASE.md](../../../docs/DATABASE.md).
 
 ## Schema
 

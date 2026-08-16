@@ -11,6 +11,8 @@ src/
 │
 ├── prisma/
 │   ├── docs/README.md
+│   ├── database-config.ts
+│   ├── database-config.service.spec.ts
 │   ├── prisma.module.ts
 │   └── prisma.service.ts
 │

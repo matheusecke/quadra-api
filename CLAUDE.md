@@ -8,6 +8,48 @@ For depth: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (app snapshot, module la
 
 After implementation: review documentation for drift (start with ARCHITECTURE.md, DATABASE.md, then module docs if changed).
 
+## Scope
+
+- Treat this package as backend-only unless the task explicitly requires cross-project changes.
+- Preserve the existing application structure and keep business logic out of controllers when a service layer already exists.
+
+## Backend Conventions
+
+- Follow existing NestJS or backend module boundaries: keep controllers, services, modules, guards, interceptors, and DTOs in their current patterns.
+- Keep filenames and class names aligned with existing role-based naming such as `*.controller.ts`, `*.service.ts`, `*.module.ts`, and `*Dto`.
+- Prefer named exports unless the existing file pattern clearly uses default exports.
+- Keep imports grouped and ordered consistently with the surrounding code.
+
+## Error Handling
+
+- Use typed or project-specific errors when the codebase already has them; avoid generic `Error` when a clearer error type exists.
+- Do not swallow errors. Re-throw with context or log them using the project's existing pattern.
+- Handle rejected promises explicitly.
+- Preserve consistent HTTP error behavior and do not expose stack traces, internal paths, or raw database errors in production responses.
+
+## Security
+
+- Validate request data at the system boundary. Never trust route params, query params, headers, or body input.
+- Use parameterized queries and existing ORM patterns. Do not build SQL from string concatenation with user input.
+- Never log secrets, tokens, passwords, or PII.
+- Preserve existing authentication and authorization checks when touching protected endpoints.
+- Keep auth tokens short-lived and follow existing refresh-token storage patterns.
+- Rate-limit or preserve rate-limiting behavior on authentication-sensitive endpoints.
+
+## Code Quality
+
+- Prefer explicit code over premature abstractions.
+- Do not refactor adjacent code unless it directly supports the requested change.
+- Use clear names: booleans with `is` / `has` / `should` / `can`, functions with verb-first names, DTOs with `Dto` suffix, and role-based class suffixes where already used.
+- Keep public APIs stable unless the task explicitly requires a behavior change.
+
+## Testing
+
+- Test behavior, not implementation details.
+- After changes, run the most specific relevant test file first, then broader validation only if needed.
+- Do not rely on retries to pass flaky tests.
+- Prefer real implementations and mock only at system boundaries.
+
 ## Language
 
 All written artifacts must be in **English**: code comments, implementation plans, commit messages, PR titles and descriptions, branch names, migration names, and any other git-related content.
@@ -100,6 +142,13 @@ connection needs `CREATE DATABASE`.
 | `prisma db push` | Changes the schema with no migration file; can lose data. |
 | `prisma db execute` | Runs arbitrary SQL against the database. |
 
+### Automated production exception
+
+The GitHub Actions `deploy` job is the only automated exception: after CI, it
+runs `npm run prisma:migrate:deploy` in an isolated ECS task before updating the
+API Service. This exception belongs to the reviewed deployment workflow; it
+does not authorize an agent or a human shell session to apply migrations.
+
 Generated SQL still needs review and sometimes hand-editing — adding a `NOT NULL` column to a
 populated table is the standard case, and needs a backfill Prisma will not write. See
 [docs/DATABASE.md](docs/DATABASE.md).
@@ -113,5 +162,15 @@ JWT_SECRET=...
 JWT_EXPIRES_IN=15m   # optional, default 15m
 PORT=3001            # optional
 ```
+
+To exercise the production `DATABASE_SECRET` parsing path locally, remove
+`DATABASE_URL` and set synthetic values only (never copy the production secret):
+
+```env
+DATABASE_SECRET={"engine":"postgres","host":"localhost","port":5432,"username":"postgres","password":"postgres","dbname":"quadra"}
+DATABASE_SCHEMA=public
+```
+
+`DATABASE_SECRET` and `DATABASE_URL` are mutually exclusive.
 
 Docker Compose (`docker-compose.yml`) runs the API on external network `quadra-network`; PostgreSQL in container `quadra-postgres`.
