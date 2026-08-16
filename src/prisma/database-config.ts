@@ -7,6 +7,11 @@ export type DatabaseConfig = {
   password: string;
   database: string;
   schema: string;
+  /**
+   * RDS enforces `rds.force_ssl`, so the managed-secret path always negotiates
+   * TLS. The local Docker Compose database serves no certificate.
+   */
+  ssl: boolean;
 };
 
 function present(value: string | undefined): string | undefined {
@@ -25,13 +30,13 @@ function requiredSecretString(
   }
 
   const value = secret[field];
-  if (typeof value !== "string" || value.trim() === "") {
+  if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(
       `DATABASE_SECRET is invalid: field "${field}" must be a non-empty string.`,
     );
   }
 
-  return field === "password" ? value : value.trim();
+  return field === 'password' ? value : value.trim();
 }
 
 function parseSecret(value: string): Record<string, unknown> {
@@ -39,11 +44,11 @@ function parseSecret(value: string): Record<string, unknown> {
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new Error("DATABASE_SECRET is invalid JSON.");
+    throw new Error('DATABASE_SECRET is invalid JSON.');
   }
 
-  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
-    throw new Error("DATABASE_SECRET is invalid: expected a JSON object.");
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error('DATABASE_SECRET is invalid: expected a JSON object.');
   }
   return parsed as Record<string, unknown>;
 }
@@ -53,8 +58,8 @@ function resolveSecretConfig(
   environment: DatabaseEnvironment,
 ): DatabaseConfig {
   const secret = parseSecret(secretValue);
-  const engine = requiredSecretString(secret, "engine");
-  if (engine !== "postgres") {
+  const engine = requiredSecretString(secret, 'engine');
+  if (engine !== 'postgres') {
     throw new Error(
       'DATABASE_SECRET is invalid: field "engine" must be "postgres".',
     );
@@ -68,8 +73,8 @@ function resolveSecretConfig(
   }
 
   const database =
-    "dbname" in secret
-      ? requiredSecretString(secret, "dbname")
+    'dbname' in secret
+      ? requiredSecretString(secret, 'dbname')
       : present(environment.DATABASE_NAME);
   if (!database) {
     throw new Error(
@@ -80,17 +85,18 @@ function resolveSecretConfig(
   const schema = present(environment.DATABASE_SCHEMA);
   if (!schema) {
     throw new Error(
-      "Database configuration is invalid: DATABASE_SCHEMA is required when DATABASE_SECRET is used.",
+      'Database configuration is invalid: DATABASE_SCHEMA is required when DATABASE_SECRET is used.',
     );
   }
 
   return {
-    host: requiredSecretString(secret, "host"),
+    host: requiredSecretString(secret, 'host'),
     port: Number(port),
-    user: requiredSecretString(secret, "username"),
-    password: requiredSecretString(secret, "password"),
+    user: requiredSecretString(secret, 'username'),
+    password: requiredSecretString(secret, 'password'),
     database,
     schema,
+    ssl: true,
   };
 }
 
@@ -102,11 +108,12 @@ function resolveUrlConfig(databaseUrl: string): DatabaseConfig {
       port: url.port ? Number(url.port) : 5432,
       user: decodeURIComponent(url.username),
       password: decodeURIComponent(url.password),
-      database: decodeURIComponent(url.pathname.replace(/^\//, "")),
-      schema: url.searchParams.get("schema") ?? "public",
+      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+      schema: url.searchParams.get('schema') ?? 'public',
+      ssl: (url.searchParams.get('sslmode') ?? 'disable') !== 'disable',
     };
   } catch {
-    throw new Error("DATABASE_URL is invalid.");
+    throw new Error('DATABASE_URL is invalid.');
   }
 }
 
@@ -118,12 +125,12 @@ export function resolveDatabaseConfig(
 
   if (secret && url) {
     throw new Error(
-      "Database configuration is invalid: DATABASE_SECRET and DATABASE_URL cannot be set together.",
+      'Database configuration is invalid: DATABASE_SECRET and DATABASE_URL cannot be set together.',
     );
   }
   if (!secret && !url) {
     throw new Error(
-      "Database configuration is missing: set DATABASE_SECRET or DATABASE_URL.",
+      'Database configuration is missing: set DATABASE_SECRET or DATABASE_URL.',
     );
   }
   return secret
@@ -132,12 +139,15 @@ export function resolveDatabaseConfig(
 }
 
 export function buildDatabaseUrl(config: DatabaseConfig): string {
-  const url = new URL("postgresql://localhost");
+  const url = new URL('postgresql://localhost');
   url.hostname = config.host;
   url.port = String(config.port);
   url.username = config.user;
   url.password = config.password;
   url.pathname = config.database;
-  url.searchParams.set("schema", config.schema);
+  url.searchParams.set('schema', config.schema);
+  if (config.ssl) {
+    url.searchParams.set('sslmode', 'require');
+  }
   return url.toString();
 }

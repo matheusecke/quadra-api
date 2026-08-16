@@ -1,9 +1,9 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
-import { Pool } from "pg";
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
 
-import { resolveDatabaseConfig } from "./database-config";
+import { resolveDatabaseConfig } from './database-config';
 
 @Injectable()
 export class PrismaService
@@ -20,6 +20,7 @@ export class PrismaService
       user: config.user,
       password: config.password,
       database: config.database,
+      ssl: config.ssl,
     });
     const adapter = new PrismaPg(pool, {
       schema: config.schema,

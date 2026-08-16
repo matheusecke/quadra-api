@@ -24,5 +24,8 @@ COPY --from=build --chown=node:node /home/node/app/dist ./dist
 COPY --from=build --chown=node:node /home/node/app/prisma ./prisma
 COPY --from=build --chown=node:node /home/node/app/prisma.config.ts ./
 COPY --from=build --chown=node:node /home/node/app/src/prisma/database-config.ts ./src/prisma/database-config.ts
+# Node does not trust the Amazon RDS certificate authority out of the box.
+COPY --chown=node:node certs/rds-global-bundle.pem ./certs/rds-global-bundle.pem
+ENV NODE_EXTRA_CA_CERTS=/home/node/app/certs/rds-global-bundle.pem
 
 CMD ["npm", "run", "start:prod"]
