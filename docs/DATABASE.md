@@ -94,7 +94,7 @@ This is a direct consequence of the two partial unique indexes:
 
 ## Pending Migration: `20260808190043_add_inactive_affiliation_status`
 
-Adds `AffiliationStatus.INACTIVE` (`ALTER TYPE "affiliation_status" ADD VALUE 'INACTIVE'`). The file exists under `prisma/migrations/` but **has not been applied to any database**. Per the agent restriction in the root `CLAUDE.md`, the agent only generated it with `prisma migrate dev --create-only` and validated it with `prisma:validate`/`prisma:generate`. **A human must run `npm run prisma:migrate:dev` (or the equivalent `deploy` command in the target environment) before any code path that writes or filters on `AffiliationStatus.INACTIVE` runs against a real database.**
+Adds `AffiliationStatus.INACTIVE` (`ALTER TYPE "affiliation_status" ADD VALUE 'INACTIVE'`). The file exists under `prisma/migrations/` but **has not been applied to every database**. Per the agent restriction in the root `CLAUDE.md`, the agent only generated it with `prisma migrate dev --create-only` and validated it with `prisma:validate`/`prisma:generate`. **Apply it locally with `npm run prisma:migrate:dev` (human-only). Production applies pending versioned migrations through the isolated `deploy` job in `.github/workflows/ci.yml` before any code path that writes or filters on `AffiliationStatus.INACTIVE` runs against that database.**
 
 ## Team Soft-Delete on Rejected/Cancelled Onboarding (B1)
 
@@ -153,12 +153,20 @@ For triggers/functions:
 
 Prisma Migrate is incremental. Each migration contains only the delta from the previous migration history to the current schema state.
 
+**Production:** pending versioned migrations are applied automatically by the
+isolated `deploy` job in `.github/workflows/ci.yml`, which runs
+`npm run prisma:migrate:deploy` in a one-off ECS task before updating the API
+Service. **Local development:** `migrate dev` remains a human operation — agents
+may create migration files but never apply them. **Compatibility:** migrations
+must remain backward compatible with the currently running API image, because
+schema rollback is not automatic.
+
 ### Simple schema changes
 
 1. Update `prisma/schema`.
-2. Run `npx prisma migrate dev --name <migration_name>`.
+2. Run `npx prisma migrate dev --name <migration_name>` (human-only locally).
 3. Review the generated SQL.
-4. Apply the migration.
+4. Apply the migration locally; production picks it up on the next `deploy` run.
 
 ### Changes with DB-only items
 
@@ -167,7 +175,7 @@ Prisma Migrate is incremental. Each migration contains only the delta from the p
 3. Run `npx prisma migrate dev --create-only --name <migration_name>`.
 4. Edit `migration.sql` manually.
 5. Add the required SQL for `CHECK`, partial indexes, functions, triggers, or other DB-only objects.
-6. Apply the migration with `npx prisma migrate dev`.
+6. Apply the migration locally with `npx prisma migrate dev` (human-only).
 
 ## Current DB-only Items Expected in the Initial Migration
 

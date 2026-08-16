@@ -21,6 +21,17 @@ JWT_SECRET=change-me
 PORT=3001
 ```
 
+Production receives `DATABASE_SECRET` as the RDS-managed JSON secret. To test
+that parsing path locally, remove `DATABASE_URL` and use synthetic values only:
+
+```env
+DATABASE_SECRET={"engine":"postgres","host":"localhost","port":5432,"username":"postgres","password":"postgres","dbname":"quadra"}
+DATABASE_SCHEMA=public
+```
+
+Never copy the production secret to a local file. The two database variables
+are mutually exclusive.
+
 Apply pending migrations:
 
 ```bash
@@ -49,6 +60,14 @@ docker compose up --build
 ```
 
 The container reads `.env` and reaches Postgres over the Docker network at `quadra-postgres:5432`, still published on `http://localhost:3001`.
+
+### Deployment
+
+On pushes to `main`, `.github/workflows/ci.yml` publishes the immutable image to
+Amazon ECR tagged with the full Git SHA, runs pending migrations in an isolated
+ECS task (`npm run prisma:migrate:deploy`), deploys that same image to the API
+Service, waits for ECS service stability, and requires HTTP 200 from the public
+`/health` endpoint before the job succeeds.
 
 ## Examples
 

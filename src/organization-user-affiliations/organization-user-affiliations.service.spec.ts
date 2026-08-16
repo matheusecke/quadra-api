@@ -43,7 +43,7 @@ const inactiveAffiliation = (overrides: Record<string, unknown> = {}) =>
 const pendingAffiliation = (overrides: Record<string, unknown> = {}) =>
   affiliationFixture({
     status: AffiliationStatus.PENDING,
-    inviteExpiresAt: new Date('2026-08-15T12:00:00.000Z'),
+    inviteExpiresAt: new Date(Date.now() + 99999),
     ...overrides,
   });
 
@@ -119,7 +119,7 @@ describe('OrganizationUserAffiliationsService', () => {
         jerseyNumber: null,
         position: null,
         status: AffiliationStatus.PENDING,
-        inviteExpiresAt: new Date('2026-08-15T12:00:00.000Z'),
+        inviteExpiresAt: new Date(Date.now() + 99999),
         user: { id: 10, name: 'Marina', email: 'marina@example.com' },
         team: null,
       });

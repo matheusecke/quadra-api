@@ -1,0 +1,160 @@
+name: CI/CD
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        env:
+          DATABASE_URL: postgresql://user:password@localhost:5432/quadra?schema=public
+        run: npm run prisma:generate
+
+      - name: Test with coverage
+        run: npm run test:cov
+
+      - name: Build
+        run: npm run build
+
+      - name: Build Docker image
+        run: docker build -t quadra-api .
+
+  deploy:
+    name: Deploy
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: quadra-api-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: "141145164743"
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: quadra-api
+      ECS_CLUSTER: quadra-production-ecs-cluster
+      ECS_SERVICE: quadra-production-api-service
+      CONTAINER_NAME: api
+      PUBLIC_HEALTH_URL: https://api.appquadra.com.br/health
+      DEPLOY_ROLE_ARN: arn:aws:iam::141145164743:role/quadra-production-api-deploy-role
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Reuse or publish immutable image
+        id: image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          image="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          if aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$IMAGE_TAG" > /dev/null 2>&1; then
+            echo "Reusing image for commit $IMAGE_TAG."
+          else
+            docker build -t "$image" .
+            docker push "$image"
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Read active ECS service configuration
+        id: service
+        run: |
+          service="$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0]' \
+            --output json)"
+          task_definition="$(jq -er '.taskDefinition' <<< "$service")"
+          subnets="$(jq -er '.networkConfiguration.awsvpcConfiguration.subnets | select(length > 0) | join(",")' <<< "$service")"
+          security_groups="$(jq -er '.networkConfiguration.awsvpcConfiguration.securityGroups | select(length > 0) | join(",")' <<< "$service")"
+          assign_public_ip="$(jq -er '.networkConfiguration.awsvpcConfiguration.assignPublicIp' <<< "$service")"
+          test "$assign_public_ip" = 'ENABLED'
+          echo "task-definition=$task_definition" >> "$GITHUB_OUTPUT"
+          echo "subnets=$subnets" >> "$GITHUB_OUTPUT"
+          echo "security-groups=$security_groups" >> "$GITHUB_OUTPUT"
+          echo "assign-public-ip=$assign_public_ip" >> "$GITHUB_OUTPUT"
+
+      - name: Download active task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${{ steps.service.outputs.task-definition }}" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Render image in task definition
+        id: task-definition
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.image }}
+
+      - name: Migrate and deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-definition.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          desired-count: 1
+          wait-for-service-stability: true
+          wait-for-minutes: 15
+          run-task: true
+          run-task-container-overrides: '[{"name":"api","command":["npm","run","prisma:migrate:deploy"]}]'
+          run-task-subnets: ${{ steps.service.outputs.subnets }}
+          run-task-security-groups: ${{ steps.service.outputs.security-groups }}
+          run-task-assign-public-IP: ${{ steps.service.outputs.assign-public-ip }}
+          run-task-launch-type: FARGATE
+          wait-for-task-stopped: true
+
+      - name: Verify public health
+        run: |
+          if ! http_status="$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            --output /dev/null \
+            --write-out '%{http_code}' \
+            "$PUBLIC_HEALTH_URL")"; then
+            echo 'Public health request failed.'
+            exit 1
+          fi
+          echo "Public health returned HTTP $http_status."
+          test "$http_status" = '200'
