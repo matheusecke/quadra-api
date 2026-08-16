@@ -11,6 +11,9 @@ RUN DATABASE_URL='postgresql://user:password@localhost:5432/quadra?schema=public
 COPY . .
 
 RUN npm run build
+# The emitted layout shifts when the build includes files outside src/, and the
+# runtime entrypoint is only resolved when the container already started.
+RUN test -f dist/main.js
 RUN npm prune --omit=dev
 
 FROM node:22-alpine AS runtime
