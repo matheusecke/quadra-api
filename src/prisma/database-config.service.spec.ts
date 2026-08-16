@@ -12,15 +12,12 @@ function secretEnvironment(
 ): Record<string, string | undefined> {
   return {
     DATABASE_SECRET: JSON.stringify({
-      engine: 'postgres',
-      host: secretValues[0],
-      port: 5432,
       username: secretValues[1],
       password: secretValues[2],
-      dbname: secretValues[3],
-      dbInstanceIdentifier: 'ignored-by-the-application',
       ...overrides,
     }),
+    DATABASE_HOST: secretValues[0],
+    DATABASE_NAME: secretValues[3],
     DATABASE_SCHEMA: 'public',
   };
 }
@@ -59,7 +56,7 @@ describe('resolveDatabaseConfig', () => {
     ).toBe(true);
   });
 
-  it('resolves a complete secret and ignores AWS metadata', () => {
+  it('takes credentials from the secret and the rest from the environment', () => {
     expect(resolveDatabaseConfig(secretEnvironment())).toEqual({
       host: secretValues[0],
       port: 5432,
@@ -71,76 +68,52 @@ describe('resolveDatabaseConfig', () => {
     });
   });
 
-  it('defaults a missing secret port to 5432', () => {
-    const environment = secretEnvironment();
-    environment.DATABASE_SECRET = JSON.stringify({
-      engine: 'postgres',
-      host: secretValues[0],
-      username: secretValues[1],
-      password: secretValues[2],
-      dbname: secretValues[3],
-    });
-
-    expect(resolveDatabaseConfig(environment).port).toBe(5432);
+  it('ignores unknown secret fields', () => {
+    expect(
+      resolveDatabaseConfig(
+        secretEnvironment({
+          dbInstanceIdentifier: 'ignored-by-the-application',
+        }),
+      ).user,
+    ).toBe(secretValues[1]);
   });
 
-  it('uses DATABASE_NAME when dbname is absent', () => {
-    const environment = secretEnvironment();
-    environment.DATABASE_NAME = 'quadra';
-    environment.DATABASE_SECRET = JSON.stringify({
-      engine: 'postgres',
-      host: secretValues[0],
-      username: secretValues[1],
-      password: secretValues[2],
-    });
-
-    expect(resolveDatabaseConfig(environment).database).toBe('quadra');
+  it('defaults a missing DATABASE_PORT to 5432', () => {
+    expect(resolveDatabaseConfig(secretEnvironment()).port).toBe(5432);
   });
 
-  it.each([1, 65535])('accepts boundary port %i', (port) => {
-    expect(resolveDatabaseConfig(secretEnvironment({ port })).port).toBe(port);
+  it.each(['1', '65535'])('accepts boundary port %s', (port) => {
+    const environment = secretEnvironment();
+    environment.DATABASE_PORT = port;
+
+    expect(resolveDatabaseConfig(environment).port).toBe(Number(port));
   });
 
   it.each([
     [
       'invalid JSON',
-      { DATABASE_SECRET: '{', DATABASE_SCHEMA: 'public' },
+      { ...secretEnvironment(), DATABASE_SECRET: '{' },
       'DATABASE_SECRET is invalid JSON.',
     ],
     [
       'null',
-      { DATABASE_SECRET: 'null', DATABASE_SCHEMA: 'public' },
+      { ...secretEnvironment(), DATABASE_SECRET: 'null' },
       'DATABASE_SECRET is invalid: expected a JSON object.',
     ],
     [
       'array',
-      { DATABASE_SECRET: '[]', DATABASE_SCHEMA: 'public' },
+      { ...secretEnvironment(), DATABASE_SECRET: '[]' },
       'DATABASE_SECRET is invalid: expected a JSON object.',
     ],
     [
-      'wrong engine',
-      secretEnvironment({ engine: 'mysql' }),
-      'DATABASE_SECRET is invalid: field "engine" must be "postgres".',
+      'missing host',
+      { ...secretEnvironment(), DATABASE_HOST: undefined },
+      'Database configuration is invalid: DATABASE_HOST is required when DATABASE_SECRET is used.',
     ],
     [
-      'low port',
-      secretEnvironment({ port: 0 }),
-      'DATABASE_SECRET is invalid: field "port" must be an integer between 1 and 65535.',
-    ],
-    [
-      'high port',
-      secretEnvironment({ port: 65536 }),
-      'DATABASE_SECRET is invalid: field "port" must be an integer between 1 and 65535.',
-    ],
-    [
-      'decimal port',
-      secretEnvironment({ port: 5432.5 }),
-      'DATABASE_SECRET is invalid: field "port" must be an integer between 1 and 65535.',
-    ],
-    [
-      'string port',
-      secretEnvironment({ port: '5432' }),
-      'DATABASE_SECRET is invalid: field "port" must be an integer between 1 and 65535.',
+      'missing database name',
+      { ...secretEnvironment(), DATABASE_NAME: undefined },
+      'Database configuration is invalid: DATABASE_NAME is required when DATABASE_SECRET is used.',
     ],
     [
       'missing schema',
@@ -152,7 +125,16 @@ describe('resolveDatabaseConfig', () => {
     expect(() => resolveDatabaseConfig(environment)).toThrow(message);
   });
 
-  it.each(['engine', 'host', 'username', 'password'])(
+  it.each(['0', '65536', '5432.5', 'not-a-port'])('rejects port %s', (port) => {
+    const environment = secretEnvironment();
+    environment.DATABASE_PORT = port;
+
+    expect(() => resolveDatabaseConfig(environment)).toThrow(
+      'Database configuration is invalid: DATABASE_PORT must be an integer between 1 and 65535.',
+    );
+  });
+
+  it.each(['username', 'password'])(
     'rejects missing required field %s',
     (field) => {
       const parsed = JSON.parse(secretEnvironment().DATABASE_SECRET!);
@@ -167,30 +149,13 @@ describe('resolveDatabaseConfig', () => {
   );
 
   it.each([
-    ['engine', '   '],
-    ['host', 123],
     ['username', false],
     ['password', '   '],
-    ['dbname', []],
   ])('rejects invalid field %s', (field, value) => {
     expect(() =>
       resolveDatabaseConfig(secretEnvironment({ [field]: value })),
     ).toThrow(
       `DATABASE_SECRET is invalid: field "${field}" must be a non-empty string.`,
-    );
-  });
-
-  it('requires DATABASE_NAME when dbname is absent', () => {
-    const environment = secretEnvironment();
-    environment.DATABASE_SECRET = JSON.stringify({
-      engine: 'postgres',
-      host: secretValues[0],
-      username: secretValues[1],
-      password: secretValues[2],
-    });
-
-    expect(() => resolveDatabaseConfig(environment)).toThrow(
-      'Database configuration is invalid: DATABASE_NAME is required when "dbname" is absent.',
     );
   });
 
@@ -216,8 +181,8 @@ describe('resolveDatabaseConfig', () => {
 
   it('never includes fixture secrets in errors', () => {
     for (const environment of [
-      secretEnvironment({ engine: 'mysql' }),
-      secretEnvironment({ port: secretValues[2] }),
+      { ...secretEnvironment(), DATABASE_HOST: undefined },
+      secretEnvironment({ username: false }),
     ]) {
       try {
         resolveDatabaseConfig(environment);

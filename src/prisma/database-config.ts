@@ -53,49 +53,43 @@ function parseSecret(value: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function requiredEnvironmentValue(
+  environment: DatabaseEnvironment,
+  name: string,
+): string {
+  const value = present(environment[name]);
+  if (!value) {
+    throw new Error(
+      `Database configuration is invalid: ${name} is required when DATABASE_SECRET is used.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * The secret managed by RDS carries credentials only. Every other connection
+ * component is non-sensitive and comes from the environment.
+ */
 function resolveSecretConfig(
   secretValue: string,
   environment: DatabaseEnvironment,
 ): DatabaseConfig {
   const secret = parseSecret(secretValue);
-  const engine = requiredSecretString(secret, 'engine');
-  if (engine !== 'postgres') {
-    throw new Error(
-      'DATABASE_SECRET is invalid: field "engine" must be "postgres".',
-    );
-  }
 
-  const port = secret.port ?? 5432;
-  if (!Number.isInteger(port) || Number(port) < 1 || Number(port) > 65535) {
+  const port = present(environment.DATABASE_PORT) ?? '5432';
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
     throw new Error(
-      'DATABASE_SECRET is invalid: field "port" must be an integer between 1 and 65535.',
-    );
-  }
-
-  const database =
-    'dbname' in secret
-      ? requiredSecretString(secret, 'dbname')
-      : present(environment.DATABASE_NAME);
-  if (!database) {
-    throw new Error(
-      'Database configuration is invalid: DATABASE_NAME is required when "dbname" is absent.',
-    );
-  }
-
-  const schema = present(environment.DATABASE_SCHEMA);
-  if (!schema) {
-    throw new Error(
-      'Database configuration is invalid: DATABASE_SCHEMA is required when DATABASE_SECRET is used.',
+      'Database configuration is invalid: DATABASE_PORT must be an integer between 1 and 65535.',
     );
   }
 
   return {
-    host: requiredSecretString(secret, 'host'),
+    host: requiredEnvironmentValue(environment, 'DATABASE_HOST'),
     port: Number(port),
     user: requiredSecretString(secret, 'username'),
     password: requiredSecretString(secret, 'password'),
-    database,
-    schema,
+    database: requiredEnvironmentValue(environment, 'DATABASE_NAME'),
+    schema: requiredEnvironmentValue(environment, 'DATABASE_SCHEMA'),
     ssl: true,
   };
 }
